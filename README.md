@@ -33,9 +33,9 @@ remotely — do them once per device, in order:
 - **Provision** — the `kiosk_satellite_manager.provision` service applies a settings payload (device
   name, Home Assistant URL, dashboard, kiosk lockdown, etc.) in a single ADB intent and reads back
   `/api/health` to confirm the change actually took, rather than trusting `adb shell`'s exit code.
-- **Voice Satellite binding** — experimental, currently blocked pending an on-device ADB-enable step
-  on the test device; may land as a documented manual step instead of an automated one. See
-  `docs/SPEC/provisioning.md` for status.
+
+Voice Satellite binding was explored and dropped (not worth the hassle yet) — see the design doc's
+Non-goals if you're wondering why it isn't here.
 
 Full design, verified findings, and phase-by-phase status: the [ham-harness](https://git.cfoxga.com/cfoxga/ham-harness)
 repo's `kiosk-satellite-manager/` silo (`docs/SPEC/provisioning.md`).
@@ -45,8 +45,12 @@ repo's `kiosk-satellite-manager/` silo (`docs/SPEC/provisioning.md`).
 [![Open your Home Assistant instance and open this repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=cfoxga&repository=kiosk-satellite-manager&category=integration)
 
 Not yet in the default HACS store — the badge above adds this repo to HACS as a custom repository.
-Manually: add `https://git.cfoxga.com/cfoxga/kiosk-satellite-manager` as an Integration-type custom
+Manually: add `https://github.com/cfoxga/kiosk-satellite-manager` as an Integration-type custom
 repository in HACS, install **Kiosk Satellite Manager**, and restart Home Assistant.
+
+This repo is currently **private** while it's still pre-release — the badge/manual-add steps above
+only work once it's made public (or for HACS installs that supply a GitHub token with access to a
+private repo). Not public yet; will be before real installs are expected.
 
 Then add the integration (Settings → Devices & Services → Add Integration → Kiosk Satellite Manager)
 per device, and complete the three manual steps above on each device before the config flow can
