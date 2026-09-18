@@ -1,13 +1,22 @@
 """Async ADB client wrapper for Kiosk Satellite Manager.
 
 Wraps adb-shell's AdbDeviceTcpAsync. The happy path (connect with an
-already-trusted key, shell, getprop) and the exception surface below were
-verified live against a production Kiosk Satellite device -- see the Verified
-Findings in docs/SPEC/provisioning.md. The auth-pending path (a brand new key
-that hasn't had its on-device Allow tap yet) is trusted from adb-shell's own
-documented exception, not separately live-reproduced -- triggering it for
-real would pop an "Allow USB debugging?" dialog on a live household device
-with nobody there to tap it.
+already-trusted key, shell, getprop) and the AdbAuthPending/AdbConnectFailed
+split below were verified live against a production Kiosk Satellite device
+-- see the Verified Findings in docs/SPEC/provisioning.md.
+
+KSM-BEHAVE-005: a brand-new, never-approved key does NOT make adb-shell
+raise DeviceAuthError while the on-device "Allow USB debugging?" dialog
+sits unanswered -- live-confirmed against the Theater GTV (2026-09-18).
+adb-shell's connect() uses auth_timeout_s as the AUTH-phase read timeout
+(adb_device_async.py connect(), which sets adb_info.transport_timeout_s =
+auth_timeout_s before the AUTH exchange), so an unanswered prompt surfaces
+as a plain read timeout after the TCP socket is already open --
+TcpTimeoutException/AdbTimeoutError with a message like "Reading from
+<host>:<port> timed out (5 seconds)". A genuinely unreachable device fails
+before that point (refused/no route), as AdbConnectionError/OSError. So
+timeouts that happen post-connect are retryable (AdbAuthPending); only a
+raw connection failure is AdbConnectFailed.
 """
 from __future__ import annotations
 
@@ -30,7 +39,7 @@ class AdbAuthPending(Exception):
 
 
 class AdbConnectFailed(Exception):
-    """Any other ADB connect failure (unreachable, wrong port, etc.)."""
+    """A raw connection failure (unreachable, wrong port, refused) -- not solved by tapping Allow."""
 
 
 def ensure_adb_key(key_dir: str) -> str:
@@ -60,14 +69,16 @@ class AdbClient:
     async def connect(self, auth_timeout_s: float = 5) -> None:
         """Connect and authenticate.
 
-        Raises AdbAuthPending if the on-device Allow tap hasn't happened yet,
-        AdbConnectFailed for anything else (unreachable, refused, timed out).
+        Raises AdbAuthPending if the on-device Allow tap hasn't happened yet
+        -- this includes a plain read timeout during the AUTH exchange, not
+        just DeviceAuthError (KSM-BEHAVE-005). Raises AdbConnectFailed for a
+        raw connection failure (unreachable, refused, wrong port).
         """
         try:
             await self._device.connect(rsa_keys=[self._signer], auth_timeout_s=auth_timeout_s)
-        except DeviceAuthError as err:
+        except (DeviceAuthError, AdbTimeoutError, TcpTimeoutException) as err:
             raise AdbAuthPending(str(err)) from err
-        except (AdbConnectionError, AdbTimeoutError, TcpTimeoutException, OSError) as err:
+        except (AdbConnectionError, OSError) as err:
             raise AdbConnectFailed(str(err)) from err
 
     async def close(self) -> None:
