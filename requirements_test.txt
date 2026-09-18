@@ -15,5 +15,10 @@
 #
 # phacc pulls pytest, pytest-asyncio, voluptuous, and freezegun transitively,
 # so only it needs to be listed here.
+#
+# adb-shell[async] is the manifest's runtime requirement (see manifest.json)
+# -- pinned here too so the test container has it without a full HA
+# dependency resolve.
 
 pytest-homeassistant-custom-component
+adb-shell[async]==0.4.4

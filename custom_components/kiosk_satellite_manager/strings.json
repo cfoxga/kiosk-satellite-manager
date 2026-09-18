@@ -3,14 +3,16 @@
     "step": {
       "user": {
         "title": "Add a Kiosk Satellite device",
-        "description": "Provisioning over ADB is not implemented yet — this is a placeholder step.",
+        "description": "Enter the device's IP address, then check the device screen for an \"Allow USB debugging?\" prompt and tap Allow.",
         "data": {
-          "host": "IP address"
+          "host": "IP address",
+          "port": "ADB port"
         }
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect"
+      "cannot_connect": "Failed to connect to the device",
+      "auth_pending": "Device did not confirm the ADB connection in time -- check the device screen for an \"Allow USB debugging?\" prompt and try again"
     },
     "abort": {
       "already_configured": "Device is already configured"
