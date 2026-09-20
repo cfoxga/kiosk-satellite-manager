@@ -371,6 +371,20 @@ class AdbClient:
     async def put_secure_setting(self, key: str, value: str) -> None:
         await self.shell(f"settings put secure {key} {value}")
 
+    async def bluetooth_enabled(self) -> bool:
+        """KSM-BEHAVE-046 (Phase 5, "functional verification"): the device's
+        own Bluetooth radio state, read from `settings get global
+        bluetooth_on` -- live-confirmed against the Test Portal ("1" when
+        on). This is a device-level fact, not a per-app grant: on SDK < 31
+        (the Test Portal is SDK 29) there is no BLUETOOTH_SCAN/CONNECT
+        runtime permission at all (`DeviceProfile.permissions_for_sdk`), so
+        the radio's own on/off state is the only Bluetooth signal available
+        pre-31, and remains the meaningful one post-31 too since a granted
+        permission with a disabled radio is not "appropriate behavior" for a
+        kiosk that depends on paired Bluetooth peripherals."""
+        output = (await self.shell("settings get global bluetooth_on")).strip()
+        return output == "1"
+
     @property
     def available(self) -> bool:
         return self._device.available

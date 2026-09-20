@@ -26,8 +26,10 @@ from custom_components.kiosk_satellite_manager.install import (
     PORTAL_APPOPS,
     PORTAL_PERMISSIONS,
     KsInstallVerificationFailed,
+    PermissionConvergenceResult,
     converge_permissions,
     install_and_launch,
+    verify_functional_capabilities,
 )
 from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
 
@@ -90,6 +92,10 @@ def _fake_client():
     client.declared_bound_services = AsyncMock(return_value={})
     client.get_secure_setting = AsyncMock(return_value="")
     client.put_secure_setting = AsyncMock()
+    # KSM-BEHAVE-046 (Phase 5): device-level Bluetooth radio state, distinct
+    # from any per-app permission -- defaults "on" since PORTAL_PERMISSIONS
+    # requests no BLUETOOTH_SCAN/CONNECT at all (sdk 29 in these tests).
+    client.bluetooth_enabled = AsyncMock(return_value=True)
     return client
 
 
@@ -670,3 +676,129 @@ async def test_converge_permissions_notification_listener_not_applicable_for_ks(
     )
     result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
     assert result.notification_listener == "not_applicable"
+
+
+# KSM-BEHAVE-046 (Phase 5, "functional verification"): verify_functional_capabilities
+# is exercised directly here, against a PermissionConvergenceResult built by hand
+# rather than a real converge_permissions() run, since its own contract (Phase 3)
+# already has full coverage above.
+
+_MIC = "android.permission.RECORD_AUDIO"
+_CAMERA = "android.permission.CAMERA"
+_BT_SCAN = "android.permission.BLUETOOTH_SCAN"
+_BT_CONNECT = "android.permission.BLUETOOTH_CONNECT"
+
+
+def _convergence(
+    granted: list[str] | None = None, denied: list[str] | None = None
+) -> PermissionConvergenceResult:
+    return PermissionConvergenceResult(
+        granted_permissions=granted or [],
+        denied_permissions=denied or [],
+        granted_appops=[],
+        denied_appops=[],
+        battery_exempt=True,
+        accessibility="not_applicable",
+        notification_listener="not_applicable",
+    )
+
+
+async def test_verify_functional_capabilities_ok_when_granted_and_radio_on():
+    client = MagicMock()
+    client.bluetooth_enabled = AsyncMock(return_value=True)
+    convergence = _convergence(granted=[_MIC, _CAMERA])
+
+    result = await verify_functional_capabilities(client, convergence)
+
+    assert result.microphone == "ok"
+    assert result.camera == "ok"
+    assert result.bluetooth == "ok"
+    assert result.fully_verified is True
+
+
+async def test_verify_functional_capabilities_detects_denied_microphone():
+    """KSM-TEST-052 (negative control): a denied RECORD_AUDIO must surface
+    as a failed microphone check, not be silently reported ok."""
+    client = MagicMock()
+    client.bluetooth_enabled = AsyncMock(return_value=True)
+    convergence = _convergence(granted=[_CAMERA], denied=[_MIC])
+
+    result = await verify_functional_capabilities(client, convergence)
+
+    assert result.microphone == "permission_denied"
+    assert result.fully_verified is False
+
+
+async def test_verify_functional_capabilities_detects_denied_camera():
+    """KSM-TEST-052 (negative control): same as above for CAMERA."""
+    client = MagicMock()
+    client.bluetooth_enabled = AsyncMock(return_value=True)
+    convergence = _convergence(granted=[_MIC], denied=[_CAMERA])
+
+    result = await verify_functional_capabilities(client, convergence)
+
+    assert result.camera == "permission_denied"
+    assert result.fully_verified is False
+
+
+async def test_verify_functional_capabilities_detects_denied_bluetooth_permission():
+    """KSM-TEST-052 (negative control): on SDK >= 31, a requested-but-denied
+    BLUETOOTH_CONNECT must surface as denied even though the radio itself
+    is on -- a granted radio doesn't imply the app can actually use it."""
+    client = MagicMock()
+    client.bluetooth_enabled = AsyncMock(return_value=True)
+    convergence = _convergence(granted=[_MIC, _CAMERA, _BT_SCAN], denied=[_BT_CONNECT])
+
+    result = await verify_functional_capabilities(client, convergence)
+
+    assert result.bluetooth == "permission_denied"
+    client.bluetooth_enabled.assert_not_awaited()
+    assert result.fully_verified is False
+
+
+async def test_verify_functional_capabilities_detects_bluetooth_radio_off():
+    """KSM-TEST-053 (negative control): live-confirmed against the Test
+    Portal (SDK 29) that no BLUETOOTH_SCAN/CONNECT permission is even
+    requested pre-SDK-31 (device_profiles.permissions_for_sdk) -- so the
+    device's own radio state is the only meaningful Bluetooth signal here,
+    and a disabled radio must be detected rather than reported ok just
+    because there was no permission to deny."""
+    client = MagicMock()
+    client.bluetooth_enabled = AsyncMock(return_value=False)
+    convergence = _convergence(granted=[_MIC, _CAMERA])
+
+    result = await verify_functional_capabilities(client, convergence)
+
+    assert result.bluetooth == "adapter_disabled"
+    client.bluetooth_enabled.assert_awaited_once()
+    assert result.fully_verified is False
+
+
+async def test_verify_functional_capabilities_bluetooth_ok_when_all_permissions_granted_and_radio_on():
+    """SDK >= 31 positive path: both BLUETOOTH_SCAN/CONNECT granted and the
+    radio on together are required for "ok" -- neither alone is sufficient."""
+    client = MagicMock()
+    client.bluetooth_enabled = AsyncMock(return_value=True)
+    convergence = _convergence(granted=[_MIC, _CAMERA, _BT_SCAN, _BT_CONNECT])
+
+    result = await verify_functional_capabilities(client, convergence)
+
+    assert result.bluetooth == "ok"
+    client.bluetooth_enabled.assert_awaited_once()
+
+
+async def test_install_and_launch_runs_functional_verification_after_permission_convergence():
+    """KSM-TEST-054: install_and_launch's own end-to-end flow must actually
+    invoke Phase 5's functional verification, not just leave it as dead
+    code -- confirms the wiring, not only the standalone function."""
+    hass = _FakeHass()
+    client = _fake_client()
+    session = _fake_session()
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ):
+        await install_and_launch(hass, client, session)
+
+    client.bluetooth_enabled.assert_awaited_once()

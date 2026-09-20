@@ -106,6 +106,7 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
             mock_client.declared_bound_services = AsyncMock(return_value={})
             mock_client.get_secure_setting = AsyncMock(return_value="")
             mock_client.put_secure_setting = AsyncMock()
+            mock_client.bluetooth_enabled = AsyncMock(return_value=True)
 
             await hass.services.async_call(
                 "button", "press", {"entity_id": button_entry.entity_id}, blocking=True

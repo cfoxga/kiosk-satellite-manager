@@ -217,6 +217,68 @@ async def converge_permissions(
     return result
 
 
+_MIC_PERMISSION: Final = "android.permission.RECORD_AUDIO"
+_CAMERA_PERMISSION: Final = "android.permission.CAMERA"
+_BLUETOOTH_PERMISSIONS: Final = {
+    "android.permission.BLUETOOTH_SCAN",
+    "android.permission.BLUETOOTH_CONNECT",
+}
+
+
+@dataclass
+class FunctionalVerificationResult:
+    """KSM-BEHAVE-046 (Phase 5, "functional verification"): whether KS is
+    actually positioned to behave correctly for microphone/camera/Bluetooth.
+    Not full runtime-usage proof -- KSM can't safely trigger real audio
+    capture or a live BT pairing on a shared lab device without side
+    effects -- but the authoritative preconditions for that behavior: the
+    runtime permission is actually granted (read back by
+    `converge_permissions`, never assumed), and for Bluetooth, the device's
+    own radio is on (`AdbClient.bluetooth_enabled`) -- a granted permission
+    with a disabled radio is not "appropriate behavior" for a kiosk that
+    depends on paired peripherals. Each field is one of "ok",
+    "permission_denied", or (bluetooth only) "adapter_disabled"."""
+
+    microphone: str
+    camera: str
+    bluetooth: str
+
+    @property
+    def fully_verified(self) -> bool:
+        return self.microphone == "ok" and self.camera == "ok" and self.bluetooth == "ok"
+
+
+async def verify_functional_capabilities(
+    client: AdbClient, convergence: PermissionConvergenceResult
+) -> FunctionalVerificationResult:
+    """KSM-BEHAVE-046 (Phase 5): reuses Phase 3's already-authoritative
+    permission readback rather than re-querying the device, plus one new
+    device-level read (`bluetooth_enabled`) for the one Bluetooth signal
+    that isn't a permission at all on SDK < 31 (the Test Portal is SDK 29,
+    where `permissions_for_sdk` requests no BLUETOOTH_SCAN/CONNECT whatsoever
+    -- confirmed live). Negative controls: a denied microphone/camera
+    permission, or bluetooth permissions requested-but-denied, or the radio
+    reading off, are each surfaced as a distinct non-"ok" status rather than
+    silently reported as working."""
+    granted = set(convergence.granted_permissions)
+    requested = granted | set(convergence.denied_permissions)
+    microphone = "ok" if _MIC_PERMISSION in granted else "permission_denied"
+    camera = "ok" if _CAMERA_PERMISSION in granted else "permission_denied"
+
+    required_bt = _BLUETOOTH_PERMISSIONS & requested
+    if required_bt and not required_bt.issubset(granted):
+        bluetooth = "permission_denied"
+    elif not await client.bluetooth_enabled():
+        bluetooth = "adapter_disabled"
+    else:
+        bluetooth = "ok"
+
+    result = FunctionalVerificationResult(microphone=microphone, camera=camera, bluetooth=bluetooth)
+    if not result.fully_verified:
+        _LOGGER.warning("functional verification incomplete for %s: %s", KS_PACKAGE, result)
+    return result
+
+
 def _write_temp_apk(data: bytes) -> str:
     fd, path = tempfile.mkstemp(suffix=".apk")
     with os.fdopen(fd, "wb") as fh:
@@ -303,7 +365,8 @@ async def install_and_launch(
         raise KsInstallVerificationFailed(
             f"am start -n {KS_MAIN_ACTIVITY} reported an error on {host}: {start_output.strip()}"
         )
-    await converge_permissions(client, sdk, profile)
+    convergence = await converge_permissions(client, sdk, profile)
+    await verify_functional_capabilities(client, convergence)
     if profile.is_portal or profile.key == "unknown":
         await client.shell(f"dpm set-active-admin {KS_PACKAGE}/.KioskAdminReceiver")
         await client.shell("settings put global package_verifier_enable 0")
