@@ -6,6 +6,7 @@ ADB I/O is covered live, not in this suite -- see docs/SPEC/provisioning.md.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import voluptuous as vol
@@ -27,18 +28,19 @@ from custom_components.kiosk_satellite_manager.const import (
     EXISTING_INSTALL_REINSTALL,
     EXISTING_INSTALL_REUSE,
     TOKEN_MODE_AUTO,
-    TOKEN_MODE_MANUAL,
-    TOKEN_MODE_REUSE,
 )
 
 
 async def test_user_flow_shows_device_info_step_with_discovered_name_default(hass):
+    """[KSM-TEST-049] Detected metadata precedes only KSM-owned fields."""
     with patch(
         "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
     ) as mock_client_cls:
         mock_client = mock_client_cls.return_value
         mock_client.connect = AsyncMock()
-        mock_client.getprop = AsyncMock(side_effect=["tv,nosdcard", "onn"])
+        mock_client.getprop = AsyncMock(
+            side_effect=["tv,nosdcard", "onn", "Google TV", "35", "15"]
+        )
         mock_client.shell = AsyncMock(return_value="Living Room TV")
         mock_client.is_ks_installed = AsyncMock(return_value=False)
         mock_client.close = AsyncMock()
@@ -52,12 +54,52 @@ async def test_user_flow_shows_device_info_step_with_discovered_name_default(has
 
     assert result["type"] == data_entry_flow.FlowResultType.FORM
     assert result["step_id"] == "device_info"
-    schema_name = next(k for k in result["data_schema"].schema if k == CONF_NAME)
-    assert schema_name.default() == "Living Room TV"
     schema_pass = next(k for k in result["data_schema"].schema if k == CONF_PASSWORD)
     # KSM-TEST-006: no hardcoded default password any more.
     assert schema_pass.default is vol.UNDEFINED
-    assert result["description_placeholders"]["device_model"] == "Google TV stick (onn/Chromecast-class)"
+    assert CONF_NAME not in {field.schema for field in result["data_schema"].schema}
+    assert CONF_AREA_ID not in {field.schema for field in result["data_schema"].schema}
+    assert result["description_placeholders"] == {
+        "android_version": "Android 15 (SDK 35)",
+        "device_model": "Google TV stick (onn/Chromecast-class)",
+    }
+
+
+async def test_user_flow_lists_auto_create_then_existing_long_lived_tokens(hass):
+    """[KSM-TEST-050] The picker never exposes a token secret in the form."""
+    selected_token = SimpleNamespace(
+        id="existing-token-id",
+        client_name="Kitchen kiosk",
+        token_type="long_lived_access_token",
+    )
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
+    ) as mock_client_cls, patch.object(
+        hass.auth._store, "async_get_refresh_tokens", return_value=[selected_token]  # noqa: SLF001
+    ):
+        mock_client = mock_client_cls.return_value
+        mock_client.connect = AsyncMock()
+        mock_client.getprop = AsyncMock(
+            side_effect=["tv,nosdcard", "onn", "Google TV", "35", "15"]
+        )
+        mock_client.shell = AsyncMock(return_value="Living Room TV")
+        mock_client.is_ks_installed = AsyncMock(return_value=False)
+        mock_client.close = AsyncMock()
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "192.168.50.64", "port": 5555}
+        )
+
+    token_field = next(key for key in result["data_schema"].schema if key == CONF_TOKEN_MODE)
+    options = result["data_schema"].schema[token_field].config["options"]
+    assert [(option["value"], option["label"]) for option in options] == [
+        (TOKEN_MODE_AUTO, "<Auto-create new token>"),
+        ("existing-token-id", "Kitchen kiosk"),
+    ]
+    assert CONF_HA_TOKEN not in {field.schema for field in result["data_schema"].schema}
 
 
 async def test_user_flow_identifies_portal_models_and_defaults_password(hass):
@@ -84,8 +126,7 @@ async def test_user_flow_identifies_portal_models_and_defaults_password(hass):
     assert result["description_placeholders"]["device_model"] == "Meta Portal Go"
     schema_pass = next(k for k in result["data_schema"].schema if k == CONF_PASSWORD)
     assert schema_pass.default is vol.UNDEFINED
-    schema_name = next(k for k in result["data_schema"].schema if k == CONF_NAME)
-    assert schema_name.default() == "Test Portal"
+    assert result["description_placeholders"]["android_version"] == "SDK 29"
 
 
 async def test_user_flow_uses_and_normalizes_portal_bluetooth_name(hass):
@@ -108,8 +149,7 @@ async def test_user_flow_uses_and_normalizes_portal_bluetooth_name(hass):
         )
 
     assert result["type"] == data_entry_flow.FlowResultType.FORM
-    schema_key = next(k for k in result["data_schema"].schema if k == CONF_NAME)
-    assert schema_key.default() == "Test Portal"
+    assert CONF_NAME not in {field.schema for field in result["data_schema"].schema}
     mock_client.shell.assert_awaited_once_with("settings get secure bluetooth_name")
 
 
@@ -157,11 +197,7 @@ async def test_user_flow_creates_entry_after_device_info_step(hass):
 
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {
-                CONF_NAME: "Kitchen Display",
-                CONF_AREA_ID: "kitchen",
-                CONF_PASSWORD: "hunter222",
-            },
+            {CONF_PASSWORD: "hunter222"},
         )
         assert result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS
         assert result["step_id"] == "install"
@@ -171,16 +207,16 @@ async def test_user_flow_creates_entry_after_device_info_step(hass):
         await hass.async_block_till_done()
 
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
-    assert result["title"] == "Kitchen Display"
+    assert result["title"] == "Living Room TV"
     assert result["data"][CONF_HOST] == "192.168.50.64"
     assert result["data"][CONF_DEVICE_PROFILE] == "gtv_stick"
-    assert result["data"][CONF_NAME] == "Kitchen Display"
-    assert result["data"][CONF_AREA_ID] == "kitchen"
+    assert result["data"][CONF_NAME] == "Living Room TV"
+    assert result["data"][CONF_AREA_ID] is None
     assert result["data"][CONF_PASSWORD] == "hunter222"
     mock_install.assert_awaited_once()
     _, kwargs = mock_install.await_args
     assert kwargs["host"] == "192.168.50.64"
-    assert kwargs["device_name"] == "Kitchen Display"
+    assert kwargs["device_name"] == "Living Room TV"
     assert kwargs["password"] == "hunter222"
 
 
@@ -217,7 +253,7 @@ async def test_user_flow_creates_entry_even_when_install_fails(hass):
         )
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {CONF_NAME: "Hallway", CONF_PASSWORD: "hunter222"},
+            {CONF_PASSWORD: "hunter222"},
         )
         assert result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS
 
@@ -226,10 +262,10 @@ async def test_user_flow_creates_entry_even_when_install_fails(hass):
         await hass.async_block_till_done()
 
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_NAME] == "Hallway"
+    assert result["data"][CONF_NAME] == "192.168.50.77"
 
 
-async def test_user_flow_device_info_defaults_name_to_host_when_device_name_unset(hass):
+async def test_user_flow_device_info_uses_host_for_provisioning_when_device_name_unset(hass):
     with patch(
         "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
     ) as mock_client_cls:
@@ -249,9 +285,7 @@ async def test_user_flow_device_info_defaults_name_to_host_when_device_name_unse
 
     assert result["type"] == data_entry_flow.FlowResultType.FORM
     assert result["step_id"] == "device_info"
-    schema_key = next(k for k in result["data_schema"].schema if k == CONF_NAME)
-    default_name = schema_key.default()
-    assert default_name == "192.168.50.77"
+    assert CONF_NAME not in {field.schema for field in result["data_schema"].schema}
 
 
 async def test_user_flow_shows_auth_pending_error_when_device_never_confirms(hass):
@@ -275,14 +309,27 @@ async def test_user_flow_shows_auth_pending_error_when_device_never_confirms(has
     assert result["errors"]["base"] == "auth_pending"
 
 
-async def test_user_flow_manual_token(hass):
+async def test_user_flow_uses_selected_long_lived_token(hass):
+    """[KSM-TEST-050] Selected token IDs resolve only at submission."""
     async def _install_ok(*args, **kwargs):
         await asyncio.sleep(0)
-        return "my-manual-token"
+        return kwargs["ha_token"]
+
+    selected_token = SimpleNamespace(
+        id="existing-token-id",
+        client_name="Kitchen kiosk",
+        token_type="long_lived_access_token",
+    )
 
     with patch(
         "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
-    ) as mock_client_cls, patch(
+    ) as mock_client_cls, patch.object(
+        hass.auth._store, "async_get_refresh_tokens", return_value=[selected_token]  # noqa: SLF001
+    ), patch.object(
+        hass.auth, "async_get_refresh_token", return_value=selected_token
+    ), patch.object(
+        hass.auth, "async_create_access_token", return_value="selected-access-token"
+    ), patch(
         "custom_components.kiosk_satellite_manager.fetch_health",
         new=AsyncMock(return_value={"appVersion": "unknown"}),
     ), patch(
@@ -304,27 +351,11 @@ async def test_user_flow_manual_token(hass):
         )
         assert result["type"] == data_entry_flow.FlowResultType.FORM
 
-        # Validation failure when manual selected but no token provided
-        result_err = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_NAME: "Office Display",
-                CONF_PASSWORD: "admin",
-                CONF_TOKEN_MODE: TOKEN_MODE_MANUAL,
-                CONF_HA_TOKEN: "",
-            },
-        )
-        assert result_err["type"] == data_entry_flow.FlowResultType.FORM
-        assert result_err["errors"][CONF_HA_TOKEN] == "token_required"
-
-        # Provide manual token
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
-                CONF_NAME: "Office Display",
                 CONF_PASSWORD: "admin",
-                CONF_TOKEN_MODE: TOKEN_MODE_MANUAL,
-                CONF_HA_TOKEN: "my-manual-token",
+                CONF_TOKEN_MODE: "existing-token-id",
                 CONF_HOME_LAUNCHER: True,
             },
         )
@@ -334,8 +365,8 @@ async def test_user_flow_manual_token(hass):
         await hass.async_block_till_done()
 
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_TOKEN_MODE] == TOKEN_MODE_MANUAL
-    assert result["data"][CONF_HA_TOKEN] == "my-manual-token"
+    assert result["data"][CONF_TOKEN_MODE] == "existing-token-id"
+    assert result["data"][CONF_HA_TOKEN] == "selected-access-token"
     assert result["data"][CONF_HOME_LAUNCHER] is True
 
 
@@ -378,11 +409,11 @@ async def test_user_flow_kept_install_collects_only_existing_connection_details(
         assert result["type"] == data_entry_flow.FlowResultType.FORM
         assert result["step_id"] == "existing_device_info"
         schema_fields = {field.schema for field in result["data_schema"].schema}
-        assert schema_fields == {CONF_NAME, CONF_AREA_ID, CONF_PASSWORD}
+        assert schema_fields == {CONF_PASSWORD}
 
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {CONF_NAME: "Living Room TV", CONF_PASSWORD: "hunter222"},
+            {CONF_PASSWORD: "hunter222"},
         )
         assert result["type"] in (
             data_entry_flow.FlowResultType.CREATE_ENTRY,
@@ -447,11 +478,12 @@ async def test_user_flow_reinstall_uninstalls_before_install(hass):
         assert result["type"] == data_entry_flow.FlowResultType.FORM
         assert result["step_id"] == "device_info"
         schema_fields = {field.schema for field in result["data_schema"].schema}
-        assert {CONF_HOME_LAUNCHER, CONF_TOKEN_MODE, CONF_HA_TOKEN} <= schema_fields
+        assert {CONF_HOME_LAUNCHER, CONF_TOKEN_MODE} <= schema_fields
+        assert CONF_HA_TOKEN not in schema_fields
 
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {CONF_NAME: "Living Room TV", CONF_PASSWORD: "hunter222"},
+            {CONF_PASSWORD: "hunter222"},
         )
         if result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS:
             await hass.async_block_till_done()

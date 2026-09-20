@@ -4,11 +4,11 @@ Phase 1: host/port -> generate-or-reuse an ADB key -> bounded-retry connect
 (covers the on-device "Allow USB debugging?" tap -- Context's irreducible
 manual step 2) -> detect device type via getprop -> create the entry.
 
-KSM-BEHAVE-009: a second step collects the entry's Name (defaulted from the
-device profile's Android name source, distinct from the getprop model string
-already used for device-type detection) and an Area, plus the admin password
-KSM-BEHAVE-010/011 need to sync Kiosk Satellite's own Device Name and
-connect it to this HA instance once it's installed.
+KSM-BEHAVE-044: after detection, the KSM-specific step shows the detected
+device type and Android version, then collects only settings KSM itself needs.
+Home Assistant's post-entry "Name and assign" screen owns the entry name and
+area, so this flow uses the detected Android name only for initial Kiosk
+Satellite provisioning.
 
 KSM-BEHAVE-012: rather than making the user press the Install button after
 adding the integration, the flow now runs install.install_and_launch itself
@@ -39,6 +39,7 @@ from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 
 from .adb_client import AdbAuthPending, AdbClient, AdbConnectFailed, ensure_adb_key
 from .const import (
@@ -52,7 +53,6 @@ from .const import (
     CONF_NAME,
     CONF_PASSWORD,
     CONF_PORT,
-    CONF_REUSE_ENTRY_ID,
     CONF_TOKEN_MODE,
     CONNECT_RETRY_ATTEMPTS,
     CONNECT_RETRY_DELAY_S,
@@ -61,8 +61,6 @@ from .const import (
     EXISTING_INSTALL_REINSTALL,
     EXISTING_INSTALL_REUSE,
     TOKEN_MODE_AUTO,
-    TOKEN_MODE_MANUAL,
-    TOKEN_MODE_REUSE,
 )
 
 from .device_profiles import match_profile
@@ -89,6 +87,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._key_path: str | None = None
         self._profile_key: str | None = None
         self._profile_name: str | None = None
+        self._android_version: str | None = None
         self._discovered_name: str = ""
         self._name: str | None = None
         self._area_id: str | None = None
@@ -150,6 +149,10 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     sdk = int(sdk_str) if sdk_str.isdigit() else 0
                 except Exception:
                     sdk = 0
+                try:
+                    android_release = await client.getprop("ro.build.version.release")
+                except Exception:
+                    android_release = ""
                 profile = match_profile(characteristics, manufacturer, model=model, sdk=sdk)
                 discovered_name = profile.normalize_device_name(
                     await client.shell(profile.device_name_command)
@@ -163,6 +166,11 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._key_path = key_path
             self._profile_key = profile.key
             self._profile_name = profile.name
+            self._android_version = (
+                f"Android {android_release} (SDK {sdk})"
+                if android_release
+                else (f"SDK {sdk}" if sdk else "Unknown")
+            )
             self._ks_installed = ks_installed
             self._discovered_name = (
                 discovered_name if discovered_name and discovered_name != "null" else host
@@ -177,63 +185,49 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_device_info(self, user_input: dict | None = None) -> FlowResult:
-        """Name (defaulted from the device), Area, the admin password,
-        Home Launcher toggle, and HA access token mode."""
+        """Collect KSM settings after detection, excluding HA-owned naming."""
         errors: dict[str, str] = {}
-        existing_entries = [
-            entry
-            for entry in self.hass.config_entries.async_entries(DOMAIN)
-            if entry.data.get(CONF_HA_TOKEN)
-        ]
         token_mode_options = [
-            selector.SelectOptionDict(value=TOKEN_MODE_AUTO, label="Auto-create a new token"),
+            selector.SelectOptionDict(value=TOKEN_MODE_AUTO, label="<Auto-create new token>"),
         ]
-        if existing_entries:
+        # HA does not expose a public listing API for long-lived access tokens.
+        # The auth store is the same source used by HA's profile token UI; only
+        # identifiers and labels are placed in the form, never token secrets.
+        long_lived_tokens = [
+            token
+            for token in self.hass.auth._store.async_get_refresh_tokens()  # noqa: SLF001
+            if token.token_type == TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
+        ]
+        for token in long_lived_tokens:
             token_mode_options.append(
                 selector.SelectOptionDict(
-                    value=TOKEN_MODE_REUSE, label="Reuse token from an existing device"
+                    value=token.id,
+                    label=token.client_name or "Unnamed long-lived token",
                 )
             )
-        token_mode_options.append(
-            selector.SelectOptionDict(value=TOKEN_MODE_MANUAL, label="User-supplied token")
-        )
 
         if user_input is not None:
-            name = user_input[CONF_NAME]
-            area_id = user_input.get(CONF_AREA_ID)
             password = user_input[CONF_PASSWORD]
             home_launcher = user_input.get(CONF_HOME_LAUNCHER, True)
             token_mode = user_input.get(CONF_TOKEN_MODE, TOKEN_MODE_AUTO)
-            ha_token = user_input.get(CONF_HA_TOKEN)
-            reuse_entry_id = user_input.get(CONF_REUSE_ENTRY_ID)
+            ha_token = None
 
-            if token_mode == TOKEN_MODE_MANUAL:
-                if not ha_token:
-                    errors[CONF_HA_TOKEN] = "token_required"
-            elif token_mode == TOKEN_MODE_REUSE:
-                target = (
-                    next((e for e in existing_entries if e.entry_id == reuse_entry_id), None)
-                    if reuse_entry_id
-                    else (existing_entries[0] if existing_entries else None)
-                )
-                if not target or not target.data.get(CONF_HA_TOKEN):
-                    errors[CONF_TOKEN_MODE] = "no_reusable_token"
+            if token_mode != TOKEN_MODE_AUTO:
+                token = self.hass.auth.async_get_refresh_token(token_mode)
+                if token is None or token.token_type != TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN:
+                    errors[CONF_TOKEN_MODE] = "token_not_found"
                 else:
-                    ha_token = target.data[CONF_HA_TOKEN]
+                    ha_token = self.hass.auth.async_create_access_token(token)
 
             if not errors:
-                self._name = name
-                self._area_id = area_id
+                self._name = self._discovered_name
                 self._password = password
                 self._home_launcher = home_launcher
                 self._token_mode = token_mode
                 self._ha_token = ha_token
-                self._reuse_entry_id = reuse_entry_id
                 return await self.async_step_install()
 
         fields: dict[vol.Marker, Any] = {
-            vol.Required(CONF_NAME, default=self._discovered_name): str,
-            vol.Optional(CONF_AREA_ID): selector.AreaSelector(),
             vol.Required(CONF_PASSWORD): selector.TextSelector(
                 selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
             ),
@@ -247,31 +241,15 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
             ),
         }
-        if existing_entries:
-            reuse_options = [
-                selector.SelectOptionDict(
-                    value=e.entry_id,
-                    label=f"{e.title} ({e.data.get(CONF_HOST, 'unknown')})",
-                )
-                for e in existing_entries
-            ]
-            fields[vol.Optional(CONF_REUSE_ENTRY_ID, default=reuse_options[0]["value"])] = (
-                selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=reuse_options,
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
-                )
-            )
-        fields[vol.Optional(CONF_HA_TOKEN)] = selector.TextSelector(
-            selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
-        )
 
         return self.async_show_form(
             step_id="device_info",
             data_schema=vol.Schema(fields),
             errors=errors,
-            description_placeholders={"device_model": self._profile_name or "Android Device"},
+            description_placeholders={
+                "device_model": self._profile_name or "Android Device",
+                "android_version": self._android_version or "Unknown",
+            },
         )
 
     async def async_step_existing_install(
@@ -316,8 +294,8 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """KSM-BEHAVE-029: collect only KSM's connection details when the
         user keeps the installed application's own settings intact."""
         if user_input is not None:
-            self._name = user_input[CONF_NAME]
-            self._area_id = user_input.get(CONF_AREA_ID)
+            self._name = self._discovered_name
+            self._area_id = None
             self._password = user_input[CONF_PASSWORD]
             return await self.async_step_install()
 
@@ -325,8 +303,6 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="existing_device_info",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_NAME, default=self._discovered_name): str,
-                    vol.Optional(CONF_AREA_ID): selector.AreaSelector(),
                     vol.Required(CONF_PASSWORD): selector.TextSelector(
                         selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
                     ),
