@@ -21,8 +21,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from custom_components.kiosk_satellite_manager.adb_client import PmInstallFailed
+from custom_components.kiosk_satellite_manager.device_profiles import UNKNOWN_PROFILE
 from custom_components.kiosk_satellite_manager.install import (
+    PORTAL_APPOPS,
+    PORTAL_PERMISSIONS,
     KsInstallVerificationFailed,
+    converge_permissions,
     install_and_launch,
 )
 from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
@@ -76,6 +80,16 @@ def _fake_client():
     # succeeds" shape every pre-existing test in this file exercises.
     client.installed_version = AsyncMock(side_effect=[None, _TARGET_VERSION])
     client.shell = AsyncMock(return_value="")
+    # KSM-BEHAVE-041: default "everything converges cleanly" readback for
+    # the unknown-profile permission/appops set install_and_launch uses when
+    # no device_profile is given -- individual convergence tests override
+    # these to exercise the partial/needs-user-interaction paths.
+    client.granted_permissions = AsyncMock(return_value=set(PORTAL_PERMISSIONS))
+    client.appop_mode = AsyncMock(return_value="allow")
+    client.is_battery_exempt = AsyncMock(return_value=True)
+    client.declared_bound_services = AsyncMock(return_value={})
+    client.get_secure_setting = AsyncMock(return_value="")
+    client.put_secure_setting = AsyncMock()
     return client
 
 
@@ -522,3 +536,137 @@ async def test_install_and_launch_raises_when_health_never_confirms_after_instal
     ):
         with pytest.raises(KsInstallVerificationFailed):
             await install_and_launch(hass, client, session, host="192.168.1.50")
+
+
+# KSM-BEHAVE-041 (Phase 3, "permission convergence"): converge_permissions
+# is exercised directly here, separate from install_and_launch's own tests
+# above, since it has its own multi-surface postcondition contract.
+
+
+def _converging_client():
+    client = MagicMock()
+    client.shell = AsyncMock(return_value="")
+    client.granted_permissions = AsyncMock(return_value=set(PORTAL_PERMISSIONS))
+    client.appop_mode = AsyncMock(return_value="allow")
+    client.is_battery_exempt = AsyncMock(return_value=True)
+    client.declared_bound_services = AsyncMock(return_value={})
+    client.get_secure_setting = AsyncMock(return_value="")
+    client.put_secure_setting = AsyncMock()
+    return client
+
+
+async def test_converge_permissions_fully_converged_when_everything_reads_back_granted():
+    client = _converging_client()
+    result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
+    assert result.fully_converged is True
+    assert result.denied_permissions == []
+    assert result.denied_appops == []
+    assert result.accessibility == "not_applicable"
+    assert result.notification_listener == "not_applicable"
+
+
+async def test_converge_permissions_detects_a_permission_the_device_refused():
+    """KSM-TEST-044 (negative control): a permission grant that doesn't
+    stick must show up as denied, not silently disappear -- confirms the
+    readback, not just `pm grant`'s exit code, drives the result."""
+    client = _converging_client()
+    refused = PORTAL_PERMISSIONS[0]
+    still_granted = set(PORTAL_PERMISSIONS) - {refused}
+    client.granted_permissions = AsyncMock(return_value=still_granted)
+
+    result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
+
+    assert result.denied_permissions == [refused]
+    assert refused not in result.granted_permissions
+    assert result.fully_converged is False
+
+
+async def test_converge_permissions_detects_an_appop_the_device_refused():
+    client = _converging_client()
+    client.appop_mode = AsyncMock(side_effect=["allow", "ignore", "allow"])
+
+    result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
+
+    assert result.denied_appops == [PORTAL_APPOPS[1]]
+    assert result.fully_converged is False
+
+
+async def test_converge_permissions_detects_battery_exemption_not_applied():
+    client = _converging_client()
+    client.is_battery_exempt = AsyncMock(return_value=False)
+
+    result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
+
+    assert result.battery_exempt is False
+    assert result.fully_converged is False
+
+
+async def test_converge_permissions_accessibility_not_applicable_when_ks_declares_no_service():
+    client = _converging_client()
+    client.declared_bound_services = AsyncMock(return_value={})
+
+    result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
+
+    assert result.accessibility == "not_applicable"
+    client.put_secure_setting.assert_not_called()
+
+
+async def test_converge_permissions_accessibility_granted_and_preserves_existing_services():
+    """The additive settings-put must never drop an already-enabled OEM
+    accessibility service -- docs/developer/android-support/app-lifecycle.md
+    explicitly warns that overwriting the whole string disables every other
+    service on the device."""
+    client = _converging_client()
+    ks_component = "me.jxl.kiosk_satellite/.KioskAccessibilityService"
+    client.declared_bound_services = AsyncMock(
+        return_value={"android.permission.BIND_ACCESSIBILITY_SERVICE": ks_component}
+    )
+    existing = "com.facebook.aloha.system.device/.accessibility.KeyEventAccessibilityService"
+    settings_state = {"enabled_accessibility_services": existing, "accessibility_enabled": "1"}
+
+    async def fake_get(key):
+        return settings_state[key]
+
+    async def fake_put(key, value):
+        settings_state[key] = value
+
+    client.get_secure_setting = AsyncMock(side_effect=fake_get)
+    client.put_secure_setting = AsyncMock(side_effect=fake_put)
+
+    result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
+
+    assert result.accessibility == "granted"
+    final_parts = set(settings_state["enabled_accessibility_services"].split(":"))
+    assert existing in final_parts
+    assert ks_component in final_parts
+
+
+async def test_converge_permissions_accessibility_needs_user_interaction_when_write_does_not_stick():
+    """Some OEM builds gate accessibility enablement behind an on-device
+    tap even after the ADB write lands -- the issue's acceptance text says
+    to record that, never claim success."""
+    client = _converging_client()
+    ks_component = "me.jxl.kiosk_satellite/.KioskAccessibilityService"
+    client.declared_bound_services = AsyncMock(
+        return_value={"android.permission.BIND_ACCESSIBILITY_SERVICE": ks_component}
+    )
+    # The write is accepted but the readback never reflects it -- simulates
+    # an OEM skin silently rejecting the settings write.
+    client.get_secure_setting = AsyncMock(return_value="")
+    client.put_secure_setting = AsyncMock()
+
+    result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
+
+    assert result.accessibility == "needs_user_interaction"
+    assert result.fully_converged is False
+
+
+async def test_converge_permissions_notification_listener_not_applicable_for_ks():
+    """Live-confirmed against the Test Portal (2026-09-20): Kiosk
+    Satellite declares no NotificationListenerService component."""
+    client = _converging_client()
+    client.declared_bound_services = AsyncMock(
+        return_value={"android.permission.BIND_ACCESSIBILITY_SERVICE": "me.jxl.kiosk_satellite/.KioskAccessibilityService"}
+    )
+    result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
+    assert result.notification_listener == "not_applicable"

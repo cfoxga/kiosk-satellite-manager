@@ -37,6 +37,12 @@ from adb_shell.exceptions import (
 from .const import KS_PACKAGE
 
 _VERSION_NAME_RE = re.compile(r"\bversionName=([^\s]+)")
+_RUNTIME_PERMISSION_RE = re.compile(r"^\s*(android\.permission\.\S+): granted=(true|false)", re.MULTILINE)
+_APPOP_MODE_RE = re.compile(r":\s*(\w+)\s*$")
+# KSM-BEHAVE-041: the component name after a BIND_* permission is the
+# device's own declared intent-filter target -- read here, never guessed
+# (docs/developer/android-support/app-lifecycle.md's explicit caution).
+_BOUND_SERVICE_RE = re.compile(r"(\S+)/(\S+) filter \S+ permission (android\.permission\.BIND_\S+)")
 
 
 class AdbAuthPending(Exception):
@@ -190,6 +196,54 @@ class AdbClient:
 
     async def push(self, local_path: str, remote_path: str) -> None:
         await self._device.push(local_path, remote_path)
+
+    async def granted_permissions(self) -> set[str]:
+        """KSM-BEHAVE-041 (Phase 3, "permission convergence"): the
+        authoritative granted-permission set, read from the same
+        `dumpsys package` block Android's own Settings UI reads -- `pm
+        grant`'s exit code is never evidence a permission actually took."""
+        output = await self.shell(f"dumpsys package {KS_PACKAGE}")
+        return {
+            perm
+            for perm, granted in _RUNTIME_PERMISSION_RE.findall(output)
+            if granted == "true"
+        }
+
+    async def appop_mode(self, op: str) -> str:
+        """KSM-BEHAVE-041: `appops set ... allow`'s own shell exit is not
+        evidence either -- `cmd appops get` is the readback."""
+        output = await self.shell(f"cmd appops get {KS_PACKAGE} {op}")
+        match = _APPOP_MODE_RE.search(output.strip())
+        return match.group(1) if match else "unknown"
+
+    async def is_battery_exempt(self) -> bool:
+        """KSM-BEHAVE-041: readback for `dumpsys deviceidle whitelist
+        +<pkg>` -- the mutating and the read-only forms of this command
+        differ only by the `+`."""
+        output = await self.shell("dumpsys deviceidle whitelist")
+        return KS_PACKAGE in output
+
+    async def declared_bound_services(self) -> dict[str, str]:
+        """KSM-BEHAVE-041: map each BIND_* permission this package declares
+        a service for (e.g. BIND_ACCESSIBILITY_SERVICE) to that service's
+        component name, read from the device's own Service Resolver Table.
+        Empty if the package declares no such service -- accessibility and
+        notification-listener convergence use this to tell "not applicable"
+        apart from "needs user interaction" without ever guessing a
+        component name."""
+        output = await self.shell(f"dumpsys package {KS_PACKAGE}")
+        return {
+            permission: f"{pkg}/{component}"
+            for pkg, component, permission in _BOUND_SERVICE_RE.findall(output)
+            if pkg == KS_PACKAGE
+        }
+
+    async def get_secure_setting(self, key: str) -> str:
+        output = (await self.shell(f"settings get secure {key}")).strip()
+        return "" if output == "null" else output
+
+    async def put_secure_setting(self, key: str, value: str) -> None:
+        await self.shell(f"settings put secure {key} {value}")
 
     @property
     def available(self) -> bool:

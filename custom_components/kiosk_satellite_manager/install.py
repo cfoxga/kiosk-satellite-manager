@@ -37,6 +37,7 @@ import logging
 import os
 import tempfile
 import uuid
+from dataclasses import dataclass
 from datetime import timedelta
 
 import aiohttp
@@ -85,6 +86,135 @@ PORTAL_APPOPS: Final = [
     "WRITE_SETTINGS",
     "GET_USAGE_STATS",
 ]
+
+_BIND_ACCESSIBILITY_SERVICE: Final = "android.permission.BIND_ACCESSIBILITY_SERVICE"
+_BIND_NOTIFICATION_LISTENER_SERVICE: Final = "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+
+
+@dataclass
+class PermissionConvergenceResult:
+    """KSM-BEHAVE-041 (Phase 3, "permission convergence"): what actually
+    converged, read back from the device's own authoritative surface --
+    never assumed from `pm grant`/`appops set`/`dumpsys deviceidle
+    whitelist`'s shell exit. `accessibility`/`notification_listener` are
+    each one of "granted", "not_applicable" (the installed KS build
+    declares no such service), or "needs_user_interaction" (declared but
+    still not showing enabled after the ADB write -- some OEM builds gate
+    this behind an on-device tap regardless)."""
+
+    granted_permissions: list[str]
+    denied_permissions: list[str]
+    granted_appops: list[str]
+    denied_appops: list[str]
+    battery_exempt: bool
+    accessibility: str
+    notification_listener: str
+
+    @property
+    def fully_converged(self) -> bool:
+        return (
+            not self.denied_permissions
+            and not self.denied_appops
+            and self.battery_exempt
+            and self.accessibility != "needs_user_interaction"
+            and self.notification_listener != "needs_user_interaction"
+        )
+
+
+async def _converge_consent_service(
+    client: AdbClient,
+    settings_key: str,
+    enabled_flag_key: str | None,
+    bind_permission: str,
+    declared: dict[str, str],
+) -> str:
+    """KSM-BEHAVE-041: accessibility-service/notification-listener access
+    are consent-adjacent surfaces (docs/developer/android-support/
+    app-lifecycle.md) -- the settings string is additive-only (read the
+    existing value first and append, never overwrite another app's already-
+    enabled service) and read back afterward rather than assumed, since some
+    OEM builds still gate this behind an on-device tap despite the ADB
+    write."""
+    component = declared.get(bind_permission)
+    if component is None:
+        return "not_applicable"
+
+    current = await client.get_secure_setting(settings_key)
+    parts = [p for p in current.split(":") if p]
+    if component not in parts:
+        parts.append(component)
+        await client.put_secure_setting(settings_key, ":".join(parts))
+    if enabled_flag_key:
+        await client.put_secure_setting(enabled_flag_key, "1")
+
+    after = await client.get_secure_setting(settings_key)
+    after_parts = {p for p in after.split(":") if p}
+    if component not in after_parts or not all(p in after_parts for p in parts):
+        return "needs_user_interaction"
+    if enabled_flag_key:
+        flag = await client.get_secure_setting(enabled_flag_key)
+        if flag != "1":
+            return "needs_user_interaction"
+    return "granted"
+
+
+async def converge_permissions(
+    client: AdbClient, sdk: int, profile: DeviceProfile
+) -> PermissionConvergenceResult:
+    """KSM-BEHAVE-041 (Phase 3, "permission convergence"): grant runtime
+    permissions/AppOps/battery exemption, then read every one of them back
+    from the device's own authoritative surface instead of trusting a shell
+    exit. Converges accessibility-service and notification-listener access
+    only when the installed KS build actually declares such a service
+    (read from the device, never guessed), recording rather than claiming
+    success when an on-device tap is still required."""
+    perms = profile.permissions_for_sdk(sdk) if profile.key != "unknown" else PORTAL_PERMISSIONS
+    for perm in perms:
+        await client.shell(f"pm grant {KS_PACKAGE} {perm}")
+    granted_now = await client.granted_permissions()
+    granted_permissions = [p for p in perms if p in granted_now]
+    denied_permissions = [p for p in perms if p not in granted_now]
+
+    appops = profile.appops_for_sdk(sdk) if profile.key != "unknown" else PORTAL_APPOPS
+    for op in appops:
+        await client.shell(f"appops set {KS_PACKAGE} {op} allow")
+    granted_appops = []
+    denied_appops = []
+    for op in appops:
+        mode = await client.appop_mode(op)
+        (granted_appops if mode == "allow" else denied_appops).append(op)
+
+    await client.shell(f"dumpsys deviceidle whitelist +{KS_PACKAGE}")
+    battery_exempt = await client.is_battery_exempt()
+
+    declared = await client.declared_bound_services()
+    accessibility = await _converge_consent_service(
+        client,
+        "enabled_accessibility_services",
+        "accessibility_enabled",
+        _BIND_ACCESSIBILITY_SERVICE,
+        declared,
+    )
+    notification_listener = await _converge_consent_service(
+        client,
+        "enabled_notification_listeners",
+        None,
+        _BIND_NOTIFICATION_LISTENER_SERVICE,
+        declared,
+    )
+
+    result = PermissionConvergenceResult(
+        granted_permissions=granted_permissions,
+        denied_permissions=denied_permissions,
+        granted_appops=granted_appops,
+        denied_appops=denied_appops,
+        battery_exempt=battery_exempt,
+        accessibility=accessibility,
+        notification_listener=notification_listener,
+    )
+    if not result.fully_converged:
+        _LOGGER.warning("permission convergence incomplete for %s: %s", KS_PACKAGE, result)
+    return result
 
 
 def _write_temp_apk(data: bytes) -> str:
@@ -173,13 +303,7 @@ async def install_and_launch(
         raise KsInstallVerificationFailed(
             f"am start -n {KS_MAIN_ACTIVITY} reported an error on {host}: {start_output.strip()}"
         )
-    perms = profile.permissions_for_sdk(sdk) if profile.key != "unknown" else PORTAL_PERMISSIONS
-    for perm in perms:
-        await client.shell(f"pm grant {KS_PACKAGE} {perm}")
-    appops = profile.appops_for_sdk(sdk) if profile.key != "unknown" else PORTAL_APPOPS
-    for op in appops:
-        await client.shell(f"appops set {KS_PACKAGE} {op} allow")
-    await client.shell(f"dumpsys deviceidle whitelist +{KS_PACKAGE}")
+    await converge_permissions(client, sdk, profile)
     if profile.is_portal or profile.key == "unknown":
         await client.shell(f"dpm set-active-admin {KS_PACKAGE}/.KioskAdminReceiver")
         await client.shell("settings put global package_verifier_enable 0")

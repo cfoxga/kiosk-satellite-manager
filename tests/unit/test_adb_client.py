@@ -229,3 +229,128 @@ async def test_install_apk_failure_carries_no_raw_output_beyond_the_code(tmp_pat
             await client.install_apk("/data/local/tmp/ks.apk")
     assert exc_info.value.code == "INSTALL_FAILED_INSUFFICIENT_STORAGE"
     assert "812934871293" not in str(exc_info.value)
+
+
+# KSM-BEHAVE-041 (Phase 3, "permission convergence"): dumpsys/appops/settings
+# shapes below are copied verbatim from a live `dumpsys package
+# me.jxl.kiosk_satellite` / `cmd appops get` / `dumpsys deviceidle whitelist`
+# capture against the Test Portal (2026-09-20), not guessed.
+_LIVE_RUNTIME_PERMISSIONS_BLOCK = """\
+      runtime permissions:
+        android.permission.ACCESS_FINE_LOCATION: granted=true, flags=[ USER_SENSITIVE_WHEN_GRANTED|USER_SENSITIVE_WHEN_DENIED]
+        android.permission.READ_EXTERNAL_STORAGE: granted=false, flags=[ USER_SENSITIVE_WHEN_GRANTED|USER_SENSITIVE_WHEN_DENIED]
+        android.permission.CAMERA: granted=true, flags=[ USER_SENSITIVE_WHEN_GRANTED|USER_SENSITIVE_WHEN_DENIED]
+"""
+
+_LIVE_SERVICE_RESOLVER_BLOCK = """\
+Service Resolver Table:
+  Non-Data Actions:
+      android.accessibilityservice.AccessibilityService:
+        e7bceb2 me.jxl.kiosk_satellite/.KioskAccessibilityService filter f02565f permission android.permission.BIND_ACCESSIBILITY_SERVICE
+          Action: "android.accessibilityservice.AccessibilityService"
+      com.google.android.gms.metadata.MODULE_DEPENDENCIES:
+        35d6e03 me.jxl.kiosk_satellite/com.google.android.gms.metadata.ModuleDependencies filter 6c9e8ac
+          Action: "com.google.android.gms.metadata.MODULE_DEPENDENCIES"
+"""
+
+
+async def test_granted_permissions_returns_only_granted_true(tmp_path):
+    """KSM-TEST-043: `pm grant`'s own exit code is never evidence -- the
+    `granted=true`/`granted=false` readback in `dumpsys package` is."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(
+        client._device, "shell", new=AsyncMock(return_value=_LIVE_RUNTIME_PERMISSIONS_BLOCK)
+    ):
+        granted = await client.granted_permissions()
+    assert granted == {
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.CAMERA",
+    }
+    assert "android.permission.READ_EXTERNAL_STORAGE" not in granted
+
+
+@pytest.mark.parametrize(
+    "output,expected",
+    [
+        ("SYSTEM_ALERT_WINDOW: allow", "allow"),
+        ("WRITE_SETTINGS: ignore", "ignore"),
+        ("GET_USAGE_STATS: deny", "deny"),
+        ("", "unknown"),
+    ],
+)
+async def test_appop_mode_parses_cmd_appops_get_output(tmp_path, output, expected):
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(client._device, "shell", new=AsyncMock(return_value=output)) as mock_shell:
+        assert await client.appop_mode("SYSTEM_ALERT_WINDOW") == expected
+    mock_shell.assert_awaited_once_with("cmd appops get me.jxl.kiosk_satellite SYSTEM_ALERT_WINDOW")
+
+
+async def test_is_battery_exempt_true_when_package_in_whitelist(tmp_path):
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(
+        client._device, "shell", new=AsyncMock(return_value="user,me.jxl.kiosk_satellite,10133\n")
+    ) as mock_shell:
+        assert await client.is_battery_exempt() is True
+    mock_shell.assert_awaited_once_with("dumpsys deviceidle whitelist")
+
+
+async def test_is_battery_exempt_false_when_package_absent(tmp_path):
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(
+        client._device, "shell", new=AsyncMock(return_value="user,com.other.app,10001\n")
+    ):
+        assert await client.is_battery_exempt() is False
+
+
+async def test_declared_bound_services_extracts_accessibility_component(tmp_path):
+    """KSM-TEST-043: the accessibility-service component name is read from
+    the device's own declared intent filters, never hardcoded/guessed --
+    `docs/developer/android-support/app-lifecycle.md` explicitly warns
+    against guessing this string."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(
+        client._device, "shell", new=AsyncMock(return_value=_LIVE_SERVICE_RESOLVER_BLOCK)
+    ):
+        declared = await client.declared_bound_services()
+    assert declared == {
+        "android.permission.BIND_ACCESSIBILITY_SERVICE": "me.jxl.kiosk_satellite/.KioskAccessibilityService"
+    }
+
+
+async def test_declared_bound_services_empty_when_none_declared(tmp_path):
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(client._device, "shell", new=AsyncMock(return_value="nothing here\n")):
+        assert await client.declared_bound_services() == {}
+
+
+async def test_get_secure_setting_strips_null_sentinel(tmp_path):
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(client._device, "shell", new=AsyncMock(return_value="null\n")):
+        assert await client.get_secure_setting("enabled_notification_listeners") == ""
+
+
+async def test_get_secure_setting_returns_raw_value(tmp_path):
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(
+        client._device, "shell", new=AsyncMock(return_value="com.a/.Svc:com.b/.Svc\n")
+    ) as mock_shell:
+        assert await client.get_secure_setting("enabled_accessibility_services") == "com.a/.Svc:com.b/.Svc"
+    mock_shell.assert_awaited_once_with("settings get secure enabled_accessibility_services")
+
+
+async def test_put_secure_setting_sends_value(tmp_path):
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(client._device, "shell", new=AsyncMock(return_value="")) as mock_shell:
+        await client.put_secure_setting("enabled_accessibility_services", "com.a/.Svc:com.b/.Svc")
+    mock_shell.assert_awaited_once_with(
+        "settings put secure enabled_accessibility_services com.a/.Svc:com.b/.Svc"
+    )

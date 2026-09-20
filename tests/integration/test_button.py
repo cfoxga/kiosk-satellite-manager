@@ -100,6 +100,12 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
             mock_client.installed_version = AsyncMock(side_effect=[None, "new"])
             mock_client.shell = AsyncMock(return_value="")
             mock_client.close = AsyncMock()
+            mock_client.granted_permissions = AsyncMock(return_value=set())
+            mock_client.appop_mode = AsyncMock(return_value="allow")
+            mock_client.is_battery_exempt = AsyncMock(return_value=True)
+            mock_client.declared_bound_services = AsyncMock(return_value={})
+            mock_client.get_secure_setting = AsyncMock(return_value="")
+            mock_client.put_secure_setting = AsyncMock()
 
             await hass.services.async_call(
                 "button", "press", {"entity_id": button_entry.entity_id}, blocking=True
