@@ -36,6 +36,7 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.components import persistent_notification
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -410,6 +411,16 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _LOGGER.exception(
                 "automatic install failed for %s; use the Install button to retry",
                 self._host,
+            )
+            persistent_notification.async_create(
+                self.hass,
+                message=(
+                    f"Kiosk Satellite could not be installed automatically on "
+                    f"{self._host}. The device was still added to Kiosk Satellite "
+                    "Manager; use its Install/Reinstall button to retry."
+                ),
+                title="Kiosk Satellite automatic installation failed",
+                notification_id=f"{DOMAIN}_install_failed_{self._host}",
             )
 
     async def async_step_install_done(self, user_input: dict | None = None) -> FlowResult:

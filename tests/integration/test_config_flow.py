@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, patch
 import voluptuous as vol
 
 from homeassistant import config_entries, data_entry_flow
+from homeassistant.components import persistent_notification
+from homeassistant.setup import async_setup_component
 
 from custom_components.kiosk_satellite_manager.adb_client import AdbAuthPending
 from custom_components.kiosk_satellite_manager.const import (
@@ -258,11 +260,15 @@ async def test_user_flow_creates_entry_after_device_info_step(hass):
     # the catalog cannot resolve (asserted inside the patch block above).
 
 
-async def test_user_flow_creates_entry_even_when_install_fails(hass):
+async def test_user_flow_creates_entry_and_notifies_when_install_fails(hass):
+    """[KSM-TEST-067] Failure stays best-effort but is visible in HA."""
     # KSM-BEHAVE-012: install is best-effort -- the device is already
     # paired by this point (the hard, human-in-the-loop part), so a failed
     # install shouldn't cost the user the whole flow. The button remains
     # the recovery path.
+    assert await async_setup_component(hass, "persistent_notification", {})
+    await hass.async_block_till_done()
+
     with patch(
         "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
     ) as mock_client_cls, patch(
@@ -312,6 +318,12 @@ async def test_user_flow_creates_entry_even_when_install_fails(hass):
     assert kwargs["host"] == "192.168.50.77"
     assert kwargs["password"] == "hunter222"
     assert kwargs["device_model"] == "portal_go"
+    notification = persistent_notification._async_get_or_create_notifications(hass).get(  # noqa: SLF001
+        "kiosk_satellite_manager_install_failed_192.168.50.77"
+    )
+    assert notification is not None
+    assert "192.168.50.77" in notification["message"]
+    assert "Install/Reinstall" in notification["message"]
 
 
 async def test_user_flow_device_info_uses_host_for_provisioning_when_device_name_unset(hass):
@@ -419,6 +431,7 @@ async def test_user_flow_uses_selected_long_lived_token(hass):
     assert result["data"][CONF_TOKEN_MODE] == "existing-token-id"
     assert result["data"][CONF_HA_TOKEN] == "selected-access-token"
     assert result["data"][CONF_HOME_LAUNCHER] is True
+    assert not persistent_notification._async_get_or_create_notifications(hass)  # noqa: SLF001
 
 
 async def test_user_flow_kept_install_collects_only_existing_connection_details(hass):
