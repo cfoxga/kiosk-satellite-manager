@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from custom_components.kiosk_satellite_manager.adb_client import PmInstallFailed
 from custom_components.kiosk_satellite_manager.install import install_and_launch
 from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
 
@@ -53,6 +54,7 @@ def _fake_client():
     client = MagicMock()
     client.getprop = AsyncMock(return_value="arm64-v8a")
     client.push = AsyncMock()
+    client.install_apk = AsyncMock()
     client.shell = AsyncMock(return_value="")
     return client
 
@@ -75,16 +77,41 @@ async def test_install_and_launch_runs_expected_shell_sequence():
         await install_and_launch(hass, client, session)
 
     assert client.push.await_count == 1
+    client.install_apk.assert_awaited_once()
+    assert client.install_apk.await_args.args[0].startswith("/data/local/tmp/")
     shell_calls = [c.args[0] for c in client.shell.await_args_list]
-    assert shell_calls[0].startswith("pm install -r -g ")
-    assert shell_calls[1].startswith("rm -f ")
-    assert shell_calls[2] == "am start -n me.jxl.kiosk_satellite/.MainActivity"
+    assert shell_calls[0].startswith("rm -f ")
+    assert shell_calls[1] == "am start -n me.jxl.kiosk_satellite/.MainActivity"
     assert "pm grant me.jxl.kiosk_satellite android.permission.RECORD_AUDIO" in shell_calls
     assert "pm grant me.jxl.kiosk_satellite android.permission.READ_LOGS" in shell_calls
     assert "appops set me.jxl.kiosk_satellite SYSTEM_ALERT_WINDOW allow" in shell_calls
     assert "dumpsys deviceidle whitelist +me.jxl.kiosk_satellite" in shell_calls
     assert "dpm set-active-admin me.jxl.kiosk_satellite/.KioskAdminReceiver" in shell_calls
     assert "settings put global package_verifier_enable 0" in shell_calls
+
+
+async def test_install_and_launch_aborts_before_launch_on_rejected_artifact():
+    """KSM-BEHAVE-035: a device that rejects the artifact (old SDK,
+    incompatible ABI, insufficient storage, or a signing-cert mismatch) must
+    not get am start/permission-grant commands run against a package that
+    was never actually installed -- and the pushed APK on-device must still
+    be cleaned up."""
+    hass = _FakeHass()
+    client = _fake_client()
+    client.install_apk = AsyncMock(side_effect=PmInstallFailed("INSTALL_FAILED_OLDER_SDK_VERSION", "unsupported_sdk"))
+    session = _fake_session()
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_apk_url",
+        new=AsyncMock(return_value="https://example.invalid/ks.apk"),
+    ):
+        with pytest.raises(PmInstallFailed) as exc_info:
+            await install_and_launch(hass, client, session)
+
+    assert exc_info.value.category == "unsupported_sdk"
+    shell_calls = [c.args[0] for c in client.shell.await_args_list]
+    assert len(shell_calls) == 1
+    assert shell_calls[0].startswith("rm -f ")
 
 
 async def test_install_and_launch_uses_device_profile_for_start_url_and_permissions():
@@ -303,7 +330,7 @@ async def test_install_and_launch_sync_failure_is_logged_not_raised():
             hass, client, session, host="192.168.1.50", device_name="Kitchen", password="hunter22"
         )
 
-    assert client.shell.await_count == 16
+    assert client.shell.await_count == 15
 
 
 async def test_install_and_launch_reuses_provided_token_and_respects_launcher_flag():

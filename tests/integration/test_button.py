@@ -75,6 +75,7 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
             mock_client.connect = AsyncMock()
             mock_client.getprop = AsyncMock(return_value="armeabi-v7a")
             mock_client.push = AsyncMock()
+            mock_client.install_apk = AsyncMock()
             mock_client.shell = AsyncMock(return_value="")
             mock_client.close = AsyncMock()
 
@@ -83,8 +84,9 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
             )
 
     assert mock_client.push.await_count == 1
+    mock_client.install_apk.assert_awaited_once()
     shell_calls = [c.args[0] for c in mock_client.shell.await_args_list]
-    assert shell_calls[2] == "am start -n me.jxl.kiosk_satellite/.MainActivity"
+    assert shell_calls[1] == "am start -n me.jxl.kiosk_satellite/.MainActivity"
     assert "dumpsys deviceidle whitelist +me.jxl.kiosk_satellite" in shell_calls
     assert "appops set me.jxl.kiosk_satellite SYSTEM_ALERT_WINDOW allow" in shell_calls
     assert seen_installing_during_press is True

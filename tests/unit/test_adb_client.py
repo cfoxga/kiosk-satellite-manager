@@ -29,6 +29,7 @@ from custom_components.kiosk_satellite_manager.adb_client import (
     AdbAuthPending,
     AdbClient,
     AdbConnectFailed,
+    PmInstallFailed,
     ensure_adb_key,
 )
 
@@ -158,3 +159,53 @@ async def test_uninstall_ks_passes_when_package_is_gone(tmp_path):
         "pm uninstall me.jxl.kiosk_satellite",
         "pm path me.jxl.kiosk_satellite",
     ]
+
+
+async def test_install_apk_passes_on_success_output(tmp_path):
+    """KSM-BEHAVE-035: `pm install`'s own stdout, not a zero shell exit, is the
+    authoritative result -- adb-shell's shell() never raises on a device-side
+    package-manager failure."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(client._device, "shell", new=AsyncMock(return_value="Success\n")) as mock_shell:
+        await client.install_apk("/data/local/tmp/ks.apk")
+    mock_shell.assert_awaited_once_with("pm install -r -g /data/local/tmp/ks.apk")
+
+
+@pytest.mark.parametrize(
+    "output,expected_category",
+    [
+        ("Failure [INSTALL_FAILED_OLDER_SDK_VERSION: Failed parse]", "unsupported_sdk"),
+        ("Failure [INSTALL_FAILED_CPU_ABI_INCOMPATIBLE]", "unsupported_abi"),
+        ("Failure [INSTALL_FAILED_NO_MATCHING_ABIS]", "unsupported_abi"),
+        ("Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]", "insufficient_storage"),
+        ("Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: signatures do not match]", "incompatible_signature"),
+        ("Failure [INSTALL_FAILED_SHARED_USER_INCOMPATIBLE]", "incompatible_signature"),
+        ("Failure [INSTALL_FAILED_INVALID_APK]", "other"),
+        ("some garbage the device printed", "other"),
+    ],
+)
+async def test_install_apk_classifies_pm_failure(tmp_path, output, expected_category):
+    """KSM-TEST-030: the four artifact-selection compatibility checks the
+    issue asks for (ABI, minimum-SDK, storage, signing certificate) all
+    surface as a `pm install` failure code -- classify it instead of
+    silently proceeding to `am start` an app that was never installed."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(client._device, "shell", new=AsyncMock(return_value=output)):
+        with pytest.raises(PmInstallFailed) as exc_info:
+            await client.install_apk("/data/local/tmp/ks.apk")
+    assert exc_info.value.category == expected_category
+
+
+async def test_install_apk_failure_carries_no_raw_output_beyond_the_code(tmp_path):
+    """KSM-TEST-031: the exception message stays a short classified summary,
+    not the full raw pm install output verbatim."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    raw = "Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE: not enough room on /data, needed 812934871293 bytes]"
+    with patch.object(client._device, "shell", new=AsyncMock(return_value=raw)):
+        with pytest.raises(PmInstallFailed) as exc_info:
+            await client.install_apk("/data/local/tmp/ks.apk")
+    assert exc_info.value.code == "INSTALL_FAILED_INSUFFICIENT_STORAGE"
+    assert "812934871293" not in str(exc_info.value)

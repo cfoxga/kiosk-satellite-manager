@@ -21,6 +21,7 @@ raw connection failure is AdbConnectFailed.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 from adb_shell.adb_device_async import AdbDeviceTcpAsync
@@ -41,6 +42,45 @@ class AdbAuthPending(Exception):
 
 class AdbConnectFailed(Exception):
     """A raw connection failure (unreachable, wrong port, refused) -- not solved by tapping Allow."""
+
+
+class PmInstallFailed(Exception):
+    """`pm install` reported a `Failure [...]` result.
+
+    adb-shell's shell() never raises on a device-side package-manager
+    failure -- `pm install`'s own stdout ("Success" vs "Failure [CODE]") is
+    the only authoritative signal (KSM-BEHAVE-035). `code`/`category` are
+    kept as sanitized attributes for callers to branch on; the message
+    itself never repeats the raw failure detail after the colon (device
+    paths, byte counts) that some codes include.
+    """
+
+    def __init__(self, code: str | None, category: str) -> None:
+        self.code = code
+        self.category = category
+        super().__init__(f"pm install failed: {code or 'unrecognized failure'} ({category})")
+
+
+# KSM-BEHAVE-035: maps a `pm install` `Failure [INSTALL_FAILED_*]` code to the
+# artifact-selection compatibility category it represents -- ABI, minimum-SDK,
+# storage, and signing-certificate/update-compatibility are exactly the four
+# checks Android's own package manager already performs and reports on
+# install; anything else falls back to "other" rather than guessing.
+_PM_INSTALL_FAILURE_CATEGORIES: dict[str, str] = {
+    "INSTALL_FAILED_OLDER_SDK_VERSION": "unsupported_sdk",
+    "INSTALL_FAILED_CPU_ABI_INCOMPATIBLE": "unsupported_abi",
+    "INSTALL_FAILED_NO_MATCHING_ABIS": "unsupported_abi",
+    "INSTALL_FAILED_INSUFFICIENT_STORAGE": "insufficient_storage",
+    "INSTALL_FAILED_UPDATE_INCOMPATIBLE": "incompatible_signature",
+    "INSTALL_FAILED_SHARED_USER_INCOMPATIBLE": "incompatible_signature",
+}
+_PM_INSTALL_FAILURE_RE = re.compile(r"Failure\s*\[\s*([A-Z_]+)")
+
+
+def _classify_pm_install_output(output: str) -> tuple[str | None, str]:
+    match = _PM_INSTALL_FAILURE_RE.search(output)
+    code = match.group(1) if match else None
+    return code, _PM_INSTALL_FAILURE_CATEGORIES.get(code, "other")
 
 
 def ensure_adb_key(key_dir: str) -> str:
@@ -116,6 +156,22 @@ class AdbClient:
         await self.shell(f"pm uninstall {KS_PACKAGE}")
         if await self.is_ks_installed():
             raise RuntimeError(f"pm uninstall {KS_PACKAGE} did not remove the package")
+
+    async def install_apk(self, remote_path: str) -> None:
+        """`pm install -r -g <remote_path>`, verified against pm's own stdout.
+
+        KSM-BEHAVE-035: a zero shell exit is not evidence -- adb-shell's
+        shell() has no concept of the remote command's own exit status, only
+        whether the ADB shell channel itself worked. `pm install` reports its
+        real result as literal "Success" or "Failure [INSTALL_FAILED_...]"
+        text; only that text is authoritative for whether the artifact was
+        actually accepted.
+        """
+        output = await self.shell(f"pm install -r -g {remote_path}")
+        if "Success" in output and "Failure" not in output:
+            return
+        code, category = _classify_pm_install_output(output)
+        raise PmInstallFailed(code, category)
 
     async def push(self, local_path: str, remote_path: str) -> None:
         await self._device.push(local_path, remote_path)

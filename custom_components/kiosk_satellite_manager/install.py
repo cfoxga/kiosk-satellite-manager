@@ -115,8 +115,14 @@ async def install_and_launch(
     tmp_path = await hass.async_add_executor_job(_write_temp_apk, data)
     try:
         await client.push(tmp_path, KS_APK_REMOTE_PATH)
-        await client.shell(f"pm install -r -g {KS_APK_REMOTE_PATH}")
-        await client.shell(f"rm -f {KS_APK_REMOTE_PATH}")
+        try:
+            # KSM-BEHAVE-035: a rejected artifact (wrong ABI, device SDK too
+            # old, insufficient storage, or a signing-cert/update mismatch)
+            # must abort here -- before am start and permission grants run
+            # against a package that was never actually installed.
+            await client.install_apk(KS_APK_REMOTE_PATH)
+        finally:
+            await client.shell(f"rm -f {KS_APK_REMOTE_PATH}")
     finally:
         await hass.async_add_executor_job(os.unlink, tmp_path)
 
