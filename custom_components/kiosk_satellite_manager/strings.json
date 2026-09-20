@@ -1,0 +1,62 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add a Kiosk Satellite device",
+        "description": "Enter the device's IP address and ADB port. When you click Submit, an \"Allow USB debugging?\" dialog will appear on the device screen (especially on new or factory-reset devices) — please check \"Always allow\" and tap Allow on the device screen.\n\nThe wizard will wait for you to allow access before continuing.",
+        "data": {
+          "host": "IP address",
+          "port": "ADB port"
+        }
+      },
+      "device_info": {
+        "title": "Configure Kiosk Satellite device",
+        "description": "Detected: {device_model}. Pre-filled from the device's own Android device name -- override if you'd like. The password is set as Kiosk Satellite's own admin password once it's installed, and used to connect it to this Home Assistant instance automatically.\n\nNote: If \"Set Kiosk Satellite as Home Launcher\" is enabled, Android requires you to select Kiosk Satellite as the default home app on the device screen when prompted.",
+        "data": {
+          "name": "Name",
+          "area_id": "Area",
+          "password": "Admin password",
+          "home_launcher": "Set Kiosk Satellite as Home Launcher (replaces device home screen)",
+          "token_mode": "Home Assistant access token",
+          "reuse_entry_id": "Device to reuse token from",
+          "ha_token": "Long-lived access token"
+        },
+        "data_description": {
+          "password": "Admin password for Kiosk Satellite's Web UI.",
+          "home_launcher": "Important: Setting Kiosk Satellite as the home launcher requires selecting it on the device screen when prompted (or in Android Settings -> Default apps)."
+        }
+      },
+      "existing_install": {
+        "title": "Kiosk Satellite is already installed",
+        "description": "Kiosk Satellite is already installed on this device. Choose whether to keep that installation (and its settings) or uninstall it and install it fresh.",
+        "data": {
+          "existing_install_action": "Installation"
+        }
+      },
+      "existing_device_info": {
+        "title": "Connect Kiosk Satellite Manager",
+        "description": "Kiosk Satellite is already installed, so its Home Launcher and Home Assistant token settings will be left unchanged. Enter its existing Web UI password so Kiosk Satellite Manager can connect to port 2324 when needed.",
+        "data": {
+          "name": "Name",
+          "area_id": "Area",
+          "password": "Existing Password"
+        },
+        "data_description": {
+          "password": "The existing admin password for Kiosk Satellite's Web UI on port 2324."
+        }
+      }
+    },
+    "progress": {
+      "installing": "Installing Kiosk Satellite and connecting it to Home Assistant. If Home Launcher was selected, please watch the device screen to confirm Kiosk Satellite as your default home app."
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the device",
+      "auth_pending": "Device did not confirm the ADB connection in time — please check the device screen for the \"Allow USB debugging?\" prompt, check \"Always allow from this computer\", tap Allow, and try again.",
+      "token_required": "Please provide a long-lived access token",
+      "no_reusable_token": "Selected device has no saved token to reuse"
+    },
+    "abort": {
+      "already_configured": "Device is already configured"
+    }
+  }
+}

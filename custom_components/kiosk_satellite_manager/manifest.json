@@ -1,0 +1,13 @@
+{
+  "domain": "kiosk_satellite_manager",
+  "name": "Kiosk Satellite Manager",
+  "codeowners": ["@cfoxga"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/cfoxga/kiosk-satellite-manager",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/cfoxga/kiosk-satellite-manager/issues",
+  "requirements": ["adb-shell[async]==0.4.4"],
+  "single_config_entry": false,
+  "version": "0.3.0"
+}

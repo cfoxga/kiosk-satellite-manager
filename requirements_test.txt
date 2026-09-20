@@ -1,0 +1,24 @@
+# Test dependencies for the Kiosk Satellite Manager Python suite.
+#
+# Unit tests (tests/unit) import custom_components/kiosk_satellite_manager
+# modules directly, but that package's __init__.py imports
+# `homeassistant.config_entries` and `voluptuous` at module scope — so even
+# unit-only runs need `homeassistant` installed. "Unit" here means no live
+# hass fixture, not dependency-free.
+#
+# Integration tests (tests/integration) additionally use
+# pytest-homeassistant-custom-component (phacc) for a real in-process hass
+# fixture. phacc ships one tagged release per HA minor version — pin both
+# together, e.g.:
+#
+#     pip install homeassistant==2026.6.4 pytest-homeassistant-custom-component==<match>
+#
+# phacc pulls pytest, pytest-asyncio, voluptuous, and freezegun transitively,
+# so only it needs to be listed here.
+#
+# adb-shell[async] is the manifest's runtime requirement (see manifest.json)
+# -- pinned here too so the test container has it without a full HA
+# dependency resolve.
+
+pytest-homeassistant-custom-component
+adb-shell[async]==0.4.4

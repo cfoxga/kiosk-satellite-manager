@@ -1,0 +1,49 @@
+provision:
+  name: Provision
+  description: >-
+    Apply a settings payload to a Kiosk Satellite device over its
+    ks.provision ADB intent, then verify the change against /api/health.
+    Fails loudly if the read-back doesn't confirm the change landed.
+  fields:
+    config_entry_id:
+      name: Device
+      description: The Kiosk Satellite Manager config entry to provision.
+      required: true
+      selector:
+        config_entry:
+          integration: kiosk_satellite_manager
+    settings:
+      name: Settings
+      description: >-
+        Settings keys/values to apply, e.g. device.name, device.hostname,
+        remote.enabled, remote.password, esphome.node_name, screen.*.
+      required: true
+      example: {"device.name": "Kitchen Portal"}
+      selector:
+        object:
+capability_report:
+  name: Capability report
+  description: >-
+    Return a versioned, sanitized, read-only Android capability report. Raw shell
+    output, account identifiers, credentials, and ADB keys are never returned.
+  fields:
+    config_entry_id:
+      name: Device
+      description: The Kiosk Satellite Manager config entry to inspect.
+      required: true
+      selector:
+        config_entry:
+          integration: kiosk_satellite_manager
+onboarding_plan:
+  name: Onboarding plan
+  description: >-
+    Return a deterministic, read-only onboarding plan from sanitized Android
+    capability evidence. This service never executes plan actions.
+  fields:
+    config_entry_id:
+      name: Device
+      description: The Kiosk Satellite Manager config entry to inspect.
+      required: true
+      selector:
+        config_entry:
+          integration: kiosk_satellite_manager

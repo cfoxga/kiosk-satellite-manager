@@ -1,0 +1,60 @@
+"""GitHub releases lookup for the Kiosk Satellite APK (Phase 1 install).
+
+Release assets are published per-ABI -- confirmed live against the real
+jxlarrea/kiosk-satellite releases API (tag 2026.9.61):
+`kiosk-satellite-<ver>.apk` (universal) plus `.arm64-v8a.apk`/
+`.armeabi-v7a.apk`/`.x86_64.apk` splits. Pick the split matching the detected
+device ABI (a real onn 4K Pro reported `armeabi-v7a` live this session),
+falling back to the universal build for anything unmatched.
+"""
+from __future__ import annotations
+
+import aiohttp
+
+from .const import KS_GITHUB_REPO
+
+_RELEASES_URL = f"https://api.github.com/repos/{KS_GITHUB_REPO}/releases?per_page=10"
+_ABI_TOKENS = ("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+
+
+class ApkAssetNotFound(Exception):
+    """No usable .apk asset on the latest release."""
+
+
+def select_apk_asset(assets: list[tuple[str, str]], abi: str) -> str:
+    """assets: [(filename, download_url), ...] for every .apk asset on a release."""
+    abi = abi.strip()
+    if abi:
+        for name, url in assets:
+            if abi in name:
+                return url
+    for name, url in assets:
+        if not any(token in name for token in _ABI_TOKENS):
+            return url
+    if assets:
+        return assets[0][1]
+    raise ApkAssetNotFound("no .apk asset on the latest release")
+
+
+async def latest_apk_url(session: aiohttp.ClientSession, abi: str) -> str:
+    """Return the download URL for the release asset matching abi (or the
+    universal build if nothing matches)."""
+    async with session.get(
+        _RELEASES_URL,
+        headers={"Accept": "application/vnd.github+json"},
+        timeout=aiohttp.ClientTimeout(total=10),
+    ) as resp:
+        resp.raise_for_status()
+        data = await resp.json()
+    releases = [data] if isinstance(data, dict) else data
+    for release in releases:
+        if release.get("draft") or release.get("prerelease"):
+            continue
+        assets = [
+            (asset["name"], asset["browser_download_url"])
+            for asset in release.get("assets", [])
+            if asset.get("name", "").endswith(".apk")
+        ]
+        if assets:
+            return select_apk_asset(assets, abi)
+    raise ApkAssetNotFound(f"no .apk asset found in releases of {KS_GITHUB_REPO}")

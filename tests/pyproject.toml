@@ -1,0 +1,22 @@
+# Pytest configuration for the Kiosk Satellite Manager Python test suite.
+#
+# Run from this directory (kiosk-satellite-manager/tests):
+#     pytest                      # all tests
+#     pytest unit                 # fast pure-logic tests (no hass fixture)
+#
+# `pythonpath = ".."` puts the repo root on sys.path so
+# `custom_components.kiosk_satellite_manager` imports resolve.
+#
+# NOTE: `kiosk_satellite_manager/__init__.py` itself imports
+# `homeassistant.config_entries`, so importing ANY submodule (including from
+# unit tests) requires `homeassistant` installed — "unit" only means no live
+# hass fixture (phacc), not dependency-free. See ../requirements_test.txt.
+[tool.pytest.ini_options]
+minversion = "7.0"
+asyncio_mode = "auto"
+testpaths = ["unit", "integration"]
+pythonpath = [".."]
+addopts = "--import-mode=importlib -ra -p no:libtmux"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

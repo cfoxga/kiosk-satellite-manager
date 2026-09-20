@@ -1,0 +1,9 @@
+# Changelog
+
+## Unreleased
+
+- Add the response-only `kiosk_satellite_manager.onboarding_plan` service, which converts
+  sanitized Android capability evidence into a deterministic, explainable dry-run plan without
+  executing actions or authorizing destructive operations.
+- Add the read-only `kiosk_satellite_manager.capability_report` response service for sanitized
+  Android capability evidence.
