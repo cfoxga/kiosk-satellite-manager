@@ -104,11 +104,12 @@ class KioskSatelliteInstallButton(ButtonEntity):
                 await client.close()
 
             if coordinator is not None:
-                for _ in range(INSTALL_LAUNCH_POLL_ATTEMPTS):
+                for attempt in range(INSTALL_LAUNCH_POLL_ATTEMPTS):
                     await coordinator.async_request_refresh()
                     if coordinator.last_update_success:
                         break
-                    await asyncio.sleep(INSTALL_LAUNCH_POLL_DELAY_S)
+                    if attempt < INSTALL_LAUNCH_POLL_ATTEMPTS - 1:
+                        await asyncio.sleep(INSTALL_LAUNCH_POLL_DELAY_S)
         finally:
             if coordinator is not None:
                 coordinator.ksm_installing = False

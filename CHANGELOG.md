@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Make post-install health polling stop without an unnecessary final delay,
+  while covering token persistence and install recovery cleanup paths.
 - Surface automatic Kiosk Satellite installation failures as persistent Home
   Assistant notifications while keeping onboarding best-effort and recoverable.
 - Move ADB private-key loading to a worker thread so KSM service calls do not block Home Assistant's event loop.

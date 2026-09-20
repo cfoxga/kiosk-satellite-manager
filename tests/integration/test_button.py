@@ -13,7 +13,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.helpers import entity_registry as er
 
-from custom_components.kiosk_satellite_manager.const import CONF_DEVICE_PROFILE, DOMAIN
+from custom_components.kiosk_satellite_manager.const import (
+    CONF_DEVICE_PROFILE,
+    CONF_HA_TOKEN,
+    DOMAIN,
+    INSTALL_LAUNCH_POLL_ATTEMPTS,
+)
 from custom_components.kiosk_satellite_manager.device_catalog import NoApprovedRecipe
 
 from .conftest import init_integration
@@ -126,6 +131,255 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
     assert seen_installing_during_press is True
     assert coordinator.ksm_installing is False
     assert hass.states.get(sensor_entry.entity_id).state == "new"
+
+
+@pytest.mark.parametrize(
+    ("stored_token", "returned_token", "expected_token"),
+    [
+        (None, "new-device-token", "new-device-token"),
+        ("existing-device-token", "replacement-token", "existing-device-token"),
+    ],
+)
+async def test_press_persists_only_a_new_device_token(
+    hass, stored_token, returned_token, expected_token
+):
+    """[KSM-TEST-087] A first install saves its device token once, while a
+    reinstall keeps the configured credential rather than replacing it."""
+    async def fake_fetch_health(session, host):
+        return {"appVersion": "old"}
+
+    entry_data = {}
+    if stored_token is not None:
+        entry_data[CONF_HA_TOKEN] = stored_token
+
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
+        ctx = await init_integration(hass, data=entry_data)
+        ent_reg = er.async_get(hass)
+        install_entry = next(
+            entry
+            for entry in er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)
+            if entry.unique_id == f"{ctx.entry.entry_id}_install"
+        )
+
+        with patch(
+            "custom_components.kiosk_satellite_manager.button.AdbClient"
+        ) as mock_client_cls, patch(
+            "custom_components.kiosk_satellite_manager.button.install_and_launch",
+            new=AsyncMock(return_value=returned_token),
+        ):
+            mock_client = mock_client_cls.return_value
+            mock_client.connect = AsyncMock()
+            mock_client.close = AsyncMock()
+
+            await hass.services.async_call(
+                "button", "press", {"entity_id": install_entry.entity_id}, blocking=True
+            )
+
+    assert ctx.entry.data.get(CONF_HA_TOKEN) == expected_token
+    mock_client.close.assert_awaited_once()
+
+
+async def test_press_retries_health_until_success_without_a_terminal_delay(hass):
+    """[KSM-TEST-088] Post-install health polling stops at the first healthy
+    response; a permanently unhealthy device gets exactly the bounded delays
+    *between* attempts, never an extra delay after the final request."""
+    async def fake_fetch_health(session, host):
+        return {"appVersion": "old"}
+
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
+        ctx = await init_integration(hass)
+        ent_reg = er.async_get(hass)
+        install_entry = next(
+            entry
+            for entry in er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)
+            if entry.unique_id == f"{ctx.entry.entry_id}_install"
+        )
+        coordinator = hass.data[DOMAIN][ctx.entry.entry_id]
+
+        refresh_count = 0
+
+        async def always_unhealthy():
+            nonlocal refresh_count
+            refresh_count += 1
+            coordinator.last_update_success = False
+
+        with patch(
+            "custom_components.kiosk_satellite_manager.button.AdbClient"
+        ) as mock_client_cls, patch(
+            "custom_components.kiosk_satellite_manager.button.install_and_launch",
+            new=AsyncMock(return_value=None),
+        ), patch.object(
+            coordinator, "async_request_refresh", new=AsyncMock(side_effect=always_unhealthy)
+        ) as mock_refresh, patch(
+            "custom_components.kiosk_satellite_manager.button.asyncio.sleep", new=AsyncMock()
+        ) as mock_sleep:
+            mock_client = mock_client_cls.return_value
+            mock_client.connect = AsyncMock()
+            mock_client.close = AsyncMock()
+
+            await hass.services.async_call(
+                "button", "press", {"entity_id": install_entry.entity_id}, blocking=True
+            )
+
+    assert refresh_count == INSTALL_LAUNCH_POLL_ATTEMPTS
+    assert mock_refresh.await_count == INSTALL_LAUNCH_POLL_ATTEMPTS
+    assert mock_sleep.await_count == INSTALL_LAUNCH_POLL_ATTEMPTS - 1
+    assert coordinator.ksm_installing is False
+    mock_client.close.assert_awaited_once()
+
+
+async def test_press_stops_health_retries_at_the_first_success(hass):
+    """[KSM-TEST-089] A successful refresh stops the bounded retry loop
+    immediately instead of continuing to poll a now-healthy device."""
+    async def fake_fetch_health(session, host):
+        return {"appVersion": "old"}
+
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
+        ctx = await init_integration(hass)
+        ent_reg = er.async_get(hass)
+        install_entry = next(
+            entry
+            for entry in er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)
+            if entry.unique_id == f"{ctx.entry.entry_id}_install"
+        )
+        coordinator = hass.data[DOMAIN][ctx.entry.entry_id]
+
+        refresh_count = 0
+
+        async def healthy_on_second_refresh():
+            nonlocal refresh_count
+            refresh_count += 1
+            coordinator.last_update_success = refresh_count == 2
+
+        with patch(
+            "custom_components.kiosk_satellite_manager.button.AdbClient"
+        ) as mock_client_cls, patch(
+            "custom_components.kiosk_satellite_manager.button.install_and_launch",
+            new=AsyncMock(return_value=None),
+        ), patch.object(
+            coordinator,
+            "async_request_refresh",
+            new=AsyncMock(side_effect=healthy_on_second_refresh),
+        ) as mock_refresh, patch(
+            "custom_components.kiosk_satellite_manager.button.asyncio.sleep", new=AsyncMock()
+        ) as mock_sleep:
+            mock_client = mock_client_cls.return_value
+            mock_client.connect = AsyncMock()
+            mock_client.close = AsyncMock()
+
+            await hass.services.async_call(
+                "button", "press", {"entity_id": install_entry.entity_id}, blocking=True
+            )
+
+    assert mock_refresh.await_count == 2
+    mock_sleep.assert_awaited_once()
+    mock_client.close.assert_awaited_once()
+
+
+async def test_press_cleans_up_installing_state_and_connection_after_install_failure(hass):
+    """[KSM-TEST-090] Once connected, a failed install still closes ADB and
+    clears the transient sensor state so the button never leaves it stuck on
+    Installing."""
+    async def fake_fetch_health(session, host):
+        return {"appVersion": "old"}
+
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
+        ctx = await init_integration(hass)
+        ent_reg = er.async_get(hass)
+        install_entry = next(
+            entry
+            for entry in er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)
+            if entry.unique_id == f"{ctx.entry.entry_id}_install"
+        )
+        coordinator = hass.data[DOMAIN][ctx.entry.entry_id]
+        real_update_listeners = coordinator.async_update_listeners
+        mock_update_listeners = MagicMock(wraps=real_update_listeners)
+
+        with patch(
+            "custom_components.kiosk_satellite_manager.button.AdbClient"
+        ) as mock_client_cls, patch(
+            "custom_components.kiosk_satellite_manager.button.install_and_launch",
+            new=AsyncMock(side_effect=RuntimeError("install failed")),
+        ), patch.object(
+            coordinator, "async_update_listeners", new=mock_update_listeners
+        ):
+            mock_client = mock_client_cls.return_value
+            mock_client.connect = AsyncMock()
+            mock_client.close = AsyncMock()
+
+            with pytest.raises(RuntimeError, match="install failed"):
+                await hass.services.async_call(
+                    "button", "press", {"entity_id": install_entry.entity_id}, blocking=True
+                )
+
+    assert coordinator.ksm_installing is False
+    assert mock_update_listeners.call_count == 2
+    mock_client.close.assert_awaited_once()
+
+
+async def test_press_cleans_up_installing_state_after_connection_failure(hass):
+    """[KSM-TEST-091] A rejected ADB connection never leaves the version
+    sensor in Installing, and does not try to close an unacquired session."""
+    async def fake_fetch_health(session, host):
+        return {"appVersion": "old"}
+
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
+        ctx = await init_integration(hass)
+        ent_reg = er.async_get(hass)
+        install_entry = next(
+            entry
+            for entry in er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)
+            if entry.unique_id == f"{ctx.entry.entry_id}_install"
+        )
+        coordinator = hass.data[DOMAIN][ctx.entry.entry_id]
+
+        with patch(
+            "custom_components.kiosk_satellite_manager.button.AdbClient"
+        ) as mock_client_cls:
+            mock_client = mock_client_cls.return_value
+            mock_client.connect = AsyncMock(side_effect=RuntimeError("connect failed"))
+            mock_client.close = AsyncMock()
+
+            with pytest.raises(RuntimeError, match="connect failed"):
+                await hass.services.async_call(
+                    "button", "press", {"entity_id": install_entry.entity_id}, blocking=True
+                )
+
+    assert coordinator.ksm_installing is False
+    mock_client.close.assert_not_awaited()
+
+
+async def test_press_succeeds_when_the_entry_coordinator_is_missing(hass):
+    """[KSM-TEST-092] A button left behind during coordinator teardown still
+    installs safely; optional refresh bookkeeping cannot block recovery."""
+    async def fake_fetch_health(session, host):
+        return {"appVersion": "old"}
+
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
+        ctx = await init_integration(hass)
+        ent_reg = er.async_get(hass)
+        install_entry = next(
+            entry
+            for entry in er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)
+            if entry.unique_id == f"{ctx.entry.entry_id}_install"
+        )
+        hass.data[DOMAIN].pop(ctx.entry.entry_id)
+
+        with patch(
+            "custom_components.kiosk_satellite_manager.button.AdbClient"
+        ) as mock_client_cls, patch(
+            "custom_components.kiosk_satellite_manager.button.install_and_launch",
+            new=AsyncMock(return_value=None),
+        ):
+            mock_client = mock_client_cls.return_value
+            mock_client.connect = AsyncMock()
+            mock_client.close = AsyncMock()
+
+            await hass.services.async_call(
+                "button", "press", {"entity_id": install_entry.entity_id}, blocking=True
+            )
+
+    mock_client.close.assert_awaited_once()
 
 
 async def test_uninstall_button_press_uninstalls_ks(hass):
