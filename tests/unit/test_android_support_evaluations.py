@@ -22,12 +22,18 @@ from custom_components.kiosk_satellite_manager.capability_report import Capabili
 from custom_components.kiosk_satellite_manager.device_profiles import match_profile
 from custom_components.kiosk_satellite_manager.onboarding_plan import build_onboarding_plan
 
+# portal_go has no live-confirmed Test Harness evidence (KSM-OPEN-003), so every
+# plan built from this fixture carries the fixed test_harness_reset /
+# vulnerability_based_cleanup destructive_options entries, ineligible, plus the
+# test_harness_not_confirmed blocker -- same as any other unconfirmed profile.
+_PORTAL_GO_TEST_HARNESS_BLOCKER = "test_harness_not_confirmed"
+
 
 def _report(*, device_owner: bool | None, adb_uid: int, installed: bool) -> dict:
     return {
         "schema_version": 1,
         "facts": {
-            "platform": {"manufacturer": "Facebook", "model": "PortalGo", "sdk": 29},
+            "platform": {"manufacturer": "Facebook", "model": "PortalGo", "sdk": 29, "device_profile_key": "portal_go"},
             "management": {"account_count": 0, "device_owner": device_owner, "adb_uid": adb_uid, "user_count": 1},
             "applications": {"kiosk_satellite": {"installed": installed, "version": None}},
             "oem": {"bootloader_locked": None},
@@ -54,7 +60,7 @@ def test_scenario_2_root_observed_adb_never_unlocks_the_owner_blocker():
     rooted = build_onboarding_plan(_report(device_owner=False, adb_uid=0, installed=False))
     shell = build_onboarding_plan(_report(device_owner=False, adb_uid=2000, installed=False))
 
-    assert rooted["blockers"] == shell["blockers"] == ["device_owner_absent"]
+    assert rooted["blockers"] == shell["blockers"] == ["device_owner_absent", _PORTAL_GO_TEST_HARNESS_BLOCKER]
     assert rooted["destructive_options"] == shell["destructive_options"]
     assert rooted["automatic_actions"] == []
 
@@ -75,7 +81,11 @@ def test_scenario_3_existing_device_owner_clears_the_enrollment_blocker():
 
     assert "device_owner_absent" not in plan["blockers"]
     assert "device_owner_unknown" not in plan["blockers"]
-    assert plan["destructive_options"] == []
+    # device_owner_enrollment drops out once owned, but test_harness_reset and
+    # vulnerability_based_cleanup are unconditional -- every plan carries them
+    # (Acceptance: "unsupported OEM behavior produces a complete support report").
+    assert [o["id"] for o in plan["destructive_options"]] == ["test_harness_reset", "vulnerability_based_cleanup"]
+    assert all(o["executor_authorized"] is False for o in plan["destructive_options"])
 
 
 def test_scenario_4_legacy_device_admin_with_no_owner_still_fails_closed():
@@ -86,7 +96,7 @@ def test_scenario_4_legacy_device_admin_with_no_owner_still_fails_closed():
     way, matching the documented fail-closed guidance for unmodeled evidence."""
     plan = build_onboarding_plan(_report(device_owner=False, adb_uid=2000, installed=True))
 
-    assert plan["blockers"] == ["device_owner_absent"]
+    assert plan["blockers"] == ["device_owner_absent", _PORTAL_GO_TEST_HARNESS_BLOCKER]
     assert plan["destructive_options"][0]["executor_authorized"] is False
 
 
@@ -108,13 +118,15 @@ async def test_scenario_7_policy_blocked_package_probe_is_distinguishable_from_a
     two cases are otherwise indistinguishable from `facts` alone."""
     client_denied = AsyncMock()
     client_denied.shell = AsyncMock(side_effect=[
-        "Facebook", "PortalGo", "29", "uid=2000(shell)", "", "UserInfo{0:Owner:13}",
-        "No device owner", "", PermissionError("policy blocked"), "",
+        "Facebook", "PortalGo", "29", "", "", "", "uid=2000(shell)", "",
+        "UserInfo{0:Owner:13}", "No device owner", "", "", "", "", "",
+        PermissionError("policy blocked"), "",
     ])
     client_absent = AsyncMock()
     client_absent.shell = AsyncMock(side_effect=[
-        "Facebook", "PortalGo", "29", "uid=2000(shell)", "", "UserInfo{0:Owner:13}",
-        "No device owner", "", "", "",
+        "Facebook", "PortalGo", "29", "", "", "", "uid=2000(shell)", "",
+        "UserInfo{0:Owner:13}", "No device owner", "", "", "", "", "",
+        "", "",
     ])
 
     denied = await CapabilityReportCollector(client_denied).collect()
