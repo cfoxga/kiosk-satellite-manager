@@ -36,7 +36,7 @@ def _observed_report(
             "oem": {"bootloader_locked": True, "test_harness_mode": None},
             "test_harness": {"active": None, "command_supported": None},
         },
-        "probes": {},
+        "probes": {"kiosk_satellite_package": {"status": "unsupported"}},
         "inferences": ["kiosk_satellite_not_installed"] if not installed else [],
     }
 

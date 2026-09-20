@@ -29,7 +29,13 @@ from custom_components.kiosk_satellite_manager.onboarding_plan import build_onbo
 _PORTAL_GO_TEST_HARNESS_BLOCKER = "test_harness_not_confirmed"
 
 
-def _report(*, device_owner: bool | None, adb_uid: int, installed: bool) -> dict:
+def _report(
+    *,
+    device_owner: bool | None,
+    adb_uid: int,
+    installed: bool,
+    kiosk_satellite_package_status: str = "unsupported",
+) -> dict:
     return {
         "schema_version": 1,
         "facts": {
@@ -38,7 +44,10 @@ def _report(*, device_owner: bool | None, adb_uid: int, installed: bool) -> dict
             "applications": {"kiosk_satellite": {"installed": installed, "version": None}},
             "oem": {"bootloader_locked": None},
         },
-        "probes": {"adb_identity": {"status": "ok"}},
+        "probes": {
+            "adb_identity": {"status": "ok"},
+            "kiosk_satellite_package": {"status": kiosk_satellite_package_status},
+        },
         "inferences": [] if installed else ["kiosk_satellite_not_installed"],
     }
 
@@ -51,6 +60,20 @@ def test_scenario_1_stock_non_root_plans_install_with_no_destructive_step():
     install = next(step for step in plan["steps"] if step["id"] == "install_kiosk_satellite")
     assert install["classification"] == "automatic_with_verification"
     assert install["user_presence_required"] is False
+
+
+def test_package_probe_failure_blocks_install_when_package_state_is_unknown():
+    """KSM-TEST-048: a denied/error `pm path` result is unknown, not absent."""
+    for status in ("denied", "error"):
+        plan = build_onboarding_plan(_report(
+            device_owner=False,
+            adb_uid=2000,
+            installed=False,
+            kiosk_satellite_package_status=status,
+        ))
+
+        assert "package_state_unknown" in plan["blockers"]
+        assert all(step["id"] != "install_kiosk_satellite" for step in plan["steps"])
 
 
 def test_scenario_2_root_observed_adb_never_unlocks_the_owner_blocker():

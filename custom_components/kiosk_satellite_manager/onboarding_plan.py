@@ -106,7 +106,14 @@ def build_onboarding_plan(report: dict[str, Any]) -> dict[str, Any]:
             "eligible_now": eligible_now,
         })
 
-    if kiosk_satellite.get("installed") is False:
+    package_probe_status = probes.get("kiosk_satellite_package", {}).get("status")
+    package_state_observed = package_probe_status in {"ok", "unsupported"}
+    if kiosk_satellite.get("installed") is False and not package_state_observed:
+        # KSM-BEHAVE-043: a denied or failed `pm path` probe leaves the
+        # derived `installed: false` fact ambiguous.  Never turn that missing
+        # evidence into an automatic install recommendation.
+        blockers.append("package_state_unknown")
+    elif kiosk_satellite.get("installed") is False:
         steps.append(_step(
             "install_kiosk_satellite", "automatic_with_verification", "Kiosk Satellite is not installed.",
             ["ADB access remains authorized"],
