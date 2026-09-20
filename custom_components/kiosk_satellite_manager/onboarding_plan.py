@@ -106,6 +106,28 @@ def build_onboarding_plan(report: dict[str, Any]) -> dict[str, Any]:
             "eligible_now": eligible_now,
         })
 
+    # KSM-BEHAVE-048/051 (issue #20): no exact model, or an exact model with no
+    # approved recipe assignment, means there is no executable provisioning
+    # behavior at all. Before the catalog, an unmatched device silently
+    # received the Portal permission/device-admin set; now it fails closed with
+    # the evidence bundle that says why.
+    catalog = report.get("catalog", {})
+    recipe_executable = catalog.get("executable_recipe") is True
+    if not recipe_executable:
+        blockers.append("no_executable_recipe")
+        steps.append(_step(
+            "identify_device_model", "unsupported",
+            catalog.get("reason") or "No approved install recipe applies to this device.",
+            [
+                "Live-observed manufacturer/brand/model/product/device identity facts",
+                "An exact device-model row and an approved recipe assignment in the source catalog",
+            ],
+            "The device resolves to an exact catalog model with an approved recipe version.",
+            "Add the exact model and its qualification evidence "
+            "(docs/developer/android-support/profile-workflow.md); never provision on a guess.",
+            user_presence_required=True,
+        ))
+
     package_probe_status = probes.get("kiosk_satellite_package", {}).get("status")
     package_state_observed = package_probe_status in {"ok", "unsupported"}
     if kiosk_satellite.get("installed") is False and not package_state_observed:
@@ -115,8 +137,14 @@ def build_onboarding_plan(report: dict[str, Any]) -> dict[str, Any]:
         blockers.append("package_state_unknown")
     elif kiosk_satellite.get("installed") is False:
         steps.append(_step(
-            "install_kiosk_satellite", "automatic_with_verification", "Kiosk Satellite is not installed.",
-            ["ADB access remains authorized"],
+            "install_kiosk_satellite",
+            "automatic_with_verification" if recipe_executable else "unsupported",
+            "Kiosk Satellite is not installed."
+            if recipe_executable
+            else "Kiosk Satellite is not installed, and no approved recipe applies to this device.",
+            ["ADB access remains authorized"]
+            if recipe_executable
+            else ["ADB access remains authorized", "An approved catalog recipe for this exact model"],
             "Kiosk Satellite is installed and its health endpoint responds.",
             "Use the Install/Reinstall Kiosk Satellite button after resolving the reported blocker.",
             user_presence_required=False,
@@ -137,7 +165,10 @@ def build_onboarding_plan(report: dict[str, Any]) -> dict[str, Any]:
     # profile's live-confirmed status -- never by this plan guessing.
     # Present in every plan (Acceptance: "Unsupported OEM behavior produces a
     # complete support report"), eligible only when confirmed.
-    recovery_profile = get_recovery_profile(platform.get("device_profile_key"))
+    # Exact model key only (KSM-BEHAVE-052): a fallback classification never
+    # reaches this lookup, so it can never inherit a sibling's recovery
+    # evidence through the install recipe they share.
+    recovery_profile = get_recovery_profile(platform.get("device_model_key"))
     test_harness_confirmed = recovery_profile.test_harness_confirmed
     test_harness_eligible = test_harness_confirmed is True
     steps.append(_step(
@@ -194,9 +225,10 @@ def build_onboarding_plan(report: dict[str, Any]) -> dict[str, Any]:
     })
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "summary": f"{len(steps)} planned step(s), {len(blockers)} blocker(s), no action executed.",
         "facts": facts,
+        "catalog": catalog,
         "collector_inferences": collector_inferences,
         "derived_inferences": derived_inferences,
         "steps": steps,

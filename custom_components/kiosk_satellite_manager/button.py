@@ -92,7 +92,7 @@ class KioskSatelliteInstallButton(ButtonEntity):
                     password=self._entry.data.get(CONF_PASSWORD),
                     ha_token=self._entry.data.get(CONF_HA_TOKEN),
                     home_launcher=self._entry.data.get(CONF_HOME_LAUNCHER, True),
-                    device_profile=self._entry.data.get(CONF_DEVICE_PROFILE),
+                    device_model=self._entry.data.get(CONF_DEVICE_PROFILE),
                 )
 
                 if used_token and not self._entry.data.get(CONF_HA_TOKEN):

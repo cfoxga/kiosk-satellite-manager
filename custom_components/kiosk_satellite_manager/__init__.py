@@ -38,11 +38,19 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .adb_client import AdbClient
 from .capability_report import CapabilityReportCollector
+from .device_catalog import validate_catalog
 from .onboarding_plan import build_onboarding_plan
 from .const import CONF_HOST, CONF_KEY_PATH, CONF_PORT, DOMAIN, HEALTH_SCAN_INTERVAL_MIN, PLATFORMS
 from .provisioning import ProvisioningMismatch, apply_provisioning, fetch_health
 
 _LOGGER = logging.getLogger(__name__)
+
+# KSM-BEHAVE-051 (issue #20): the source catalog is version-controlled data, so
+# a malformed edit is a source defect, not a runtime condition. Validate it at
+# import so a bad assignment (unknown model, two approved recipes, a launcher
+# recipe on launcher-incapable hardware) fails the integration load and the
+# gate, instead of surfacing mid-provision on a real device.
+validate_catalog()
 
 __all__ = ["DOMAIN", "async_setup_entry", "async_unload_entry"]
 

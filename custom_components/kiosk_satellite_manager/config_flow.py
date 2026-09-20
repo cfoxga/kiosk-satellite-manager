@@ -63,10 +63,47 @@ from .const import (
     TOKEN_MODE_AUTO,
 )
 
-from .device_profiles import match_profile
+from .device_catalog import require_recipe, resolve_catalog_entry
+from .device_models import DeviceFacts
 from .install import install_and_launch
 
 _LOGGER = logging.getLogger(__name__)
+
+# Read-only, and used only to *read a label* off a device the catalog could not
+# identify. It grants nothing and provisions nothing -- an unidentified device
+# still gets no recipe (KSM-BEHAVE-048).
+DEFAULT_DEVICE_NAME_COMMAND = "settings get global device_name"
+
+
+async def _collect_identity_facts(client) -> DeviceFacts:
+    """Read the allowlisted getprop identity facts the catalog matches on.
+
+    Each probe is independent: one unreadable property leaves that fact empty
+    rather than aborting discovery, and an empty fact never satisfies a match
+    constraint.
+    """
+
+    async def _prop(name: str) -> str:
+        try:
+            return (await client.getprop(name)).strip()
+        except Exception:  # noqa: BLE001 -- an unreadable prop is missing evidence
+            return ""
+
+    sdk_raw = await _prop("ro.build.version.sdk")
+    return DeviceFacts(
+        manufacturer=await _prop("ro.product.manufacturer"),
+        brand=await _prop("ro.product.brand"),
+        model=await _prop("ro.product.model"),
+        product=await _prop("ro.product.name"),
+        device=await _prop("ro.product.device"),
+        board=await _prop("ro.product.board"),
+        hardware=await _prop("ro.hardware"),
+        characteristics=await _prop("ro.build.characteristics"),
+        abi=await _prop("ro.product.cpu.abi"),
+        sdk=int(sdk_raw) if sdk_raw.isdigit() else 0,
+        fingerprint=await _prop("ro.build.fingerprint"),
+    )
+
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -138,24 +175,27 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
 
             try:
-                characteristics = await client.getprop("ro.build.characteristics")
-                manufacturer = await client.getprop("ro.product.manufacturer")
-                try:
-                    model = await client.getprop("ro.product.model")
-                except Exception:
-                    model = ""
-                try:
-                    sdk_str = await client.getprop("ro.build.version.sdk")
-                    sdk = int(sdk_str) if sdk_str.isdigit() else 0
-                except Exception:
-                    sdk = 0
+                facts = await _collect_identity_facts(client)
+                sdk = facts.sdk
                 try:
                     android_release = await client.getprop("ro.build.version.release")
                 except Exception:
                     android_release = ""
-                profile = match_profile(characteristics, manufacturer, model=model, sdk=sdk)
-                discovered_name = profile.normalize_device_name(
-                    await client.shell(profile.device_name_command)
+                # Identity first, recipe second (KSM-BEHAVE-048). An
+                # unrecognized device still gets a name and an entry -- it just
+                # gets no recipe, and the Install button will refuse until the
+                # catalog has an exact model row for it.
+                entry = resolve_catalog_entry(facts)
+                name_command = (
+                    entry.recipe.device_name_command
+                    if entry.recipe
+                    else DEFAULT_DEVICE_NAME_COMMAND
+                )
+                raw_name = await client.shell(name_command)
+                discovered_name = (
+                    entry.recipe.normalize_device_name(raw_name)
+                    if entry.recipe
+                    else raw_name.strip()
                 )
                 ks_installed = await client.is_ks_installed()
             finally:
@@ -164,8 +204,8 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._host = host
             self._port = port
             self._key_path = key_path
-            self._profile_key = profile.key
-            self._profile_name = profile.name
+            self._profile_key = entry.model_key
+            self._profile_name = entry.model_name or entry.classification_name
             self._android_version = (
                 f"Android {android_release} (SDK {sdk})"
                 if android_release
@@ -340,6 +380,14 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         try:
             await client.connect()
             try:
+                # KSM-BEHAVE-048: resolve the recipe before *any* device
+                # mutation, not just before install_and_launch's own. The
+                # reinstall path uninstalls first, so a model that fails closed
+                # one line later would leave the device with its working app
+                # removed and no approved recipe able to put it back.
+                # Connecting is a pairing handshake, not a mutation, so it may
+                # precede the gate; `uninstall_ks` may not.
+                require_recipe(self._profile_key)
                 if self._existing_install_action == EXISTING_INSTALL_REINSTALL:
                     await client.uninstall_ks()
                 used_token = await install_and_launch(
@@ -351,7 +399,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     password=self._password,
                     ha_token=self._ha_token,
                     home_launcher=self._home_launcher,
-                    device_profile=self._profile_key,
+                    device_model=self._profile_key,
                 )
                 if used_token:
                     self._ha_token = used_token

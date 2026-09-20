@@ -57,7 +57,8 @@ from .const import (
     SYNC_STATUS_POLL_ATTEMPTS,
     SYNC_STATUS_POLL_DELAY_S,
 )
-from .device_profiles import DeviceProfile, get_profile
+from .device_catalog import require_recipe
+from .install_recipes import InstallRecipe
 from .ks_api import latest_release
 from .ks_api_client import KsApiError
 from .provisioning import fetch_health
@@ -72,20 +73,12 @@ class KsInstallVerificationFailed(Exception):
     shell exit or a "Success" pm-install string alone once a version target
     is known (KSM-BEHAVE-040)."""
 
-PORTAL_PERMISSIONS: Final = [
-    "android.permission.RECORD_AUDIO",
-    "android.permission.CAMERA",
-    "android.permission.ACCESS_COARSE_LOCATION",
-    "android.permission.ACCESS_FINE_LOCATION",
-    "android.permission.READ_EXTERNAL_STORAGE",
-    "android.permission.WRITE_EXTERNAL_STORAGE",
-    "android.permission.READ_LOGS",
-]
-PORTAL_APPOPS: Final = [
-    "SYSTEM_ALERT_WINDOW",
-    "WRITE_SETTINGS",
-    "GET_USAGE_STATS",
-]
+
+# KSM-BEHAVE-048 (issue #20): the module-level PORTAL_PERMISSIONS/PORTAL_APPOPS
+# fallback lists are gone. They were what an *unmatched* device used to get --
+# the full Meta Portal permission set, plus Device Admin, applied to hardware
+# nobody had identified. There is no default permission set any more: a device
+# with no approved recipe raises NoApprovedRecipe before any grant runs.
 
 _BIND_ACCESSIBILITY_SERVICE: Final = "android.permission.BIND_ACCESSIBILITY_SERVICE"
 _BIND_NOTIFICATION_LISTENER_SERVICE: Final = "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
@@ -159,7 +152,7 @@ async def _converge_consent_service(
 
 
 async def converge_permissions(
-    client: AdbClient, sdk: int, profile: DeviceProfile
+    client: AdbClient, sdk: int, recipe: InstallRecipe
 ) -> PermissionConvergenceResult:
     """KSM-BEHAVE-041 (Phase 3, "permission convergence"): grant runtime
     permissions/AppOps/battery exemption, then read every one of them back
@@ -168,14 +161,14 @@ async def converge_permissions(
     only when the installed KS build actually declares such a service
     (read from the device, never guessed), recording rather than claiming
     success when an on-device tap is still required."""
-    perms = profile.permissions_for_sdk(sdk) if profile.key != "unknown" else PORTAL_PERMISSIONS
+    perms = recipe.permissions_for_sdk(sdk)
     for perm in perms:
         await client.shell(f"pm grant {KS_PACKAGE} {perm}")
     granted_now = await client.granted_permissions()
     granted_permissions = [p for p in perms if p in granted_now]
     denied_permissions = [p for p in perms if p not in granted_now]
 
-    appops = profile.appops_for_sdk(sdk) if profile.key != "unknown" else PORTAL_APPOPS
+    appops = recipe.appops_for_sdk(sdk)
     for op in appops:
         await client.shell(f"appops set {KS_PACKAGE} {op} allow")
     granted_appops = []
@@ -184,7 +177,8 @@ async def converge_permissions(
         mode = await client.appop_mode(op)
         (granted_appops if mode == "allow" else denied_appops).append(op)
 
-    await client.shell(f"dumpsys deviceidle whitelist +{KS_PACKAGE}")
+    if recipe.battery_exemption:
+        await client.shell(f"dumpsys deviceidle whitelist +{KS_PACKAGE}")
     battery_exempt = await client.is_battery_exempt()
 
     declared = await client.declared_bound_services()
@@ -295,13 +289,18 @@ async def install_and_launch(
     password: str | None = None,
     ha_token: str | None = None,
     home_launcher: bool = True,
-    device_profile: str | None = None,
+    device_model: str | None = None,
 ) -> str | None:
     """Fetch the latest KS APK matching the device's ABI, install it, launch
     it, and grant full permissions. If a password is configured on the entry,
     also sync the device's admin password/Device Name and connect it to this
-    HA instance (KSM-BEHAVE-010/011/014/015/020). Returns the HA token used."""
-    profile = get_profile(device_profile)
+    HA instance (KSM-BEHAVE-010/011/014/015/020). Returns the HA token used.
+
+    `device_model` is an exact `device_models` key. Resolution happens first,
+    before any device mutation: a model with no approved recipe assignment
+    raises `NoApprovedRecipe` here rather than being provisioned on a guess
+    (KSM-BEHAVE-048)."""
+    recipe = require_recipe(device_model)
     abi = await client.getprop("ro.product.cpu.abi")
     try:
         sdk_str = await client.getprop("ro.build.version.sdk")
@@ -365,10 +364,11 @@ async def install_and_launch(
         raise KsInstallVerificationFailed(
             f"am start -n {KS_MAIN_ACTIVITY} reported an error on {host}: {start_output.strip()}"
         )
-    convergence = await converge_permissions(client, sdk, profile)
+    convergence = await converge_permissions(client, sdk, recipe)
     await verify_functional_capabilities(client, convergence)
-    if profile.is_portal or profile.key == "unknown":
+    if recipe.sets_device_admin:
         await client.shell(f"dpm set-active-admin {KS_PACKAGE}/.KioskAdminReceiver")
+    if recipe.disables_package_verifier:
         await client.shell("settings put global package_verifier_enable 0")
 
     if host is not None:
@@ -394,7 +394,7 @@ async def install_and_launch(
             password,
             ha_token=ha_token,
             home_launcher=home_launcher,
-            profile=profile,
+            recipe=recipe,
         )
     except (KsApiError, aiohttp.ClientError, asyncio.TimeoutError) as err:
         _LOGGER.warning("device-name/HA auto-connect sync failed for %s: %s", host, err)
@@ -459,9 +459,10 @@ async def _sync_device_and_connect_ha(
     host: str,
     device_name: str,
     password: str,
+    *,
+    recipe: InstallRecipe,
     ha_token: str | None = None,
     home_launcher: bool = True,
-    profile: DeviceProfile | None = None,
 ) -> str:
     status = await _wait_for_setup_status(session, host)
     if status.get("passwordNeeded", True):
@@ -479,11 +480,9 @@ async def _sync_device_and_connect_ha(
         client_name = f"Kiosk Satellite Manager - {device_name} [{uuid.uuid4().hex}]"
         ha_token = await _mint_ha_token(hass, client_name)
     ha_url = get_url(hass, prefer_external=False).rstrip("/")
-    start_path = (
-        profile.start_url_path
-        if profile and profile.start_url_path
-        else ("/portal" if (not profile or profile.is_portal or profile.key == "unknown") else "")
-    )
+    # KSM-BEHAVE-049: the start path is recipe data, with no "/portal if we
+    # can't tell" default -- an unidentified device never reaches this call.
+    start_path = recipe.start_url_path
     start_url = f"{ha_url}{start_path}" if start_path else ha_url
     settings_payload: dict[str, Any] = {
         "ha.url": ha_url,
@@ -492,7 +491,9 @@ async def _sync_device_and_connect_ha(
         "browser.ignore_ssl_errors": True,
     }
 
-    if home_launcher:
+    # KSM-TEST-058: the entry's preference cannot turn on a launcher the
+    # recipe (and therefore the hardware) does not support.
+    if home_launcher and recipe.home_launcher_supported:
         settings_payload["home.enabled"] = True
 
     await ks_api_client.patch_settings(session, host, token, settings_payload)

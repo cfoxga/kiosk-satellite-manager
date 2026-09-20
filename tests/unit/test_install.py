@@ -21,10 +21,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from custom_components.kiosk_satellite_manager.adb_client import PmInstallFailed
-from custom_components.kiosk_satellite_manager.device_profiles import UNKNOWN_PROFILE
+from custom_components.kiosk_satellite_manager.device_catalog import NoApprovedRecipe
+from custom_components.kiosk_satellite_manager.install_recipes import get_recipe
 from custom_components.kiosk_satellite_manager.install import (
-    PORTAL_APPOPS,
-    PORTAL_PERMISSIONS,
     KsInstallVerificationFailed,
     PermissionConvergenceResult,
     converge_permissions,
@@ -34,6 +33,15 @@ from custom_components.kiosk_satellite_manager.install import (
 from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
 
 _TARGET_VERSION = "2026.9.99"
+
+# KSM-BEHAVE-048 (issue #20): these lists used to be module constants in
+# install.py applied to *any* device, matched or not. They are now the
+# SDK-29 output of one named recipe version, and a device only gets them by
+# resolving to a model with an approved assignment to that recipe. The
+# values below are unchanged -- that is the point of KSM-TEST-063.
+PORTAL_RECIPE = get_recipe("meta_portal_standard", "v1")
+PORTAL_PERMISSIONS = PORTAL_RECIPE.permissions_for_sdk(29)
+PORTAL_APPOPS = PORTAL_RECIPE.appops_for_sdk(29)
 
 
 class _FakeHass:
@@ -83,9 +91,9 @@ def _fake_client():
     client.installed_version = AsyncMock(side_effect=[None, _TARGET_VERSION])
     client.shell = AsyncMock(return_value="")
     # KSM-BEHAVE-041: default "everything converges cleanly" readback for
-    # the unknown-profile permission/appops set install_and_launch uses when
-    # no device_profile is given -- individual convergence tests override
-    # these to exercise the partial/needs-user-interaction paths.
+    # the meta_portal_standard:v1 permission/appops set -- individual
+    # convergence tests override these to exercise the
+    # partial/needs-user-interaction paths.
     client.granted_permissions = AsyncMock(return_value=set(PORTAL_PERMISSIONS))
     client.appop_mode = AsyncMock(return_value="allow")
     client.is_battery_exempt = AsyncMock(return_value=True)
@@ -123,7 +131,7 @@ async def test_install_and_launch_runs_expected_shell_sequence():
         "custom_components.kiosk_satellite_manager.install.latest_release",
         new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ):
-        await install_and_launch(hass, client, session)
+        await install_and_launch(hass, client, session, device_model="portal_go")
 
     assert client.push.await_count == 1
     client.install_apk.assert_awaited_once()
@@ -155,7 +163,7 @@ async def test_install_and_launch_aborts_before_launch_on_rejected_artifact():
         new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ):
         with pytest.raises(PmInstallFailed) as exc_info:
-            await install_and_launch(hass, client, session)
+            await install_and_launch(hass, client, session, device_model="portal_go")
 
     assert exc_info.value.category == "unsupported_sdk"
     shell_calls = [c.args[0] for c in client.shell.await_args_list]
@@ -163,7 +171,13 @@ async def test_install_and_launch_aborts_before_launch_on_rejected_artifact():
     assert shell_calls[0].startswith("rm -f ")
 
 
-async def test_install_and_launch_uses_device_profile_for_start_url_and_permissions():
+async def test_install_and_launch_uses_the_assigned_recipe_for_start_url_and_launcher():
+    """KSM-TEST-058: Portal TV resolves meta_portal_tv:v1, which is the same
+    Portal install lifecycle minus the home-launcher takeover. The launcher
+    capability must come from the recipe assigned to *this* model, never from
+    the caller's home_launcher preference alone -- home_launcher=True below is
+    deliberately the permissive input, and the payload must still omit
+    home.enabled."""
     hass = _FakeHass()
     client = _fake_client()
     session = _fake_session()
@@ -189,18 +203,58 @@ async def test_install_and_launch_uses_device_profile_for_start_url_and_permissi
             client,
             session,
             host="192.168.1.50",
-            device_name="TV Stick",
+            device_name="Portal TV",
             password="1newpass",
-            device_profile="gtv_stick",
+            device_model="portal_tv",
+            home_launcher=True,
         )
 
-        patch_args = mock_api.patch_settings.await_args[0]
-        settings_payload = patch_args[3]
-        assert settings_payload["browser.start_url"] == "http://192.168.1.2:8123"
+        settings_payload = mock_api.patch_settings.await_args[0][3]
+        assert settings_payload["browser.start_url"] == "http://192.168.1.2:8123/portal"
+        assert "home.enabled" not in settings_payload
 
-        shell_calls = [c.args[0] for c in client.shell.await_args_list]
-        assert "dpm set-active-admin me.jxl.kiosk_satellite/.KioskAdminReceiver" not in shell_calls
+    # Positive control for the assertion above: the same call on portal_go,
+    # which *is* assigned a launcher-capable recipe, does set it.
+    assert PORTAL_RECIPE.home_launcher_supported is True
 
+
+async def test_install_and_launch_fails_closed_for_a_model_with_no_approved_recipe():
+    """KSM-TEST-060: "gtv_stick" is a fallback classification, not an exact
+    model, so it has no approved recipe assignment. Before the catalog it
+    silently received the Portal permission/device-admin set; now the install
+    refuses, and -- critically -- refuses *before* touching the device, so a
+    device that cannot be provisioned is also never half-provisioned."""
+    hass = _FakeHass()
+    client = _fake_client()
+    session = _fake_session()
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ):
+        with pytest.raises(NoApprovedRecipe):
+            await install_and_launch(
+                hass, client, session, host="192.168.1.50", device_model="gtv_stick"
+            )
+
+    client.push.assert_not_awaited()
+    client.install_apk.assert_not_awaited()
+    client.shell.assert_not_awaited()
+
+
+async def test_install_and_launch_fails_closed_when_no_model_matched():
+    """KSM-TEST-060, the unmatched-device case: device_model=None is what a
+    config entry created from unreadable identity facts carries. There is no
+    default recipe to fall back to."""
+    hass = _FakeHass()
+    client = _fake_client()
+    session = _fake_session()
+
+    with pytest.raises(NoApprovedRecipe):
+        await install_and_launch(hass, client, session, host="192.168.1.50")
+
+    client.install_apk.assert_not_awaited()
+    client.shell.assert_not_awaited()
 
 
 async def test_install_and_launch_skips_sync_when_no_password_configured():
@@ -215,7 +269,8 @@ async def test_install_and_launch_skips_sync_when_no_password_configured():
         "custom_components.kiosk_satellite_manager.install.ks_api_client"
     ) as mock_api:
         await install_and_launch(
-            hass, client, session, host="192.168.1.50", device_name="Kitchen", password=None
+            hass, client, session, host="192.168.1.50", device_name="Kitchen", password=None,
+            device_model="portal_go",
         )
 
     mock_api.get_setup_status.assert_not_called()
@@ -244,7 +299,8 @@ async def test_install_and_launch_syncs_password_and_name_on_first_run():
         mock_api.check_ha_connection = AsyncMock(return_value=True)
 
         await install_and_launch(
-            hass, client, session, host="192.168.1.50", device_name="Kitchen", password="hunter22"
+            hass, client, session, host="192.168.1.50", device_name="Kitchen", password="hunter22",
+            device_model="portal_go",
         )
 
     mock_api.setup_password.assert_awaited_once_with(session, "192.168.1.50", "hunter22", "Kitchen")
@@ -286,7 +342,8 @@ async def test_install_and_launch_mints_a_unique_managed_token_name():
         mock_api.check_ha_connection = AsyncMock(return_value=True)
 
         await install_and_launch(
-            hass, client, session, host="192.168.1.50", device_name="Kitchen", password="hunter22"
+            hass, client, session, host="192.168.1.50", device_name="Kitchen", password="hunter22",
+            device_model="portal_go",
         )
 
     client_name = hass.auth.async_create_refresh_token.await_args.kwargs["client_name"]
@@ -316,7 +373,8 @@ async def test_install_and_launch_logs_in_and_patches_name_when_password_already
         mock_api.check_ha_connection = AsyncMock(return_value=True)
 
         await install_and_launch(
-            hass, client, session, host="192.168.1.50", device_name="Kitchen", password="hunter22"
+            hass, client, session, host="192.168.1.50", device_name="Kitchen", password="hunter22",
+            device_model="portal_go",
         )
 
     mock_api.setup_password.assert_not_called()
@@ -347,7 +405,8 @@ async def test_install_and_launch_does_not_repatch_name_when_already_correct():
         mock_api.check_ha_connection = AsyncMock(return_value=True)
 
         await install_and_launch(
-            hass, client, session, host="192.168.1.50", device_name="Kitchen", password="hunter22"
+            hass, client, session, host="192.168.1.50", device_name="Kitchen", password="hunter22",
+            device_model="portal_go",
         )
 
     # only the settings patch, not a redundant device.name patch
@@ -376,10 +435,54 @@ async def test_install_and_launch_sync_failure_is_logged_not_raised():
 
         # must not raise -- install already succeeded by this point
         await install_and_launch(
-            hass, client, session, host="192.168.1.50", device_name="Kitchen", password="hunter22"
+            hass, client, session, host="192.168.1.50", device_name="Kitchen", password="hunter22",
+            device_model="portal_go",
         )
 
-    assert client.shell.await_count == 15
+    # 16, not the pre-catalog 15: this test used to run with no device_profile
+    # at all, which took the unmatched-device fallback and granted the generic
+    # 7-permission list. portal_go always granted 8 (the Portal-only
+    # WRITE_SECURE_SETTINGS) -- the count moved because the fallback path is
+    # gone, not because Portal Go behavior changed (KSM-TEST-063).
+    assert client.shell.await_count == 16
+    grants = [c.args[0] for c in client.shell.await_args_list if c.args[0].startswith("pm grant ")]
+    assert f"pm grant me.jxl.kiosk_satellite android.permission.WRITE_SECURE_SETTINGS" in grants
+
+
+async def test_portal_go_shell_sequence_is_unchanged_by_the_catalog():
+    """KSM-TEST-063: the acceptance criterion "current Portal Go provisioning
+    remains behaviorally unchanged". The literal command list below was taken
+    from the pre-catalog implementation (device_profiles.DeviceProfile
+    portal_go + get_profile), not from the new code's output."""
+    hass = _FakeHass()
+    client = _fake_client()
+    session = _fake_session()
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ):
+        await install_and_launch(hass, client, session, device_model="portal_go")
+
+    shell_calls = [c.args[0] for c in client.shell.await_args_list]
+    assert shell_calls[1:] == [
+        "am start -n me.jxl.kiosk_satellite/.MainActivity",
+        "pm grant me.jxl.kiosk_satellite android.permission.RECORD_AUDIO",
+        "pm grant me.jxl.kiosk_satellite android.permission.CAMERA",
+        "pm grant me.jxl.kiosk_satellite android.permission.ACCESS_COARSE_LOCATION",
+        "pm grant me.jxl.kiosk_satellite android.permission.ACCESS_FINE_LOCATION",
+        "pm grant me.jxl.kiosk_satellite android.permission.READ_LOGS",
+        "pm grant me.jxl.kiosk_satellite android.permission.READ_EXTERNAL_STORAGE",
+        "pm grant me.jxl.kiosk_satellite android.permission.WRITE_EXTERNAL_STORAGE",
+        "pm grant me.jxl.kiosk_satellite android.permission.WRITE_SECURE_SETTINGS",
+        "appops set me.jxl.kiosk_satellite SYSTEM_ALERT_WINDOW allow",
+        "appops set me.jxl.kiosk_satellite WRITE_SETTINGS allow",
+        "appops set me.jxl.kiosk_satellite GET_USAGE_STATS allow",
+        "dumpsys deviceidle whitelist +me.jxl.kiosk_satellite",
+        "dpm set-active-admin me.jxl.kiosk_satellite/.KioskAdminReceiver",
+        "settings put global package_verifier_enable 0",
+    ]
+    assert shell_calls[0].startswith("rm -f ")
 
 
 async def test_install_and_launch_reuses_provided_token_and_respects_launcher_flag():
@@ -410,6 +513,7 @@ async def test_install_and_launch_reuses_provided_token_and_respects_launcher_fl
             host="192.168.1.50",
             device_name="Kitchen",
             password="hunter22",
+            device_model="portal_go",
             ha_token="pre-existing-token",
             home_launcher=False,
         )
@@ -437,7 +541,7 @@ async def test_install_and_launch_skips_install_when_already_at_target_version()
         "custom_components.kiosk_satellite_manager.install.latest_release",
         new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ):
-        await install_and_launch(hass, client, session)
+        await install_and_launch(hass, client, session, device_model="portal_go")
 
     client.push.assert_not_called()
     client.install_apk.assert_not_called()
@@ -466,7 +570,7 @@ async def test_install_and_launch_repairs_via_uninstall_on_signature_mismatch():
         "custom_components.kiosk_satellite_manager.install.latest_release",
         new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ):
-        await install_and_launch(hass, client, session)
+        await install_and_launch(hass, client, session, device_model="portal_go")
 
     client.uninstall_ks.assert_awaited_once()
     assert client.install_apk.await_count == 2
@@ -489,7 +593,7 @@ async def test_install_and_launch_does_not_repair_signature_mismatch_on_fresh_de
         new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ):
         with pytest.raises(PmInstallFailed):
-            await install_and_launch(hass, client, session)
+            await install_and_launch(hass, client, session, device_model="portal_go")
 
     client.uninstall_ks.assert_not_called()
     assert client.install_apk.await_count == 1
@@ -506,7 +610,7 @@ async def test_install_and_launch_raises_when_installed_version_mismatches_after
         new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ):
         with pytest.raises(KsInstallVerificationFailed):
-            await install_and_launch(hass, client, session)
+            await install_and_launch(hass, client, session, device_model="portal_go")
 
 
 async def test_install_and_launch_raises_when_am_start_reports_error():
@@ -525,7 +629,7 @@ async def test_install_and_launch_raises_when_am_start_reports_error():
         new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ):
         with pytest.raises(KsInstallVerificationFailed):
-            await install_and_launch(hass, client, session)
+            await install_and_launch(hass, client, session, device_model="portal_go")
 
 
 async def test_install_and_launch_raises_when_health_never_confirms_after_install():
@@ -541,7 +645,7 @@ async def test_install_and_launch_raises_when_health_never_confirms_after_instal
         new=AsyncMock(),
     ):
         with pytest.raises(KsInstallVerificationFailed):
-            await install_and_launch(hass, client, session, host="192.168.1.50")
+            await install_and_launch(hass, client, session, host="192.168.1.50", device_model="portal_go")
 
 
 # KSM-BEHAVE-041 (Phase 3, "permission convergence"): converge_permissions
@@ -563,7 +667,7 @@ def _converging_client():
 
 async def test_converge_permissions_fully_converged_when_everything_reads_back_granted():
     client = _converging_client()
-    result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
+    result = await converge_permissions(client, sdk=29, recipe=PORTAL_RECIPE)
     assert result.fully_converged is True
     assert result.denied_permissions == []
     assert result.denied_appops == []
@@ -580,7 +684,7 @@ async def test_converge_permissions_detects_a_permission_the_device_refused():
     still_granted = set(PORTAL_PERMISSIONS) - {refused}
     client.granted_permissions = AsyncMock(return_value=still_granted)
 
-    result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
+    result = await converge_permissions(client, sdk=29, recipe=PORTAL_RECIPE)
 
     assert result.denied_permissions == [refused]
     assert refused not in result.granted_permissions
@@ -591,7 +695,7 @@ async def test_converge_permissions_detects_an_appop_the_device_refused():
     client = _converging_client()
     client.appop_mode = AsyncMock(side_effect=["allow", "ignore", "allow"])
 
-    result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
+    result = await converge_permissions(client, sdk=29, recipe=PORTAL_RECIPE)
 
     assert result.denied_appops == [PORTAL_APPOPS[1]]
     assert result.fully_converged is False
@@ -601,7 +705,7 @@ async def test_converge_permissions_detects_battery_exemption_not_applied():
     client = _converging_client()
     client.is_battery_exempt = AsyncMock(return_value=False)
 
-    result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
+    result = await converge_permissions(client, sdk=29, recipe=PORTAL_RECIPE)
 
     assert result.battery_exempt is False
     assert result.fully_converged is False
@@ -611,7 +715,7 @@ async def test_converge_permissions_accessibility_not_applicable_when_ks_declare
     client = _converging_client()
     client.declared_bound_services = AsyncMock(return_value={})
 
-    result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
+    result = await converge_permissions(client, sdk=29, recipe=PORTAL_RECIPE)
 
     assert result.accessibility == "not_applicable"
     client.put_secure_setting.assert_not_called()
@@ -639,7 +743,7 @@ async def test_converge_permissions_accessibility_granted_and_preserves_existing
     client.get_secure_setting = AsyncMock(side_effect=fake_get)
     client.put_secure_setting = AsyncMock(side_effect=fake_put)
 
-    result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
+    result = await converge_permissions(client, sdk=29, recipe=PORTAL_RECIPE)
 
     assert result.accessibility == "granted"
     final_parts = set(settings_state["enabled_accessibility_services"].split(":"))
@@ -661,7 +765,7 @@ async def test_converge_permissions_accessibility_needs_user_interaction_when_wr
     client.get_secure_setting = AsyncMock(return_value="")
     client.put_secure_setting = AsyncMock()
 
-    result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
+    result = await converge_permissions(client, sdk=29, recipe=PORTAL_RECIPE)
 
     assert result.accessibility == "needs_user_interaction"
     assert result.fully_converged is False
@@ -674,7 +778,7 @@ async def test_converge_permissions_notification_listener_not_applicable_for_ks(
     client.declared_bound_services = AsyncMock(
         return_value={"android.permission.BIND_ACCESSIBILITY_SERVICE": "me.jxl.kiosk_satellite/.KioskAccessibilityService"}
     )
-    result = await converge_permissions(client, sdk=29, profile=UNKNOWN_PROFILE)
+    result = await converge_permissions(client, sdk=29, recipe=PORTAL_RECIPE)
     assert result.notification_listener == "not_applicable"
 
 
@@ -759,7 +863,7 @@ async def test_verify_functional_capabilities_detects_denied_bluetooth_permissio
 async def test_verify_functional_capabilities_detects_bluetooth_radio_off():
     """KSM-TEST-053 (negative control): live-confirmed against the Test
     Portal (SDK 29) that no BLUETOOTH_SCAN/CONNECT permission is even
-    requested pre-SDK-31 (device_profiles.permissions_for_sdk) -- so the
+    requested pre-SDK-31 (install_recipes.permissions_for_sdk) -- so the
     device's own radio state is the only meaningful Bluetooth signal here,
     and a disabled radio must be detected rather than reported ok just
     because there was no permission to deny."""
@@ -799,6 +903,6 @@ async def test_install_and_launch_runs_functional_verification_after_permission_
         "custom_components.kiosk_satellite_manager.install.latest_release",
         new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ):
-        await install_and_launch(hass, client, session)
+        await install_and_launch(hass, client, session, device_model="portal_go")
 
     client.bluetooth_enabled.assert_awaited_once()

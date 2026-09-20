@@ -377,7 +377,7 @@ class AdbClient:
         bluetooth_on` -- live-confirmed against the Test Portal ("1" when
         on). This is a device-level fact, not a per-app grant: on SDK < 31
         (the Test Portal is SDK 29) there is no BLUETOOTH_SCAN/CONNECT
-        runtime permission at all (`DeviceProfile.permissions_for_sdk`), so
+        runtime permission at all (`InstallRecipe.permissions_for_sdk`), so
         the radio's own on/off state is the only Bluetooth signal available
         pre-31, and remains the meaningful one post-31 too since a granted
         permission with a disabled radio is not "appropriate behavior" for a

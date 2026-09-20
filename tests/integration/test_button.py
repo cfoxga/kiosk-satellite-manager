@@ -8,11 +8,13 @@ the version sensor afterward.
 """
 from __future__ import annotations
 
+import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.helpers import entity_registry as er
 
-from custom_components.kiosk_satellite_manager.const import DOMAIN
+from custom_components.kiosk_satellite_manager.const import CONF_DEVICE_PROFILE, DOMAIN
+from custom_components.kiosk_satellite_manager.device_catalog import NoApprovedRecipe
 
 from .conftest import init_integration
 
@@ -48,7 +50,10 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
         return next(health_responses)
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
-        ctx = await init_integration(hass)
+        # The entry stores the exact device model the config flow matched
+        # (issue #20); the button passes it straight to install_and_launch,
+        # which resolves the approved recipe from it.
+        ctx = await init_integration(hass, data={CONF_DEVICE_PROFILE: "portal_go"})
 
         ent_reg = er.async_get(hass)
         entries = er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)
@@ -159,4 +164,49 @@ async def test_uninstall_button_press_uninstalls_ks(hass):
 
     mock_client.connect.assert_awaited_once()
     mock_client.uninstall_ks.assert_awaited_once()
+    mock_client.close.assert_awaited_once()
+
+
+async def test_press_refuses_to_provision_a_device_with_no_approved_recipe(hass):
+    """[KSM-TEST-060] An entry created for a device the catalog could not
+    identify carries no model key. Pressing Install must fail closed rather
+    than fall back to the Meta Portal recipe, and must not touch the device:
+    no APK push, no pm install, no permission grants."""
+    async def fake_fetch_health(session, host):
+        return {"appVersion": "old"}
+
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
+        ctx = await init_integration(hass)
+
+        ent_reg = er.async_get(hass)
+        entries = er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)
+        install_entry = next(
+            e for e in entries if e.unique_id == f"{ctx.entry.entry_id}_install"
+        )
+        assert ctx.entry.data.get(CONF_DEVICE_PROFILE) is None
+
+        with patch(
+            "custom_components.kiosk_satellite_manager.button.AdbClient"
+        ) as mock_client_cls:
+            mock_client = mock_client_cls.return_value
+            mock_client.connect = AsyncMock()
+            mock_client.getprop = AsyncMock(return_value="armeabi-v7a")
+            mock_client.push = AsyncMock()
+            mock_client.install_apk = AsyncMock()
+            mock_client.shell = AsyncMock(return_value="")
+            mock_client.close = AsyncMock()
+
+            with pytest.raises(NoApprovedRecipe):
+                await hass.services.async_call(
+                    "button",
+                    "press",
+                    {"entity_id": install_entry.entity_id},
+                    blocking=True,
+                )
+
+    mock_client.push.assert_not_awaited()
+    mock_client.install_apk.assert_not_awaited()
+    mock_client.shell.assert_not_awaited()
+    # The ADB session is still closed cleanly -- failing closed is not
+    # failing messily.
     mock_client.close.assert_awaited_once()

@@ -1,8 +1,13 @@
-"""Data-driven OEM recovery profiles (KSM-BEHAVE-037, cfoxga/kiosk-satellite-manager#12).
+"""Data-driven OEM recovery profiles (KSM-BEHAVE-037/052, issue #12 and #20).
 
-Extends `device_profiles.py`'s match by reusing its `DeviceProfile.key` as the
-lookup key here rather than re-implementing manufacturer/model/sdk matching --
-one matcher, two data tables. A profile is a plain, frozen dataclass with
+Keyed on `device_models.DeviceModel.model_key` -- the *exact* model, never a
+fallback classification and never an install recipe. Destructive qualification
+does not inherit through a shared install recipe: Portal Go and Portal Mini both
+run `meta_portal_standard:v1`, and Portal Mini's live-confirmed Test Harness
+behavior still qualifies only Portal Mini (KSM-BEHAVE-052).
+`device_catalog.validate_catalog` enforces that every key below is a real model.
+
+A profile is a plain, frozen dataclass with
 fixed fields (never a free-text/"command" field), so a profile can never carry
 an arbitrary unverified shell snippet (Acceptance, KSM#12).
 
@@ -26,7 +31,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class RecoveryProfile:
-    """Recovery evidence/guidance for one `device_profiles.DeviceProfile.key`."""
+    """Recovery evidence/guidance for one `device_models.DeviceModel.model_key`."""
 
     key: str
     test_harness_confirmed: bool | None
@@ -132,25 +137,11 @@ RECOVERY_PROFILES: dict[str, RecoveryProfile] = {
         test_harness_notes="Not live-confirmed on this hardware (KSM-OPEN-003).",
         restrictions=_PORTAL_TEST_HARNESS_RESTRICTIONS,
     ),
-    "meta_portal": RecoveryProfile(
-        key="meta_portal",
-        test_harness_confirmed=None,
-        test_harness_notes=(
-            "Generic Meta Portal fallback -- device-specific evidence was "
-            "insufficient to match a more specific profile, so this stays "
-            "unconfirmed regardless of the specific-profile findings above."
-        ),
-        restrictions=_PORTAL_TEST_HARNESS_RESTRICTIONS,
-    ),
-    "gtv_stick": RecoveryProfile(
-        key="gtv_stick",
-        test_harness_confirmed=None,
-        test_harness_notes=(
-            "Not a Meta-account-gated device, so the Portal recovery "
-            "rationale above doesn't transfer; Test Harness applicability "
-            "for this profile is unevaluated, not merely unconfirmed."
-        ),
-    ),
+    # The former "meta_portal" and "gtv_stick" rows are gone (issue #20):
+    # those are fallback classifications, not exact models, and a
+    # classification can never own recovery evidence. They now fall through to
+    # UNKNOWN_RECOVERY_PROFILE, which is ineligible -- the same answer the
+    # removed rows gave, reached without implying a catalogued device.
 }
 
 UNKNOWN_RECOVERY_PROFILE = RecoveryProfile(
@@ -160,8 +151,8 @@ UNKNOWN_RECOVERY_PROFILE = RecoveryProfile(
 )
 
 
-def get_recovery_profile(device_profile_key: str | None) -> RecoveryProfile:
-    """Look up the recovery profile for a `device_profiles` match key."""
-    if not device_profile_key:
+def get_recovery_profile(device_model_key: str | None) -> RecoveryProfile:
+    """Look up recovery evidence for an exact `device_models` model key."""
+    if not device_model_key:
         return UNKNOWN_RECOVERY_PROFILE
-    return RECOVERY_PROFILES.get(device_profile_key, UNKNOWN_RECOVERY_PROFILE)
+    return RECOVERY_PROFILES.get(device_model_key, UNKNOWN_RECOVERY_PROFILE)

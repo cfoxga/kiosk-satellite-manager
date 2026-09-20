@@ -8,6 +8,10 @@ DOMAIN: Final = "kiosk_satellite_manager"
 CONF_HOST: Final = "host"
 CONF_PORT: Final = "port"
 CONF_KEY_PATH: Final = "key_path"
+# KSM-BEHAVE-051 (issue #20): stores an exact `device_models.DeviceModel.model_key`,
+# never a fallback classification and never a recipe key. The stored *key name*
+# stays "device_profile" so entries created before the catalog keep resolving --
+# the model keys were carried over 1:1 from the old profile keys.
 CONF_DEVICE_PROFILE: Final = "device_profile"
 # KSM-BEHAVE-009: entry-creation-time Name/Area; KSM-BEHAVE-010/011 read
 # CONF_NAME/CONF_PASSWORD back out post-install to sync the device.

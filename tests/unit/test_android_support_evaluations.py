@@ -5,7 +5,7 @@ behavior rather than narrative assertions. Each scenario below is a fixture the
 skill's evaluation doc walks through by hand; the ones with an executable
 safe-action contract (device-owner state, SDK-gated device-profile match, and
 probe-status vs. derived-fact divergence) are pinned here so a future change to
-`capability_report.py`, `onboarding_plan.py`, or `device_profiles.py` cannot
+`capability_report.py`, `onboarding_plan.py`, or the device catalog cannot
 silently make the documented guidance wrong without a red test.
 
 Root-observed (scenario 2) and legacy-Device-Admin (scenario 4) are asserted as
@@ -19,7 +19,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 from custom_components.kiosk_satellite_manager.capability_report import CapabilityReportCollector
-from custom_components.kiosk_satellite_manager.device_profiles import match_profile
+from custom_components.kiosk_satellite_manager.device_models import DeviceFacts, match_device_model
 from custom_components.kiosk_satellite_manager.onboarding_plan import build_onboarding_plan
 
 # portal_go has no live-confirmed Test Harness evidence (KSM-OPEN-003), so every
@@ -37,9 +37,17 @@ def _report(
     kiosk_satellite_package_status: str = "unsupported",
 ) -> dict:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
+        "catalog": {
+            "model_key": "portal_go", "model_name": "Meta Portal Go",
+            "classification": None, "recipe_key": "meta_portal_standard",
+            "recipe_version": "v1", "assignment_state": "approved",
+            "support_state": "recipe_assigned",
+            "reason": "an approved recipe assignment applies",
+            "executable_recipe": True,
+        },
         "facts": {
-            "platform": {"manufacturer": "Facebook", "model": "PortalGo", "sdk": 29, "device_profile_key": "portal_go"},
+            "platform": {"manufacturer": "Facebook", "model": "PortalGo", "sdk": 29, "device_model_key": "portal_go"},
             "management": {"account_count": 0, "device_owner": device_owner, "adb_uid": adb_uid, "user_count": 1},
             "applications": {"kiosk_satellite": {"installed": installed, "version": None}},
             "oem": {"bootloader_locked": None},
@@ -124,12 +132,12 @@ def test_scenario_4_legacy_device_admin_with_no_owner_still_fails_closed():
 
 
 def test_scenario_5_portal_android9_matches_gen1_not_gen2():
-    gen1 = match_profile(manufacturer="Facebook", model="Portal", sdk=28)
-    gen2 = match_profile(manufacturer="Facebook", model="Portal", sdk=29)
+    gen1 = match_device_model(DeviceFacts(manufacturer="Facebook", model="Portal", sdk=28))
+    gen2 = match_device_model(DeviceFacts(manufacturer="Facebook", model="Portal", sdk=29))
 
-    assert gen1.key == "portal_gen1"
-    assert gen2.key == "portal_gen2"
-    assert gen1.key != gen2.key
+    assert gen1.model_key == "portal_gen1"
+    assert gen2.model_key == "portal_gen2"
+    assert gen1.model_key != gen2.model_key
 
 
 async def test_scenario_7_policy_blocked_package_probe_is_distinguishable_from_absent():
@@ -141,13 +149,17 @@ async def test_scenario_7_policy_blocked_package_probe_is_distinguishable_from_a
     two cases are otherwise indistinguishable from `facts` alone."""
     client_denied = AsyncMock()
     client_denied.shell = AsyncMock(side_effect=[
-        "Facebook", "PortalGo", "29", "", "", "", "uid=2000(shell)", "",
+        "Facebook", "PortalGo", "29", "", "", "",
+        "Facebook", "portalgo", "", "", "arm64-v8a",
+        "uid=2000(shell)", "",
         "UserInfo{0:Owner:13}", "No device owner", "", "", "", "", "",
         PermissionError("policy blocked"), "",
     ])
     client_absent = AsyncMock()
     client_absent.shell = AsyncMock(side_effect=[
-        "Facebook", "PortalGo", "29", "", "", "", "uid=2000(shell)", "",
+        "Facebook", "PortalGo", "29", "", "", "",
+        "Facebook", "portalgo", "", "", "arm64-v8a",
+        "uid=2000(shell)", "",
         "UserInfo{0:Owner:13}", "No device owner", "", "", "", "", "",
         "", "",
     ])

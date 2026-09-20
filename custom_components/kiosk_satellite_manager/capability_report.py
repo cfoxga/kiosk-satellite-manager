@@ -1,11 +1,22 @@
-"""Read-only, sanitized Android capability reporting (KSM-BEHAVE-028/036)."""
+"""Read-only, sanitized Android capability reporting (KSM-BEHAVE-028/036/051).
+
+Schema 2 (issue #20) adds the identity facts the device catalog matches on
+(brand/product/board/hardware/ABI) and a `catalog` block carrying the resolved
+exact model, fallback classification, recipe version and derived support state.
+
+The fact/probe-status/inference separation is unchanged and load-bearing: a
+`denied`, `unsupported` or `error` probe leaves its fact `None`, which is
+missing evidence, never observed absence -- and `device_catalog` will not
+resolve an executable recipe from it (KSM-BEHAVE-051).
+"""
 from __future__ import annotations
 
 import re
 from typing import Any
 
 from .const import KS_PACKAGE
-from .device_profiles import match_profile
+from .device_catalog import resolve_catalog_entry
+from .device_models import DeviceFacts
 
 _UNKNOWN = ("unknown command", "not found", "not supported")
 _ACCOUNT = re.compile(r"Account\s*\{")
@@ -38,6 +49,14 @@ class CapabilityReportCollector:
         characteristics, characteristics_probe = await self._probe("getprop ro.build.characteristics")
         codename, codename_probe = await self._probe("getprop ro.product.device")
         fingerprint, fingerprint_probe = await self._probe("getprop ro.build.fingerprint")
+        # KSM-BEHAVE-051, issue #20: the remaining identity facts the catalog's
+        # exact-model matcher and artifact selection are allowed to use. All
+        # non-identifying build properties -- no serial, no IP, no account.
+        brand, brand_probe = await self._probe("getprop ro.product.brand")
+        product, product_probe = await self._probe("getprop ro.product.name")
+        board, board_probe = await self._probe("getprop ro.product.board")
+        hardware, hardware_probe = await self._probe("getprop ro.hardware")
+        abi, abi_probe = await self._probe("getprop ro.product.cpu.abi")
         adb_identity, adb_identity_probe = await self._probe("id")
         accounts, accounts_probe = await self._probe("dumpsys account")
         users, users_probe = await self._probe("pm list users")
@@ -65,21 +84,38 @@ class CapabilityReportCollector:
         version_match = _VERSION.search(package_info or "")
         adb_uid_match = _ADB_UID.search(adb_identity or "")
         installed = bool(package_path and package_path.startswith("package:"))
-        device_profile = match_profile(
-            characteristics or "", manufacturer or "", model=model or "", sdk=sdk or 0
+        device_facts = DeviceFacts(
+            manufacturer=manufacturer or "",
+            brand=brand or "",
+            model=model or "",
+            product=product or "",
+            device=codename or "",
+            board=board or "",
+            hardware=hardware or "",
+            characteristics=characteristics or "",
+            abi=abi or "",
+            sdk=sdk or 0,
+            fingerprint=fingerprint or "",
         )
+        catalog_entry = resolve_catalog_entry(device_facts)
         lockscreen_secure = (
             not (lockscreen_disabled.strip().lower() == "true")
             if lockscreen_disabled is not None
             else None
         )
         report = {
-            "schema_version": 1,
+            "schema_version": 2,
             "facts": {
                 "platform": {
                     "manufacturer": manufacturer, "model": model, "sdk": sdk,
                     "characteristics": characteristics, "codename": codename,
-                    "fingerprint": fingerprint, "device_profile_key": device_profile.key,
+                    "fingerprint": fingerprint,
+                    "brand": brand, "product": product, "board": board,
+                    "hardware": hardware, "abi": abi,
+                    # Identity, not inference: the exact model matched, or None.
+                    # Everything derived from it lives under "catalog" below.
+                    "device_model_key": catalog_entry.model_key,
+                    "classification": catalog_entry.classification,
                 },
                 "management": {
                     "account_count": len(_ACCOUNT.findall(accounts or "")),
@@ -105,6 +141,8 @@ class CapabilityReportCollector:
                 "manufacturer": manufacturer_probe, "model": model_probe, "sdk": sdk_probe,
                 "characteristics": characteristics_probe, "codename": codename_probe,
                 "fingerprint": fingerprint_probe,
+                "brand": brand_probe, "product": product_probe, "board": board_probe,
+                "hardware": hardware_probe, "abi": abi_probe,
                 "adb_identity": adb_identity_probe, "accounts": accounts_probe, "users": users_probe,
                 "device_owner": owner_probe, "bootloader_locked": bootloader_locked_probe,
                 "test_harness_mode": ro_test_harness_probe,
@@ -114,10 +152,14 @@ class CapabilityReportCollector:
                 "kiosk_satellite_package": package_path_probe,
                 "kiosk_satellite_details": package_info_probe,
             },
+            # KSM-BEHAVE-051: derived, and kept out of "facts" precisely so a
+            # reader can never mistake a catalog inference for an observation.
+            "catalog": catalog_entry.as_report(),
             "inferences": [
                 *( ["android_sdk_unknown"] if sdk is None else [] ),
                 *( ["kiosk_satellite_not_installed"] if not installed else [] ),
-                *( ["device_profile_unmatched"] if device_profile.key == "unknown" else [] ),
+                *( ["device_model_unmatched"] if catalog_entry.model_key is None else [] ),
+                *( ["no_executable_recipe"] if not catalog_entry.executable else [] ),
             ],
         }
         return report

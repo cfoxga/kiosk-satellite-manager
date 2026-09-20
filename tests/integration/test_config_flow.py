@@ -31,6 +31,37 @@ from custom_components.kiosk_satellite_manager.const import (
 )
 
 
+def _getprop(**props: str) -> AsyncMock:
+    """Prop-name-driven getprop mock.
+
+    The device catalog (issue #20) reads a fixed allowlist of identity
+    properties, and it grew from four to eleven when models and install
+    recipes were split apart. Keying on the property name instead of call
+    order keeps these flow tests pinned to *what* was read rather than to the
+    order the collector happens to read it in. Anything not named here reads
+    empty -- which is missing evidence, and never satisfies a match rule.
+    """
+    async def _read(name: str) -> str:
+        return props.get(name, "")
+
+    return AsyncMock(side_effect=_read)
+
+
+_GTV_PROPS = {
+    "ro.build.characteristics": "tv,nosdcard",
+    "ro.product.manufacturer": "onn",
+    "ro.product.model": "Google TV",
+    "ro.build.version.sdk": "35",
+    "ro.build.version.release": "15",
+}
+_PORTAL_GO_PROPS = {
+    "ro.build.characteristics": "nosdcard",
+    "ro.product.manufacturer": "Facebook",
+    "ro.product.model": "PortalGo",
+    "ro.product.device": "terry",
+    "ro.build.version.sdk": "29",
+}
+
 async def test_user_flow_shows_device_info_step_with_discovered_name_default(hass):
     """[KSM-TEST-049] Detected metadata precedes only KSM-owned fields."""
     with patch(
@@ -38,9 +69,7 @@ async def test_user_flow_shows_device_info_step_with_discovered_name_default(has
     ) as mock_client_cls:
         mock_client = mock_client_cls.return_value
         mock_client.connect = AsyncMock()
-        mock_client.getprop = AsyncMock(
-            side_effect=["tv,nosdcard", "onn", "Google TV", "35", "15"]
-        )
+        mock_client.getprop = _getprop(**_GTV_PROPS)
         mock_client.shell = AsyncMock(return_value="Living Room TV")
         mock_client.is_ks_installed = AsyncMock(return_value=False)
         mock_client.close = AsyncMock()
@@ -59,9 +88,13 @@ async def test_user_flow_shows_device_info_step_with_discovered_name_default(has
     assert schema_pass.default is vol.UNDEFINED
     assert CONF_NAME not in {field.schema for field in result["data_schema"].schema}
     assert CONF_AREA_ID not in {field.schema for field in result["data_schema"].schema}
+    # KSM-BEHAVE-048 (issue #20): "onn" is a fallback *classification*, not an
+    # exact catalog model -- the label says so, and the entry carries no model
+    # key, so the Install button will refuse rather than run the Portal recipe
+    # on unidentified hardware.
     assert result["description_placeholders"] == {
         "android_version": "Android 15 (SDK 35)",
-        "device_model": "Google TV stick (onn/Chromecast-class)",
+        "device_model": "Google TV stick (onn/Chromecast-class, unrecognized model)",
     }
 
 
@@ -79,9 +112,7 @@ async def test_user_flow_lists_auto_create_then_existing_long_lived_tokens(hass)
     ):
         mock_client = mock_client_cls.return_value
         mock_client.connect = AsyncMock()
-        mock_client.getprop = AsyncMock(
-            side_effect=["tv,nosdcard", "onn", "Google TV", "35", "15"]
-        )
+        mock_client.getprop = _getprop(**_GTV_PROPS)
         mock_client.shell = AsyncMock(return_value="Living Room TV")
         mock_client.is_ks_installed = AsyncMock(return_value=False)
         mock_client.close = AsyncMock()
@@ -109,7 +140,7 @@ async def test_user_flow_identifies_portal_models_and_defaults_password(hass):
     ) as mock_client_cls:
         mock_client = mock_client_cls.return_value
         mock_client.connect = AsyncMock()
-        mock_client.getprop = AsyncMock(side_effect=["nosdcard", "Facebook", "PortalGo", "29"])
+        mock_client.getprop = _getprop(**_PORTAL_GO_PROPS)
         mock_client.shell = AsyncMock(return_value="Test Portal Portal")
         mock_client.is_ks_installed = AsyncMock(return_value=False)
         mock_client.close = AsyncMock()
@@ -136,7 +167,7 @@ async def test_user_flow_uses_and_normalizes_portal_bluetooth_name(hass):
     ) as mock_client_cls:
         mock_client = mock_client_cls.return_value
         mock_client.connect = AsyncMock()
-        mock_client.getprop = AsyncMock(side_effect=["tablet", "facebook"])
+        mock_client.getprop = _getprop(**_PORTAL_GO_PROPS)
         mock_client.shell = AsyncMock(return_value="Test Portal Portal")
         mock_client.is_ks_installed = AsyncMock(return_value=False)
         mock_client.close = AsyncMock()
@@ -181,7 +212,7 @@ async def test_user_flow_creates_entry_after_device_info_step(hass):
         mock_install.side_effect = _install_ok
         mock_client = mock_client_cls.return_value
         mock_client.connect = AsyncMock()
-        mock_client.getprop = AsyncMock(side_effect=["tv,nosdcard", "onn"])
+        mock_client.getprop = _getprop(**_GTV_PROPS)
         mock_client.shell = AsyncMock(return_value="Living Room TV")
         mock_client.is_ks_installed = AsyncMock(return_value=False)
         mock_client.close = AsyncMock()
@@ -199,25 +230,32 @@ async def test_user_flow_creates_entry_after_device_info_step(hass):
             result["flow_id"],
             {CONF_PASSWORD: "hunter222"},
         )
-        assert result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS
-        assert result["step_id"] == "install"
-
+        # No install progress step: this device matches no exact catalog
+        # model, so the install task fails closed at require_recipe before it
+        # ever reaches a real await, and the flow goes straight to the entry.
+        # A device that *does* resolve a recipe still shows progress -- see
+        # test_user_flow_creates_entry_even_when_install_fails.
+        if result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS:
+            await hass.async_block_till_done()
+            result = await hass.config_entries.flow.async_configure(result["flow_id"])
         await hass.async_block_till_done()
-        result = await hass.config_entries.flow.async_configure(result["flow_id"])
-        await hass.async_block_till_done()
+        mock_install.assert_not_awaited()
 
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result["title"] == "Living Room TV"
     assert result["data"][CONF_HOST] == "192.168.50.64"
-    assert result["data"][CONF_DEVICE_PROFILE] == "gtv_stick"
+    # KSM-TEST-060: the entry is created (pairing is the hard, human part and
+    # must not be thrown away), but with no exact model key -- an onn/Google TV
+    # stick has never had its ro.product.model recorded, so it matches only the
+    # gtv_stick fallback classification. install_and_launch fails closed on
+    # that, instead of silently applying the Meta Portal recipe.
+    assert result["data"][CONF_DEVICE_PROFILE] is None
     assert result["data"][CONF_NAME] == "Living Room TV"
     assert result["data"][CONF_AREA_ID] is None
     assert result["data"][CONF_PASSWORD] == "hunter222"
-    mock_install.assert_awaited_once()
-    _, kwargs = mock_install.await_args
-    assert kwargs["host"] == "192.168.50.64"
-    assert kwargs["device_name"] == "Living Room TV"
-    assert kwargs["password"] == "hunter222"
+    # Everything the user typed is preserved on the entry, and nothing was
+    # pushed to the device: install_and_launch was never reached for a model
+    # the catalog cannot resolve (asserted inside the patch block above).
 
 
 async def test_user_flow_creates_entry_even_when_install_fails(hass):
@@ -240,7 +278,11 @@ async def test_user_flow_creates_entry_even_when_install_fails(hass):
         mock_install.side_effect = _install_fail
         mock_client = mock_client_cls.return_value
         mock_client.connect = AsyncMock()
-        mock_client.getprop = AsyncMock(side_effect=["tv,nosdcard", "onn"])
+        # Portal Go, not a GTV stick: this test is about a *failing* install,
+        # which means the flow has to reach install_and_launch at all. An
+        # unmatched model fails closed before that (KSM-BEHAVE-048) and is
+        # covered separately.
+        mock_client.getprop = _getprop(**_PORTAL_GO_PROPS)
         mock_client.shell = AsyncMock(return_value="null")
         mock_client.is_ks_installed = AsyncMock(return_value=False)
         mock_client.close = AsyncMock()
@@ -263,6 +305,13 @@ async def test_user_flow_creates_entry_even_when_install_fails(hass):
 
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_NAME] == "192.168.50.77"
+    # The flow's own inputs reach install_and_launch unchanged, including the
+    # resolved model key the catalog gate matched on.
+    mock_install.assert_awaited_once()
+    _, kwargs = mock_install.await_args
+    assert kwargs["host"] == "192.168.50.77"
+    assert kwargs["password"] == "hunter222"
+    assert kwargs["device_model"] == "portal_go"
 
 
 async def test_user_flow_device_info_uses_host_for_provisioning_when_device_name_unset(hass):
@@ -271,7 +320,7 @@ async def test_user_flow_device_info_uses_host_for_provisioning_when_device_name
     ) as mock_client_cls:
         mock_client = mock_client_cls.return_value
         mock_client.connect = AsyncMock()
-        mock_client.getprop = AsyncMock(side_effect=["tv,nosdcard", "onn"])
+        mock_client.getprop = _getprop(**_GTV_PROPS)
         mock_client.shell = AsyncMock(return_value="null")
         mock_client.is_ks_installed = AsyncMock(return_value=False)
         mock_client.close = AsyncMock()
@@ -338,7 +387,9 @@ async def test_user_flow_uses_selected_long_lived_token(hass):
     ):
         mock_client = mock_client_cls.return_value
         mock_client.connect = AsyncMock()
-        mock_client.getprop = AsyncMock(side_effect=["tv,nosdcard", "onn"])
+        # Portal Go: the token this test selects is only consumed once
+        # install_and_launch actually runs, which needs an approved recipe.
+        mock_client.getprop = _getprop(**_PORTAL_GO_PROPS)
         mock_client.shell = AsyncMock(return_value="Office Display")
         mock_client.is_ks_installed = AsyncMock(return_value=False)
         mock_client.close = AsyncMock()
@@ -383,7 +434,7 @@ async def test_user_flow_kept_install_collects_only_existing_connection_details(
     ) as mock_install:
         mock_client = mock_client_cls.return_value
         mock_client.connect = AsyncMock()
-        mock_client.getprop = AsyncMock(side_effect=["tv,nosdcard", "onn"])
+        mock_client.getprop = _getprop(**_GTV_PROPS)
         mock_client.shell = AsyncMock(return_value="Living Room TV")
         mock_client.is_ks_installed = AsyncMock(return_value=True)
         mock_client.uninstall_ks = AsyncMock()
@@ -435,7 +486,11 @@ async def test_user_flow_kept_install_collects_only_existing_connection_details(
 
 async def test_user_flow_reinstall_uninstalls_before_install(hass):
     """[KSM-TEST-022] Reinstall keeps the full fresh-install form (including
-    token selection) and uninstalls before installing."""
+    token selection) and uninstalls before installing.
+
+    Uses Portal Go props deliberately: since KSM-BEHAVE-048 the reinstall path
+    resolves an approved recipe *before* it uninstalls, so an unmatched device
+    never reaches the uninstall at all (asserted separately below)."""
     with patch(
         "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
     ) as mock_client_cls, patch(
@@ -456,7 +511,7 @@ async def test_user_flow_reinstall_uninstalls_before_install(hass):
         mock_install.side_effect = _install_ok
         mock_client = mock_client_cls.return_value
         mock_client.connect = AsyncMock()
-        mock_client.getprop = AsyncMock(side_effect=["tv,nosdcard", "onn"])
+        mock_client.getprop = _getprop(**_PORTAL_GO_PROPS)
         mock_client.shell = AsyncMock(return_value="Living Room TV")
         mock_client.is_ks_installed = AsyncMock(return_value=True)
         mock_client.uninstall_ks = AsyncMock(side_effect=_uninstall)
@@ -494,3 +549,55 @@ async def test_user_flow_reinstall_uninstalls_before_install(hass):
     mock_client.uninstall_ks.assert_awaited_once()
     mock_install.assert_awaited_once()
     assert call_order == ["uninstall", "install"]
+
+
+async def test_user_flow_reinstall_never_uninstalls_a_device_with_no_approved_recipe(hass):
+    """[KSM-TEST-060] Fail closed *before* the destructive half of reinstall.
+
+    `install_and_launch` raises `NoApprovedRecipe` for an unmatched model, but
+    the config flow uninstalls the existing app first. If the gate ran only
+    inside `install_and_launch`, this GTV stick would end the flow with its
+    working Kiosk Satellite removed and no recipe able to put it back -- a
+    fail-closed check that fails *after* the damage. The entry is still
+    created (pairing is the hard, human part), so the Install button remains
+    the recovery path once #18 records an exact model for this hardware.
+    """
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
+    ) as mock_client_cls, patch(
+        "custom_components.kiosk_satellite_manager.fetch_health",
+        new=AsyncMock(return_value={"appVersion": "2026.9.62"}),
+    ), patch(
+        "custom_components.kiosk_satellite_manager.config_flow.install_and_launch"
+    ) as mock_install:
+        mock_client = mock_client_cls.return_value
+        mock_client.connect = AsyncMock()
+        mock_client.getprop = _getprop(**_GTV_PROPS)
+        mock_client.shell = AsyncMock(return_value="Living Room TV")
+        mock_client.is_ks_installed = AsyncMock(return_value=True)
+        mock_client.uninstall_ks = AsyncMock()
+        mock_client.close = AsyncMock()
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "192.168.50.64", "port": 5555}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_EXISTING_INSTALL_ACTION: EXISTING_INSTALL_REINSTALL},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_PASSWORD: "hunter222"},
+        )
+        if result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS:
+            await hass.async_block_till_done()
+            result = await hass.config_entries.flow.async_configure(result["flow_id"])
+            await hass.async_block_till_done()
+
+    assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_DEVICE_PROFILE] is None
+    mock_client.uninstall_ks.assert_not_awaited()
+    mock_install.assert_not_awaited()

@@ -46,3 +46,36 @@ def test_profile_fields_are_fixed_data_never_arbitrary_shell_text():
     field_names = set(RECOVERY_PROFILES["portal_mini"].__dataclass_fields__)
     assert "command" not in field_names
     assert "shell" not in field_names
+
+
+def test_every_recovery_profile_is_keyed_on_an_exact_device_model():
+    """KSM-TEST-066 (issue #20): recovery qualification is per exact model.
+    Before the catalog this dict also held "meta_portal" and "gtv_stick",
+    which are fallback *classifications* -- a classification owning
+    destructive-recovery evidence is exactly the inheritance the issue
+    forbids. The catalog's own recovery_profile_keys must agree, so a future
+    row added on only one side fails here."""
+    from custom_components.kiosk_satellite_manager.device_catalog import CATALOG
+    from custom_components.kiosk_satellite_manager.device_models import (
+        FALLBACK_CLASSIFICATIONS,
+        get_device_model,
+    )
+
+    assert set(RECOVERY_PROFILES) == set(CATALOG.recovery_profile_keys)
+    for key in RECOVERY_PROFILES:
+        assert get_device_model(key) is not None, key
+    # Positive control: the classification keys are real strings that simply
+    # must not appear here -- so the assertion above could have failed.
+    classification_keys = {c.key for c in FALLBACK_CLASSIFICATIONS}
+    assert classification_keys
+    assert classification_keys.isdisjoint(RECOVERY_PROFILES)
+
+
+def test_a_shared_install_recipe_does_not_share_recovery_confirmation():
+    """KSM-TEST-066: Portal Go and Portal Mini are assigned the same recipe
+    version; only Mini's Test Harness reset is live-confirmed."""
+    from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
+
+    assert require_recipe("portal_go") is require_recipe("portal_mini")
+    assert get_recovery_profile("portal_mini").test_harness_confirmed is True
+    assert get_recovery_profile("portal_go").test_harness_confirmed is None

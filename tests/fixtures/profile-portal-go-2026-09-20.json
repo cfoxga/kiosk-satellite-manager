@@ -3,9 +3,9 @@
   "evidence": {
     "source": "live_adb_getprop",
     "verified_at": "2026-09-20",
-    "scope": "read-only profile-match qualification",
+    "scope": "read-only exact-device-model identity qualification",
     "limitations": [
-      "This fixture qualifies PortalGo only; it does not certify another Portal SKU or recovery behavior."
+      "This fixture qualifies PortalGo identity only; it does not certify another Portal SKU, any install-recipe lifecycle behavior, or recovery behavior."
     ]
   },
   "facts": {
@@ -19,5 +19,5 @@
       "fingerprint": "Facebook/terry_prod/terry:10/QKQ1.210213.001/5051355900018050:user/prod-keys"
     }
   },
-  "expected_profile_key": "portal_go"
+  "expected_model_key": "portal_go"
 }
