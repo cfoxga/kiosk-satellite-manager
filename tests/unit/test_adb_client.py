@@ -20,6 +20,8 @@ the user time to tap Allow), not AdbConnectFailed.
 from __future__ import annotations
 
 import os
+import stat
+import threading
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -29,6 +31,7 @@ from custom_components.kiosk_satellite_manager.adb_client import (
     AdbAuthPending,
     AdbClient,
     AdbConnectFailed,
+    AdbKeySecurityError,
     PmInstallFailed,
     PmUninstallFailed,
     UninstallPolicyBlocked,
@@ -54,6 +57,88 @@ def test_ensure_adb_key_reuses_existing(tmp_path):
         again = fh.read()
     assert first == second
     assert original == again
+
+
+def test_ensure_adb_key_creates_private_identity_with_private_permissions(tmp_path):
+    """[KSM-TEST-104] A permissive process umask must not expose the key."""
+    key_dir = tmp_path / "keys"
+    previous_umask = os.umask(0o022)
+    try:
+        private_key = ensure_adb_key(str(key_dir))
+    finally:
+        os.umask(previous_umask)
+
+    assert stat.S_IMODE(key_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(os.stat(private_key).st_mode) == 0o600
+
+
+def test_ensure_adb_key_repairs_owned_existing_private_key_mode(tmp_path):
+    """[KSM-TEST-105] Existing keys get a metadata-only private-mode migration."""
+    private_key = ensure_adb_key(str(tmp_path / "keys"))
+    os.chmod(private_key, 0o644)
+
+    assert ensure_adb_key(str(tmp_path / "keys")) == private_key
+    assert stat.S_IMODE(os.stat(private_key).st_mode) == 0o600
+
+
+def test_ensure_adb_key_rejects_symlink_substitution(tmp_path):
+    """[KSM-TEST-105] A symlink must never be handed to the signer."""
+    key_dir = tmp_path / "keys"
+    private_key = ensure_adb_key(str(key_dir))
+    os.unlink(private_key)
+    os.symlink(tmp_path / "outside", private_key)
+
+    with pytest.raises(AdbKeySecurityError, match="symlink"):
+        ensure_adb_key(str(key_dir))
+
+
+def test_ensure_adb_key_rejects_symlinked_key_directory(tmp_path):
+    """[KSM-TEST-105] The managed directory itself cannot redirect key creation."""
+    os.symlink(tmp_path / "outside", tmp_path / "keys")
+
+    with pytest.raises(AdbKeySecurityError, match="symlink"):
+        ensure_adb_key(str(tmp_path / "keys"))
+
+
+def test_ensure_adb_key_serializes_concurrent_first_generation(tmp_path):
+    """[KSM-TEST-106] One first-run caller publishes the shared identity."""
+    key_dir = str(tmp_path / "keys")
+    calls = 0
+    calls_lock = threading.Lock()
+
+    def fake_keygen(path):
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+        with open(path, "wb") as private_key:
+            private_key.write(b"private")
+        with open(path + ".pub", "wb") as public_key:
+            public_key.write(b"public")
+
+    with patch("custom_components.kiosk_satellite_manager.adb_client.keygen", side_effect=fake_keygen):
+        threads = [threading.Thread(target=ensure_adb_key, args=(key_dir,)) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    assert calls == 1
+    assert (tmp_path / "keys" / "adbkey").read_bytes() == b"private"
+
+
+def test_ensure_adb_key_rejects_insecure_keygen_output(tmp_path):
+    """[KSM-TEST-107] Dependency output is checked before publication."""
+    def insecure_keygen(path):
+        with open(path, "wb") as private_key:
+            private_key.write(b"private")
+        os.chmod(path, 0o644)
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.adb_client.keygen", side_effect=insecure_keygen
+    ), pytest.raises(AdbKeySecurityError, match="mode"):
+        ensure_adb_key(str(tmp_path / "keys"))
+
+    assert not (tmp_path / "keys" / "adbkey").exists()
 
 
 async def test_connect_loads_signer_off_the_event_loop(tmp_path):

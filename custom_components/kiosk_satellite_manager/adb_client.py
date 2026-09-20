@@ -21,10 +21,12 @@ raw connection failure is AdbConnectFailed.
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import os
 import re
+import stat
+import tempfile
 from dataclasses import dataclass
-from pathlib import Path
 
 from adb_shell.adb_device_async import AdbDeviceTcpAsync
 from adb_shell.auth.keygen import keygen
@@ -53,6 +55,10 @@ class AdbAuthPending(Exception):
 
 class AdbConnectFailed(Exception):
     """A raw connection failure (unreachable, wrong port, refused) -- not solved by tapping Allow."""
+
+
+class AdbKeySecurityError(Exception):
+    """The local private ADB identity is unsafe to use."""
 
 
 class PmInstallFailed(Exception):
@@ -157,6 +163,66 @@ class UninstallResult:
     policy_cleared: bool
 
 
+_KEY_DIR_MODE = 0o700
+_PRIVATE_KEY_MODE = 0o600
+
+
+def _validate_private_key(dir_fd: int, name: str) -> None:
+    """Reject a private key that is not exclusively owned by this process."""
+    try:
+        key_stat = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        raise
+    if stat.S_ISLNK(key_stat.st_mode):
+        raise AdbKeySecurityError("ADB private key is a symlink")
+    if not stat.S_ISREG(key_stat.st_mode):
+        raise AdbKeySecurityError("ADB private key is not a regular file")
+    if key_stat.st_uid != os.geteuid():
+        raise AdbKeySecurityError("ADB private key is not owned by this process identity")
+    if stat.S_IMODE(key_stat.st_mode) != _PRIVATE_KEY_MODE:
+        raise AdbKeySecurityError("ADB private key has an unsafe mode")
+
+
+def _repair_existing_private_key_mode(dir_fd: int, name: str) -> None:
+    """Apply the one safe metadata-only migration for an owned regular key."""
+    try:
+        key_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    except OSError as err:
+        raise AdbKeySecurityError("ADB private key is invalid or a symlink") from err
+    try:
+        key_stat = os.fstat(key_fd)
+        if not stat.S_ISREG(key_stat.st_mode):
+            raise AdbKeySecurityError("ADB private key is not a regular file")
+        if key_stat.st_uid != os.geteuid():
+            raise AdbKeySecurityError("ADB private key is not owned by this process identity")
+        os.fchmod(key_fd, _PRIVATE_KEY_MODE)
+    finally:
+        os.close(key_fd)
+
+
+def _open_private_key_dir(key_dir: str) -> int:
+    """Open KSM's key directory without following a final-component symlink."""
+    try:
+        os.mkdir(key_dir, _KEY_DIR_MODE)
+    except FileExistsError:
+        pass
+
+    try:
+        dir_fd = os.open(key_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as err:
+        raise AdbKeySecurityError("ADB key directory is invalid or a symlink") from err
+
+    try:
+        dir_stat = os.fstat(dir_fd)
+        if dir_stat.st_uid != os.geteuid():
+            raise AdbKeySecurityError("ADB key directory is not owned by this process identity")
+        os.fchmod(dir_fd, _KEY_DIR_MODE)
+        return dir_fd
+    except BaseException:
+        os.close(dir_fd)
+        raise
+
+
 def ensure_adb_key(key_dir: str) -> str:
     """Generate an ADB keypair under key_dir if one doesn't already exist.
 
@@ -165,11 +231,54 @@ def ensure_adb_key(key_dir: str) -> str:
     here means every entry created from a given HA instance shares the same
     key_dir/adbkey, not that keygen runs more than once for it).
     """
-    Path(key_dir).mkdir(parents=True, exist_ok=True)
-    priv_path = os.path.join(key_dir, "adbkey")
-    if not os.path.exists(priv_path):
-        keygen(priv_path)
-    return priv_path
+    dir_fd = _open_private_key_dir(key_dir)
+    lock_fd: int | None = None
+    temporary_path: str | None = None
+    try:
+        lock_fd = os.open(
+            "adbkey.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, _PRIVATE_KEY_MODE, dir_fd=dir_fd
+        )
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            _validate_private_key(dir_fd, "adbkey")
+        except FileNotFoundError:
+            temporary_fd, temporary_path = tempfile.mkstemp(prefix=".adbkey-", dir=key_dir)
+            try:
+                os.fchmod(temporary_fd, _PRIVATE_KEY_MODE)
+            finally:
+                os.close(temporary_fd)
+
+            keygen(temporary_path)
+            temporary_name = os.path.basename(temporary_path)
+            _validate_private_key(dir_fd, temporary_name)
+            try:
+                os.link(temporary_name, "adbkey", src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            except FileExistsError:
+                _validate_private_key(dir_fd, "adbkey")
+            else:
+                temporary_public = f"{temporary_path}.pub"
+                if os.path.exists(temporary_public):
+                    try:
+                        os.link(
+                            f"{temporary_name}.pub", "adbkey.pub", src_dir_fd=dir_fd, dst_dir_fd=dir_fd
+                        )
+                    except FileExistsError:
+                        pass
+        except AdbKeySecurityError:
+            _repair_existing_private_key_mode(dir_fd, "adbkey")
+        _validate_private_key(dir_fd, "adbkey")
+        return os.path.join(key_dir, "adbkey")
+    finally:
+        if temporary_path is not None:
+            for path in (temporary_path, f"{temporary_path}.pub"):
+                try:
+                    os.unlink(path)
+                except FileNotFoundError:
+                    pass
+        if lock_fd is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+        os.close(dir_fd)
 
 
 class AdbClient:

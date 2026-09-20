@@ -8,6 +8,8 @@
   a bounded KSM client operation.
 - Stop Portal provisioning from disabling Android's device-wide package
   verification setting.
+- Protect KSM's shared ADB private key with private directory/file modes,
+  ownership checks, symlink rejection, and serialized first-run generation.
 - Make post-install health polling stop without an unnecessary final delay,
   while covering token persistence and install recovery cleanup paths.
 - Reject KSM service calls aimed at stale config entries before opening an ADB connection.
