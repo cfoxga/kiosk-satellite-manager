@@ -41,15 +41,10 @@ repo's `kiosk-satellite-manager/` silo (`docs/SPEC/provisioning.md`).
 
 ## Installation
 
-[![Open your Home Assistant instance and open this repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=cfoxga&repository=kiosk-satellite-manager&category=integration)
-
-Not yet in the default HACS store — the badge above adds this repo to HACS as a custom repository.
-Manually: add `https://github.com/cfoxga/kiosk-satellite-manager` as an Integration-type custom
-repository in HACS, install **Kiosk Satellite Manager**, and restart Home Assistant.
-
-This repo is currently **private** while it's still pre-release — the badge/manual-add steps above
-only work once it's made public (or for HACS installs that supply a GitHub token with access to a
-private repo). Not public yet; will be before real installs are expected.
+This repo lives on Gitea (`git.cfoxga.com`), not GitHub, so it is **not HACS-installable** — HACS
+only adds repositories hosted on GitHub. Install manually: copy
+`custom_components/kiosk_satellite_manager/` into your Home Assistant config's
+`custom_components/` directory, then restart Home Assistant.
 
 Then add the integration (Settings → Devices & Services → Add Integration → Kiosk Satellite Manager)
 per device, and complete the three manual steps above on each device before the config flow can
