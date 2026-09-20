@@ -1,8 +1,40 @@
 """Unit tests for device-type profile matching (KSM-BEHAVE-001)."""
+import json
+from pathlib import Path
+
 from custom_components.kiosk_satellite_manager.device_profiles import (
     UNKNOWN_PROFILE,
     match_profile,
 )
+
+
+def test_portal_go_physical_qualification_matches_exact_observed_facts():
+    """KSM-TEST-051: a live PortalGo qualification must not regress to fallback."""
+    fixture_path = (
+        Path(__file__).parents[1] / "fixtures/profile-portal-go-2026-09-20.json"
+    )
+    qualification = json.loads(fixture_path.read_text())
+    platform = qualification["facts"]["platform"]
+
+    profile = match_profile(
+        platform["characteristics"],
+        platform["manufacturer"],
+        model=platform["model"],
+        sdk=platform["sdk"],
+    )
+
+    assert qualification["evidence"]["source"] == "live_adb_getprop"
+    assert profile.key == qualification["expected_profile_key"]
+    assert profile.is_portal is True
+
+    # Negative control: a similarly named Portal SKU must not inherit the
+    # PortalGo qualification merely because it shares manufacturer and SDK.
+    assert match_profile(
+        platform["characteristics"],
+        platform["manufacturer"],
+        model="PortalMini",
+        sdk=platform["sdk"],
+    ).key != qualification["expected_profile_key"]
 
 
 def test_onn_gtv_stick_matches_by_characteristics_and_manufacturer():
@@ -107,4 +139,3 @@ def test_unrecognized_device_falls_back_to_unknown():
 def test_match_is_case_insensitive():
     profile = match_profile("TV,NOSDCARD", "ONN")
     assert profile.key == "gtv_stick"
-

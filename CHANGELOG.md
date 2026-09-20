@@ -7,7 +7,8 @@
   missing, instead reporting that the package state is unknown.
 - Refine the Kiosk Satellite Manager onboarding form with detected device metadata, Home Assistant's
   native name/area assignment, clearer default-launcher wording, and a secure existing-token picker.
-
+- Record the physical PortalGo profile match (`Facebook` / `PortalGo` / Android 10, SDK 29)
+  in a sanitized fixture and prevent it from silently regressing to a fallback profile.
 - Add the response-only `kiosk_satellite_manager.onboarding_plan` service, which converts
   sanitized Android capability evidence into a deterministic, explainable dry-run plan without
   executing actions or authorizing destructive operations.

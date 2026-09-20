@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "evidence": {
+    "source": "live_adb_getprop",
+    "verified_at": "2026-09-20",
+    "scope": "read-only profile-match qualification",
+    "limitations": [
+      "This fixture qualifies PortalGo only; it does not certify another Portal SKU or recovery behavior."
+    ]
+  },
+  "facts": {
+    "platform": {
+      "manufacturer": "Facebook",
+      "model": "PortalGo",
+      "sdk": 29,
+      "release": "10",
+      "characteristics": "nosdcard",
+      "codename": "terry",
+      "fingerprint": "Facebook/terry_prod/terry:10/QKQ1.210213.001/5051355900018050:user/prod-keys"
+    }
+  },
+  "expected_profile_key": "portal_go"
+}

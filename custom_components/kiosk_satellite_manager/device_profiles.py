@@ -7,10 +7,10 @@ custom_components/ tree as-is and this keeps the match rules type-checked;
 splitting to JSON is a mechanical follow-up if profiles grow past a handful.
 
 Match values below are getprop output, lower-cased before comparison
-(Verified Finding 4). The onn/GTV values were confirmed live against a real
-device this session; the Meta Portal manufacturer value was not -- no
-ADB-enabled Portal was reachable -- and should be corrected against real
-getprop output once one is (see docs/SPEC/provisioning.md § Open questions).
+(Verified Finding 4). The onn/GTV values and the PortalGo `facebook`/
+`portalgo` values were confirmed live against physical devices; Portal-specific
+rules that have not been exercised on their own model remain qualified only as
+far as their documented evidence permits (see docs/SPEC/provisioning.md).
 """
 from __future__ import annotations
 
@@ -206,6 +206,7 @@ def get_profile(key: str | None) -> DeviceProfile:
     return UNKNOWN_PROFILE
 
 
+
 def match_profile(
     characteristics: str = "",
     manufacturer: str = "",
@@ -232,4 +233,3 @@ def match_profile(
             continue
         return profile
     return UNKNOWN_PROFILE
-
