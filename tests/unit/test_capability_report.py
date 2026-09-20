@@ -281,6 +281,60 @@ async def test_report_sanitizes_denied_probe_errors():
     assert "private device detail" not in str(report)
 
 
+async def test_report_sanitizes_generic_probe_errors_and_continues():
+    """[KSM-TEST-085] Generic failures expose only their class, per probe."""
+    secret = "token=secret ip=192.0.2.55 serial=ABC123"
+    client = AsyncMock()
+    client.shell = AsyncMock(side_effect=RuntimeError(secret))
+
+    report = await CapabilityReportCollector(client).collect()
+
+    assert client.shell.await_count == 22
+    assert all(
+        probe == {"status": "error", "error": "RuntimeError"}
+        for probe in report["probes"].values()
+    )
+    assert secret not in str(report)
+    assert "secret" not in str(report)
+    assert report["facts"]["platform"]["device_model_key"] is None
+    assert report["catalog"]["executable_recipe"] is False
+
+
+def test_onboarding_plan_preserves_unknown_evidence_as_blockers():
+    """[KSM-TEST-085] Unknown SDK, owner, and package state fail closed."""
+    report = _observed_report(device_owner=None)
+    report["facts"]["platform"]["sdk"] = "29"
+    report["facts"]["applications"]["kiosk_satellite"]["installed"] = None
+
+    plan = build_onboarding_plan(report)
+
+    assert {"sdk_unknown", "device_owner_unknown", "kiosk_satellite_state_unknown"} <= set(
+        plan["blockers"]
+    )
+    identify_sdk = next(
+        step for step in plan["steps"] if step["id"] == "identify_android_version"
+    )
+    owner = next(
+        step for step in plan["steps"] if step["id"] == "device_owner_enrollment"
+    )
+    assert identify_sdk["user_presence_required"] is True
+    assert identify_sdk["reason"] == "The Android SDK level is not observed."
+    assert owner["reason"] == "Device-owner state is not observed."
+    assert plan["automatic_actions"] == []
+
+
+def test_onboarding_plan_blocks_a_missing_package_fact():
+    """[KSM-TEST-085] A missing application fact is not observed absence."""
+    report = _observed_report(device_owner=True)
+    report["facts"]["applications"] = {}
+
+    plan = build_onboarding_plan(report)
+
+    assert "kiosk_satellite_state_unknown" in plan["blockers"]
+    assert all(step["id"] != "install_kiosk_satellite" for step in plan["steps"])
+    assert plan["automatic_actions"] == []
+
+
 async def test_report_distinguishes_an_observed_absent_device_owner():
     client = AsyncMock()
     client.shell = AsyncMock(side_effect=[

@@ -17,6 +17,8 @@
 - Revoke KSM-generated Home Assistant credentials when setup fails, a flow is
   abandoned, or a KSM entry is removed or receives a replacement credential,
   while preserving selected shared tokens.
+- Cover generic probe failures and unknown SDK, device-owner, and package-state
+  evidence without leaking raw exception content or authorizing automatic work.
 - Make post-install health polling stop without an unnecessary final delay,
   while covering token persistence and install recovery cleanup paths.
 - Reject KSM service calls aimed at stale config entries before opening an ADB connection.
