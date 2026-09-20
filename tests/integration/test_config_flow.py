@@ -9,13 +9,17 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import pytest
 import voluptuous as vol
 
 from homeassistant import config_entries, data_entry_flow
 from homeassistant.components import persistent_notification
 from homeassistant.setup import async_setup_component
 
-from custom_components.kiosk_satellite_manager.adb_client import AdbAuthPending
+from custom_components.kiosk_satellite_manager.adb_client import (
+    AdbAuthPending,
+    AdbConnectFailed,
+)
 from custom_components.kiosk_satellite_manager.const import (
     CONF_AREA_ID,
     CONF_DEVICE_PROFILE,
@@ -368,6 +372,116 @@ async def test_user_flow_shows_auth_pending_error_when_device_never_confirms(has
     assert result["type"] == data_entry_flow.FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"]["base"] == "auth_pending"
+
+
+async def test_user_flow_keeps_unreadable_identity_and_release_conservative(hass):
+    """[KSM-TEST-079] Missing probes are evidence-free, not a guessed recipe."""
+    async def _unreadable_props(name: str) -> str:
+        if name in {"ro.product.model", "ro.build.version.release"}:
+            raise RuntimeError(f"cannot read {name}")
+        return ""
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
+    ) as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.connect = AsyncMock()
+        mock_client.getprop = AsyncMock(side_effect=_unreadable_props)
+        mock_client.shell = AsyncMock(return_value="Unidentified kiosk")
+        mock_client.is_ks_installed = AsyncMock(return_value=False)
+        mock_client.close = AsyncMock()
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "192.168.50.100", "port": 5555}
+        )
+
+    assert result["type"] == data_entry_flow.FlowResultType.FORM
+    assert result["step_id"] == "device_info"
+    assert result["description_placeholders"] == {
+        "android_version": "Unknown",
+        "device_model": "Unknown device",
+    }
+    mock_client.close.assert_awaited_once()
+
+
+async def test_user_flow_shows_cannot_connect_for_immediate_refusal(hass):
+    """[KSM-TEST-080] Connection refusal stays distinct from auth pending."""
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
+    ) as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.connect = AsyncMock(side_effect=AdbConnectFailed("refused"))
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "192.168.50.101", "port": 5555}
+        )
+
+    assert result["type"] == data_entry_flow.FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"]["base"] == "cannot_connect"
+    mock_client.connect.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("selected_token_id", "resolved_token"),
+    [
+        ("deleted-token-id", None),
+        (
+            "wrong-type-token-id",
+            SimpleNamespace(
+                id="wrong-type-token-id",
+                client_name="Wrong type",
+                token_type="normal",
+            ),
+        ),
+    ],
+)
+async def test_user_flow_rejects_missing_or_non_long_lived_selected_token(
+    hass, selected_token_id, resolved_token
+):
+    """[KSM-TEST-081] Invalid selector values neither mint nor install."""
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
+    ) as mock_client_cls, patch.object(
+        hass.auth._store, "async_get_refresh_tokens", return_value=[]  # noqa: SLF001
+    ), patch.object(
+        hass.auth, "async_get_refresh_token", return_value=resolved_token
+    ) as mock_get_token, patch.object(
+        hass.auth, "async_create_access_token"
+    ) as mock_create_token, patch(
+        "custom_components.kiosk_satellite_manager.config_flow.install_and_launch"
+    ) as mock_install:
+        mock_client = mock_client_cls.return_value
+        mock_client.connect = AsyncMock()
+        mock_client.getprop = _getprop(**_PORTAL_GO_PROPS)
+        mock_client.shell = AsyncMock(return_value="Office Display")
+        mock_client.is_ks_installed = AsyncMock(return_value=False)
+        mock_client.close = AsyncMock()
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "192.168.50.102", "port": 5555}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_PASSWORD: "admin", CONF_TOKEN_MODE: selected_token_id},
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] == data_entry_flow.FlowResultType.FORM
+    assert result["step_id"] == "device_info"
+    assert result["errors"][CONF_TOKEN_MODE] == "token_not_found"
+    mock_get_token.assert_called_once_with(selected_token_id)
+    mock_create_token.assert_not_called()
+    mock_install.assert_not_awaited()
 
 
 async def test_user_flow_uses_selected_long_lived_token(hass):

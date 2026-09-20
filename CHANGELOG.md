@@ -7,6 +7,9 @@
 - Reject KSM service calls aimed at stale config entries before opening an ADB connection.
 - Correct the legacy Test Harness probe's trace identifier so it does not
   collide with install/update verification coverage.
+- Return the config flow's actionable `token_not_found` error when a selected
+  long-lived access token is revoked between rendering and submission, without
+  minting a credential or starting installation.
 - Surface automatic Kiosk Satellite installation failures as persistent Home
   Assistant notifications while keeping onboarding best-effort and recoverable.
 - Move ADB private-key loading to a worker thread so KSM service calls do not block Home Assistant's event loop.

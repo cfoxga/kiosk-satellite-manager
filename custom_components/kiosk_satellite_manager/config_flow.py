@@ -279,6 +279,11 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 selector.SelectSelectorConfig(
                     options=token_mode_options,
                     mode=selector.SelectSelectorMode.DROPDOWN,
+                    # A token can be revoked after this form was rendered.
+                    # Let submission reach the authoritative lookup below so
+                    # the flow returns token_not_found instead of a schema
+                    # exception from a stale selector value.
+                    custom_value=True,
                 )
             ),
         }
