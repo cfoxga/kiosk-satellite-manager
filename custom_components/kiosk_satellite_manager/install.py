@@ -488,7 +488,9 @@ async def _sync_device_and_connect_ha(
         "ha.url": ha_url,
         "ha.token": ha_token,
         "browser.start_url": start_url,
-        "browser.ignore_ssl_errors": True,
+        # KSM-BEHAVE-061: send an explicit false so a kiosk previously
+        # configured by KSM's unsafe historical default is remediated too.
+        "browser.ignore_ssl_errors": False,
     }
 
     # KSM-TEST-058: the entry's preference cannot turn on a launcher the

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Restore strict certificate validation on every Kiosk Satellite Home Assistant
+  settings sync, explicitly clearing the legacy insecure browser setting.
 - Make post-install health polling stop without an unnecessary final delay,
   while covering token persistence and install recovery cleanup paths.
 - Reject KSM service calls aimed at stale config entries before opening an ADB connection.

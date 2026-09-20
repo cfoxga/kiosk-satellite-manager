@@ -278,6 +278,7 @@ async def test_install_and_launch_skips_sync_when_no_password_configured():
 
 
 async def test_install_and_launch_syncs_password_and_name_on_first_run():
+    """[KSM-TEST-096] First-run sync explicitly retains browser TLS checks."""
     hass = _FakeHass()
     client = _fake_client()
     session = _fake_session()
@@ -314,7 +315,7 @@ async def test_install_and_launch_syncs_password_and_name_on_first_run():
             "ha.url": "http://192.168.1.2:8123",
             "ha.token": "minted-ha-token",
             "browser.start_url": "http://192.168.1.2:8123/portal",
-            "browser.ignore_ssl_errors": True,
+            "browser.ignore_ssl_errors": False,
             "home.enabled": True,
         },
     )
@@ -384,6 +385,7 @@ async def test_install_and_launch_logs_in_and_patches_name_when_password_already
 
 
 async def test_install_and_launch_does_not_repatch_name_when_already_correct():
+    """[KSM-TEST-096] Existing-device sync cannot retain the legacy bypass."""
     hass = _FakeHass()
     client = _fake_client()
     session = _fake_session()
@@ -415,7 +417,7 @@ async def test_install_and_launch_does_not_repatch_name_when_already_correct():
         "ha.url": "http://192.168.1.2:8123",
         "ha.token": "minted-ha-token",
         "browser.start_url": "http://192.168.1.2:8123/portal",
-        "browser.ignore_ssl_errors": True,
+        "browser.ignore_ssl_errors": False,
         "home.enabled": True,
     }
 
@@ -486,6 +488,7 @@ async def test_portal_go_shell_sequence_is_unchanged_by_the_catalog():
 
 
 async def test_install_and_launch_reuses_provided_token_and_respects_launcher_flag():
+    """[KSM-TEST-096] Token reuse cannot bypass certificate validation."""
     hass = _FakeHass()
     client = _fake_client()
     session = _fake_session()
@@ -524,7 +527,7 @@ async def test_install_and_launch_reuses_provided_token_and_respects_launcher_fl
         "ha.url": "http://192.168.1.2:8123",
         "ha.token": "pre-existing-token",
         "browser.start_url": "http://192.168.1.2:8123/portal",
-        "browser.ignore_ssl_errors": True,
+        "browser.ignore_ssl_errors": False,
     }
 
 
