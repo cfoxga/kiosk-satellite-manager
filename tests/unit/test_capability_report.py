@@ -2,7 +2,7 @@
 
 KSM-TEST-034..039 (cfoxga/kiosk-satellite-manager#12): Test Harness
 detection facts and the OEM recovery entries `onboarding_plan` derives from
-them. KSM-TEST-040 (cfoxga/kiosk-satellite-manager#15): the legacy
+them. KSM-TEST-093 (cfoxga/kiosk-satellite-manager#15): the legacy
 `ro.test_harness` signal, surfaced separately as `facts.oem.test_harness_mode`.
 """
 from __future__ import annotations
