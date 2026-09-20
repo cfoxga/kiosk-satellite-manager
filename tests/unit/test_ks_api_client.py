@@ -4,8 +4,10 @@ Portal's own served JS bundles -- see ks_api_client.py's module docstring.
 """
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+import aiohttp
 import pytest
 
 from custom_components.kiosk_satellite_manager import ks_api_client
@@ -38,6 +40,35 @@ async def test_get_setup_status_gets_unauthenticated_status_url():
     assert result == {"setupNeeded": True, "passwordNeeded": True}
     session.get.assert_called_once()
     assert session.get.call_args.args[0] == "http://192.168.1.50:2324/api/setup/status"
+
+
+async def test_get_setup_status_bounds_a_malformed_http_response(monkeypatch):
+    """[KSM-TEST-108] Exercise aiohttp's real parser against a malformed reply.
+
+    The timeout bounds this regression so an invalid device response cannot turn
+    into a hung KSM operation; the invalid NUL in a header value must be
+    rejected by the client parser rather than accepted as JSON.
+    """
+
+    async def malformed_server(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\x00\r\n\r\n{}")
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(malformed_server, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setattr(ks_api_client, "_base_url", lambda _host: f"http://127.0.0.1:{port}")
+    try:
+        async with aiohttp.ClientSession() as session:
+            with pytest.raises(aiohttp.ClientError):
+                await asyncio.wait_for(
+                    ks_api_client.get_setup_status(session, "malformed-device"), timeout=1
+                )
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
 async def test_setup_password_posts_password_and_device_name_returns_token():
