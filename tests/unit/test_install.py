@@ -21,8 +21,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from custom_components.kiosk_satellite_manager.adb_client import PmInstallFailed
-from custom_components.kiosk_satellite_manager.install import install_and_launch
+from custom_components.kiosk_satellite_manager.install import (
+    KsInstallVerificationFailed,
+    install_and_launch,
+)
 from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
+
+_TARGET_VERSION = "2026.9.99"
 
 
 class _FakeHass:
@@ -50,18 +55,42 @@ def _fake_apk_response():
     return cm
 
 
+def _fake_health_response(app_version=_TARGET_VERSION):
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json = AsyncMock(return_value={"appVersion": app_version})
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=resp)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    return cm
+
+
 def _fake_client():
     client = MagicMock()
     client.getprop = AsyncMock(return_value="arm64-v8a")
     client.push = AsyncMock()
     client.install_apk = AsyncMock()
+    # KSM-BEHAVE-039: pre-install check (not installed/unknown), then
+    # post-install verify matching the release fetched by _fake_session's
+    # default latest_release patch below -- the common "fresh install
+    # succeeds" shape every pre-existing test in this file exercises.
+    client.installed_version = AsyncMock(side_effect=[None, _TARGET_VERSION])
     client.shell = AsyncMock(return_value="")
     return client
 
 
-def _fake_session():
+def _fake_session(app_version=_TARGET_VERSION):
+    """session.get is URL-aware: the releases-asset download and
+    /api/health (KSM-BEHAVE-039's postcondition readback) share one mock
+    session but must return different response shapes."""
     session = MagicMock()
-    session.get = MagicMock(return_value=_fake_apk_response())
+
+    def _get(url, **kwargs):
+        if "/api/health" in url:
+            return _fake_health_response(app_version)
+        return _fake_apk_response()
+
+    session.get = MagicMock(side_effect=_get)
     return session
 
 
@@ -71,8 +100,8 @@ async def test_install_and_launch_runs_expected_shell_sequence():
     session = _fake_session()
 
     with patch(
-        "custom_components.kiosk_satellite_manager.install.latest_apk_url",
-        new=AsyncMock(return_value="https://example.invalid/ks.apk"),
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ):
         await install_and_launch(hass, client, session)
 
@@ -102,8 +131,8 @@ async def test_install_and_launch_aborts_before_launch_on_rejected_artifact():
     session = _fake_session()
 
     with patch(
-        "custom_components.kiosk_satellite_manager.install.latest_apk_url",
-        new=AsyncMock(return_value="https://example.invalid/ks.apk"),
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ):
         with pytest.raises(PmInstallFailed) as exc_info:
             await install_and_launch(hass, client, session)
@@ -120,8 +149,8 @@ async def test_install_and_launch_uses_device_profile_for_start_url_and_permissi
     session = _fake_session()
 
     with patch(
-        "custom_components.kiosk_satellite_manager.install.latest_apk_url",
-        new=AsyncMock(return_value="https://example.invalid/ks.apk"),
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ), patch(
         "custom_components.kiosk_satellite_manager.install.ks_api_client"
     ) as mock_api, patch(
@@ -160,8 +189,8 @@ async def test_install_and_launch_skips_sync_when_no_password_configured():
     session = _fake_session()
 
     with patch(
-        "custom_components.kiosk_satellite_manager.install.latest_apk_url",
-        new=AsyncMock(return_value="https://example.invalid/ks.apk"),
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ), patch(
         "custom_components.kiosk_satellite_manager.install.ks_api_client"
     ) as mock_api:
@@ -179,8 +208,8 @@ async def test_install_and_launch_syncs_password_and_name_on_first_run():
     session = _fake_session()
 
     with patch(
-        "custom_components.kiosk_satellite_manager.install.latest_apk_url",
-        new=AsyncMock(return_value="https://example.invalid/ks.apk"),
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ), patch(
         "custom_components.kiosk_satellite_manager.install.ks_api_client"
     ) as mock_api, patch(
@@ -223,8 +252,8 @@ async def test_install_and_launch_mints_a_unique_managed_token_name():
     session = _fake_session()
 
     with patch(
-        "custom_components.kiosk_satellite_manager.install.latest_apk_url",
-        new=AsyncMock(return_value="https://example.invalid/ks.apk"),
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ), patch(
         "custom_components.kiosk_satellite_manager.install.ks_api_client"
     ) as mock_api, patch(
@@ -251,8 +280,8 @@ async def test_install_and_launch_logs_in_and_patches_name_when_password_already
     session = _fake_session()
 
     with patch(
-        "custom_components.kiosk_satellite_manager.install.latest_apk_url",
-        new=AsyncMock(return_value="https://example.invalid/ks.apk"),
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ), patch(
         "custom_components.kiosk_satellite_manager.install.ks_api_client"
     ) as mock_api, patch(
@@ -282,8 +311,8 @@ async def test_install_and_launch_does_not_repatch_name_when_already_correct():
     session = _fake_session()
 
     with patch(
-        "custom_components.kiosk_satellite_manager.install.latest_apk_url",
-        new=AsyncMock(return_value="https://example.invalid/ks.apk"),
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ), patch(
         "custom_components.kiosk_satellite_manager.install.ks_api_client"
     ) as mock_api, patch(
@@ -318,8 +347,8 @@ async def test_install_and_launch_sync_failure_is_logged_not_raised():
     session = _fake_session()
 
     with patch(
-        "custom_components.kiosk_satellite_manager.install.latest_apk_url",
-        new=AsyncMock(return_value="https://example.invalid/ks.apk"),
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ), patch(
         "custom_components.kiosk_satellite_manager.install.ks_api_client"
     ) as mock_api:
@@ -339,8 +368,8 @@ async def test_install_and_launch_reuses_provided_token_and_respects_launcher_fl
     session = _fake_session()
 
     with patch(
-        "custom_components.kiosk_satellite_manager.install.latest_apk_url",
-        new=AsyncMock(return_value="https://example.invalid/ks.apk"),
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ), patch(
         "custom_components.kiosk_satellite_manager.install.ks_api_client"
     ) as mock_api, patch(
@@ -373,3 +402,123 @@ async def test_install_and_launch_reuses_provided_token_and_respects_launcher_fl
         "browser.start_url": "http://192.168.1.2:8123/portal",
         "browser.ignore_ssl_errors": True,
     }
+
+
+async def test_install_and_launch_skips_install_when_already_at_target_version():
+    """KSM-BEHAVE-039 (Phase 2, "preserve compatible installations where
+    possible"): a device already running the release we'd fetch must not be
+    reinstalled -- but am start/permission grants still run every press."""
+    hass = _FakeHass()
+    client = _fake_client()
+    client.installed_version = AsyncMock(return_value=_TARGET_VERSION)
+    session = _fake_session()
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ):
+        await install_and_launch(hass, client, session)
+
+    client.push.assert_not_called()
+    client.install_apk.assert_not_called()
+    shell_calls = [c.args[0] for c in client.shell.await_args_list]
+    assert not any(call.startswith("rm -f ") for call in shell_calls)
+    assert shell_calls[0] == "am start -n me.jxl.kiosk_satellite/.MainActivity"
+
+
+async def test_install_and_launch_repairs_via_uninstall_on_signature_mismatch():
+    """KSM-BEHAVE-039 (Phase 2, "choose... repair... from observed state"):
+    a signing-cert/update mismatch on a device with an existing install is
+    recovered by uninstalling and retrying once, not a hard failure."""
+    hass = _FakeHass()
+    client = _fake_client()
+    client.installed_version = AsyncMock(side_effect=["9.0.0", _TARGET_VERSION])
+    client.install_apk = AsyncMock(
+        side_effect=[
+            PmInstallFailed("INSTALL_FAILED_UPDATE_INCOMPATIBLE", "incompatible_signature"),
+            None,
+        ]
+    )
+    client.uninstall_ks = AsyncMock()
+    session = _fake_session()
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ):
+        await install_and_launch(hass, client, session)
+
+    client.uninstall_ks.assert_awaited_once()
+    assert client.install_apk.await_count == 2
+
+
+async def test_install_and_launch_does_not_repair_signature_mismatch_on_fresh_device():
+    """A device that never had Kiosk Satellite installed has nothing to
+    repair by uninstalling -- still a hard failure, matching Phase 1."""
+    hass = _FakeHass()
+    client = _fake_client()
+    client.installed_version = AsyncMock(return_value=None)
+    client.install_apk = AsyncMock(
+        side_effect=PmInstallFailed("INSTALL_FAILED_UPDATE_INCOMPATIBLE", "incompatible_signature")
+    )
+    client.uninstall_ks = AsyncMock()
+    session = _fake_session()
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ):
+        with pytest.raises(PmInstallFailed):
+            await install_and_launch(hass, client, session)
+
+    client.uninstall_ks.assert_not_called()
+    assert client.install_apk.await_count == 1
+
+
+async def test_install_and_launch_raises_when_installed_version_mismatches_after_install():
+    hass = _FakeHass()
+    client = _fake_client()
+    client.installed_version = AsyncMock(side_effect=[None, "stale-version"])
+    session = _fake_session()
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ):
+        with pytest.raises(KsInstallVerificationFailed):
+            await install_and_launch(hass, client, session)
+
+
+async def test_install_and_launch_raises_when_am_start_reports_error():
+    hass = _FakeHass()
+    client = _fake_client()
+    client.shell = AsyncMock(
+        side_effect=[
+            "",  # rm -f
+            "Error: Activity class does not exist",  # am start
+        ]
+    )
+    session = _fake_session()
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ):
+        with pytest.raises(KsInstallVerificationFailed):
+            await install_and_launch(hass, client, session)
+
+
+async def test_install_and_launch_raises_when_health_never_confirms_after_install():
+    hass = _FakeHass()
+    client = _fake_client()
+    session = _fake_session(app_version="wrong-version")
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ), patch(
+        "custom_components.kiosk_satellite_manager.install.asyncio.sleep",
+        new=AsyncMock(),
+    ):
+        with pytest.raises(KsInstallVerificationFailed):
+            await install_and_launch(hass, client, session, host="192.168.1.50")

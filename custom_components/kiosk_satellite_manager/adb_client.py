@@ -36,6 +36,9 @@ from adb_shell.exceptions import (
 
 from .const import KS_PACKAGE
 
+_VERSION_NAME_RE = re.compile(r"\bversionName=([^\s]+)")
+
+
 class AdbAuthPending(Exception):
     """The device hasn't accepted the ADB key yet -- needs the on-device Allow tap."""
 
@@ -134,6 +137,18 @@ class AdbClient:
     async def is_ks_installed(self) -> bool:
         """KSM-BEHAVE-021: does the device already have Kiosk Satellite?"""
         return bool((await self.shell(f"pm path {KS_PACKAGE}")).strip())
+
+    async def installed_version(self) -> str | None:
+        """KSM-BEHAVE-039 (Phase 2, "install and update"): the authoritative
+        installed versionName, or None if not installed/unreadable. Same
+        `dumpsys package` + regex already used by capability_report.py --
+        install_and_launch compares this against the release's tag_name to
+        decide whether to preserve a compatible install, and to verify the
+        postcondition after a fresh install or update.
+        """
+        output = await self.shell(f"dumpsys package {KS_PACKAGE}")
+        match = _VERSION_NAME_RE.search(output)
+        return match.group(1) if match else None
 
     async def uninstall_ks(self) -> None:
         """KSM-BEHAVE-022: remove Kiosk Satellite, verifying it actually went.

@@ -5,6 +5,7 @@ from custom_components.kiosk_satellite_manager.ks_api import (
     _RELEASES_URL,
     ApkAssetNotFound,
     latest_apk_url,
+    latest_release,
     select_apk_asset,
 )
 from custom_components.kiosk_satellite_manager.const import KS_GITHUB_REPO
@@ -41,10 +42,11 @@ def test_raises_when_no_apk_assets():
         select_apk_asset([], "arm64-v8a")
 
 
-def _release(assets, *, draft=False, prerelease=False):
+def _release(assets, *, draft=False, prerelease=False, tag_name=None):
     return {
         "draft": draft,
         "prerelease": prerelease,
+        "tag_name": tag_name,
         "assets": [
             {"name": name, "browser_download_url": url} for name, url in assets
         ],
@@ -122,3 +124,21 @@ async def test_latest_apk_url_queries_releases_with_github_accept_header():
     url, kwargs = session.calls[0]
     assert url == _RELEASES_URL
     assert kwargs["headers"]["Accept"] == "application/vnd.github+json"
+
+
+@pytest.mark.asyncio
+async def test_latest_release_returns_url_and_tag_name():
+    """KSM-BEHAVE-039 (Phase 2, "install and update"): install_and_launch
+    needs the release's own tag_name as the version target -- confirmed live
+    to match the app's own reported version (ks_api.py docstring)."""
+    session = _FakeSession(_release(_ASSETS, tag_name="2026.9.61"))
+    url, tag_name = await latest_release(session, "arm64-v8a")
+    assert url == "https://example.invalid/arm64-v8a.apk"
+    assert tag_name == "2026.9.61"
+
+
+@pytest.mark.asyncio
+async def test_latest_release_empty_tag_name_falls_back_to_empty_string():
+    session = _FakeSession(_release(_ASSETS))
+    _, tag_name = await latest_release(session, "arm64-v8a")
+    assert tag_name == ""

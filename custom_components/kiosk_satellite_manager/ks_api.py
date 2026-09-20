@@ -36,9 +36,7 @@ def select_apk_asset(assets: list[tuple[str, str]], abi: str) -> str:
     raise ApkAssetNotFound("no .apk asset on the latest release")
 
 
-async def latest_apk_url(session: aiohttp.ClientSession, abi: str) -> str:
-    """Return the download URL for the release asset matching abi (or the
-    universal build if nothing matches)."""
+async def _latest_release_and_asset(session: aiohttp.ClientSession, abi: str) -> tuple[dict, str]:
     async with session.get(
         _RELEASES_URL,
         headers={"Accept": "application/vnd.github+json"},
@@ -56,5 +54,26 @@ async def latest_apk_url(session: aiohttp.ClientSession, abi: str) -> str:
             if asset.get("name", "").endswith(".apk")
         ]
         if assets:
-            return select_apk_asset(assets, abi)
+            return release, select_apk_asset(assets, abi)
     raise ApkAssetNotFound(f"no .apk asset found in releases of {KS_GITHUB_REPO}")
+
+
+async def latest_apk_url(session: aiohttp.ClientSession, abi: str) -> str:
+    """Return the download URL for the release asset matching abi (or the
+    universal build if nothing matches)."""
+    _, url = await _latest_release_and_asset(session, abi)
+    return url
+
+
+async def latest_release(session: aiohttp.ClientSession, abi: str) -> tuple[str, str]:
+    """Return (download_url, tag_name) for the latest usable release.
+
+    KSM-BEHAVE-039 (Phase 2, "install and update"): the tag name is the
+    target version install_and_launch compares against the device's
+    currently-installed versionName to decide whether to preserve a
+    compatible install or push a new artifact, and to verify the postcondition
+    afterward -- the same tag format already confirmed live to match the
+    app's own reported version (docstring above, `docs/SPEC/provisioning.md`).
+    """
+    release, url = await _latest_release_and_asset(session, abi)
+    return url, release.get("tag_name") or ""

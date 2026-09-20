@@ -47,7 +47,7 @@ from homeassistant.helpers.network import get_url
 from typing import Any, Final
 
 from . import ks_api_client
-from .adb_client import AdbClient
+from .adb_client import AdbClient, PmInstallFailed
 from .const import (
     HA_TOKEN_LIFESPAN_DAYS,
     KS_APK_REMOTE_PATH,
@@ -57,10 +57,19 @@ from .const import (
     SYNC_STATUS_POLL_DELAY_S,
 )
 from .device_profiles import DeviceProfile, get_profile
-from .ks_api import latest_apk_url
+from .ks_api import latest_release
 from .ks_api_client import KsApiError
+from .provisioning import fetch_health
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class KsInstallVerificationFailed(Exception):
+    """Phase 2 ("install and update"): a mutation's authoritative
+    postcondition -- installed versionName, or /api/health's appVersion --
+    never matched what was expected. Raised instead of trusting a zero ADB
+    shell exit or a "Success" pm-install string alone once a version target
+    is known (KSM-BEHAVE-039)."""
 
 PORTAL_PERMISSIONS: Final = [
     "android.permission.RECORD_AUDIO",
@@ -108,25 +117,62 @@ async def install_and_launch(
     except Exception:
         sdk = 29
 
-    apk_url = await latest_apk_url(session, abi)
-    async with session.get(apk_url) as resp:
-        resp.raise_for_status()
-        data = await resp.read()
-    tmp_path = await hass.async_add_executor_job(_write_temp_apk, data)
-    try:
-        await client.push(tmp_path, KS_APK_REMOTE_PATH)
+    apk_url, target_version = await latest_release(session, abi)
+    current_version = await client.installed_version()
+    if target_version and current_version == target_version:
+        # KSM-BEHAVE-039 (Phase 2, "preserve compatible installations where
+        # possible"): the device is already running the release we'd fetch,
+        # so skip download/push/install entirely rather than reinstalling
+        # over a working app. `am start`/permission grants below still run
+        # every press -- they are themselves mutations with their own
+        # postconditions, per the acceptance text.
+        _LOGGER.debug(
+            "kiosk satellite on %s already at %s; preserving install", host, target_version
+        )
+    else:
+        async with session.get(apk_url) as resp:
+            resp.raise_for_status()
+            data = await resp.read()
+        tmp_path = await hass.async_add_executor_job(_write_temp_apk, data)
         try:
-            # KSM-BEHAVE-035: a rejected artifact (wrong ABI, device SDK too
-            # old, insufficient storage, or a signing-cert/update mismatch)
-            # must abort here -- before am start and permission grants run
-            # against a package that was never actually installed.
-            await client.install_apk(KS_APK_REMOTE_PATH)
+            await client.push(tmp_path, KS_APK_REMOTE_PATH)
+            try:
+                try:
+                    # KSM-BEHAVE-035: a rejected artifact (wrong ABI, device
+                    # SDK too old, insufficient storage, or a signing-cert/
+                    # update mismatch) must abort here -- before am start and
+                    # permission grants run against a package that was never
+                    # actually installed.
+                    await client.install_apk(KS_APK_REMOTE_PATH)
+                except PmInstallFailed as err:
+                    # KSM-BEHAVE-039 (Phase 2, "choose... repair... from
+                    # observed state"): a signing-cert/update mismatch on a
+                    # device that already had some version installed is
+                    # recoverable by removing the stale install and retrying
+                    # once. A fresh/never-installed device has nothing to
+                    # repair by uninstalling, so it still hard-fails.
+                    if err.category == "incompatible_signature" and current_version:
+                        await client.uninstall_ks()
+                        await client.install_apk(KS_APK_REMOTE_PATH)
+                    else:
+                        raise
+            finally:
+                await client.shell(f"rm -f {KS_APK_REMOTE_PATH}")
         finally:
-            await client.shell(f"rm -f {KS_APK_REMOTE_PATH}")
-    finally:
-        await hass.async_add_executor_job(os.unlink, tmp_path)
+            await hass.async_add_executor_job(os.unlink, tmp_path)
 
-    await client.shell(f"am start -n {KS_MAIN_ACTIVITY}")
+        installed_version = await client.installed_version()
+        if target_version and installed_version != target_version:
+            raise KsInstallVerificationFailed(
+                f"installed versionName {installed_version!r} does not match "
+                f"target {target_version!r} on {host} after install"
+            )
+
+    start_output = await client.shell(f"am start -n {KS_MAIN_ACTIVITY}")
+    if "Error" in start_output:
+        raise KsInstallVerificationFailed(
+            f"am start -n {KS_MAIN_ACTIVITY} reported an error on {host}: {start_output.strip()}"
+        )
     perms = profile.permissions_for_sdk(sdk) if profile.key != "unknown" else PORTAL_PERMISSIONS
     for perm in perms:
         await client.shell(f"pm grant {KS_PACKAGE} {perm}")
@@ -137,6 +183,14 @@ async def install_and_launch(
     if profile.is_portal or profile.key == "unknown":
         await client.shell(f"dpm set-active-admin {KS_PACKAGE}/.KioskAdminReceiver")
         await client.shell("settings put global package_verifier_enable 0")
+
+    if host is not None:
+        # KSM-BEHAVE-039 (Phase 2): "am start exit 0 proves nothing" applies
+        # to the preserve/skip branch too -- am start is itself a mutation
+        # every press, so its postcondition (the app actually came up and
+        # reports the expected version) is read back unconditionally here,
+        # not only right after a fresh install.
+        await _verify_health(session, host, target_version)
 
     if password is None or host is None:
         _LOGGER.debug(
@@ -159,6 +213,31 @@ async def install_and_launch(
         _LOGGER.warning("device-name/HA auto-connect sync failed for %s: %s", host, err)
         return None
 
+
+
+async def _verify_health(
+    session: aiohttp.ClientSession, host: str, target_version: str | None
+) -> None:
+    """KSM-BEHAVE-039 (Phase 5 precursor -- "KS health"): bounded poll of the
+    device's own /api/health, the same authoritative readback channel
+    provisioning.py uses, instead of trusting `am start`'s shell exit. If
+    target_version is unknown (e.g. the releases API didn't return a
+    tag_name), only reachability is checked."""
+    last: str = "never reachable"
+    for attempt in range(SYNC_STATUS_POLL_ATTEMPTS):
+        try:
+            health = await fetch_health(session, host)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            last = str(err)
+        else:
+            if not target_version or health.get("appVersion") == target_version:
+                return
+            last = f"appVersion={health.get('appVersion')!r}"
+        if attempt < SYNC_STATUS_POLL_ATTEMPTS - 1:
+            await asyncio.sleep(SYNC_STATUS_POLL_DELAY_S)
+    raise KsInstallVerificationFailed(
+        f"/api/health on {host} never confirmed appVersion={target_version!r}: {last}"
+    )
 
 
 async def _wait_for_setup_status(session: aiohttp.ClientSession, host: str) -> dict:

@@ -27,6 +27,16 @@ def _fake_apk_response():
     return cm
 
 
+def _fake_health_response(app_version):
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json = AsyncMock(return_value={"appVersion": app_version})
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=resp)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    return cm
+
+
 async def test_press_installs_launches_grants_and_refreshes_version(hass):
     # fetch_health is called once by the coordinator's first refresh during
     # setup, and again by the bounded post-install poll -- both must stay
@@ -46,8 +56,19 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
         sensor_entry = next(e for e in entries if e.domain == "sensor")
         assert hass.states.get(sensor_entry.entity_id).state == "old"
 
+        # KSM-BEHAVE-039: install_and_launch's own post-install health-poll
+        # readback hits this same session (through the button's patched
+        # async_get_clientsession), separately from the coordinator-level
+        # fetch_health patched above -- route by URL so both the APK
+        # download and /api/health get the response shape they expect.
         fake_session = MagicMock()
-        fake_session.get = MagicMock(return_value=_fake_apk_response())
+
+        def _session_get(url, **kwargs):
+            if "/api/health" in url:
+                return _fake_health_response("new")
+            return _fake_apk_response()
+
+        fake_session.get = MagicMock(side_effect=_session_get)
 
         coordinator = hass.data[DOMAIN][ctx.entry.entry_id]
         seen_installing_during_press = False
@@ -63,8 +84,8 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
         with patch(
             "custom_components.kiosk_satellite_manager.button.AdbClient"
         ) as mock_client_cls, patch(
-            "custom_components.kiosk_satellite_manager.install.latest_apk_url",
-            new=AsyncMock(return_value="https://example.invalid/ks.apk"),
+            "custom_components.kiosk_satellite_manager.install.latest_release",
+            new=AsyncMock(return_value=("https://example.invalid/ks.apk", "new")),
         ), patch(
             "custom_components.kiosk_satellite_manager.button.async_get_clientsession",
             return_value=fake_session,
@@ -76,6 +97,7 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
             mock_client.getprop = AsyncMock(return_value="armeabi-v7a")
             mock_client.push = AsyncMock()
             mock_client.install_apk = AsyncMock()
+            mock_client.installed_version = AsyncMock(side_effect=[None, "new"])
             mock_client.shell = AsyncMock(return_value="")
             mock_client.close = AsyncMock()
 

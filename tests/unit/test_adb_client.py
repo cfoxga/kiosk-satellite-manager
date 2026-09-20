@@ -198,6 +198,26 @@ async def test_install_apk_classifies_pm_failure(tmp_path, output, expected_cate
     assert exc_info.value.category == expected_category
 
 
+async def test_installed_version_reads_versionname_from_dumpsys(tmp_path):
+    """KSM-BEHAVE-039 (Phase 2, "install and update"): the authoritative
+    installed version, same versionName regex capability_report.py already
+    uses, so install_and_launch can decide preserve/repair/verify from the
+    device's own package-manager state."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    raw = "Packages:\n  Package [me.jxl.kiosk_satellite] (abc123):\n    versionName=2026.9.64\n"
+    with patch.object(client._device, "shell", new=AsyncMock(return_value=raw)) as mock_shell:
+        assert await client.installed_version() == "2026.9.64"
+    mock_shell.assert_awaited_once_with("dumpsys package me.jxl.kiosk_satellite")
+
+
+async def test_installed_version_none_when_not_installed(tmp_path):
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(client._device, "shell", new=AsyncMock(return_value="")):
+        assert await client.installed_version() is None
+
+
 async def test_install_apk_failure_carries_no_raw_output_beyond_the_code(tmp_path):
     """KSM-TEST-031: the exception message stays a short classified summary,
     not the full raw pm install output verbatim."""
