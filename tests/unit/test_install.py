@@ -39,7 +39,7 @@ _TARGET_VERSION = "2026.9.99"
 # SDK-29 output of one named recipe version, and a device only gets them by
 # resolving to a model with an approved assignment to that recipe. The
 # values below are unchanged -- that is the point of KSM-TEST-063.
-PORTAL_RECIPE = get_recipe("meta_portal_standard", "v1")
+PORTAL_RECIPE = get_recipe("meta_portal_standard", "v2")
 PORTAL_PERMISSIONS = PORTAL_RECIPE.permissions_for_sdk(29)
 PORTAL_APPOPS = PORTAL_RECIPE.appops_for_sdk(29)
 
@@ -91,7 +91,7 @@ def _fake_client():
     client.installed_version = AsyncMock(side_effect=[None, _TARGET_VERSION])
     client.shell = AsyncMock(return_value="")
     # KSM-BEHAVE-041: default "everything converges cleanly" readback for
-    # the meta_portal_standard:v1 permission/appops set -- individual
+    # the meta_portal_standard:v2 permission/appops set -- individual
     # convergence tests override these to exercise the
     # partial/needs-user-interaction paths.
     client.granted_permissions = AsyncMock(return_value=set(PORTAL_PERMISSIONS))
@@ -144,7 +144,10 @@ async def test_install_and_launch_runs_expected_shell_sequence():
     assert "appops set me.jxl.kiosk_satellite SYSTEM_ALERT_WINDOW allow" in shell_calls
     assert "dumpsys deviceidle whitelist +me.jxl.kiosk_satellite" in shell_calls
     assert "dpm set-active-admin me.jxl.kiosk_satellite/.KioskAdminReceiver" in shell_calls
-    assert "settings put global package_verifier_enable 0" in shell_calls
+    # [KSM-TEST-097] Package verification is a device-wide security setting,
+    # never an installation convenience.  This covers both the Portal recipe
+    # and the installer executor: no install press may disable it.
+    assert "settings put global package_verifier_enable 0" not in shell_calls
 
 
 async def test_install_and_launch_aborts_before_launch_on_rejected_artifact():
@@ -172,7 +175,7 @@ async def test_install_and_launch_aborts_before_launch_on_rejected_artifact():
 
 
 async def test_install_and_launch_uses_the_assigned_recipe_for_start_url_and_launcher():
-    """KSM-TEST-058: Portal TV resolves meta_portal_tv:v1, which is the same
+    """KSM-TEST-058: Portal TV resolves meta_portal_tv:v2, which is the same
     Portal install lifecycle minus the home-launcher takeover. The launcher
     capability must come from the recipe assigned to *this* model, never from
     the caller's home_launcher preference alone -- home_launcher=True below is
@@ -441,21 +444,20 @@ async def test_install_and_launch_sync_failure_is_logged_not_raised():
             device_model="portal_go",
         )
 
-    # 16, not the pre-catalog 15: this test used to run with no device_profile
+    # 15, not the pre-catalog 14: this test used to run with no device_profile
     # at all, which took the unmatched-device fallback and granted the generic
     # 7-permission list. portal_go always granted 8 (the Portal-only
     # WRITE_SECURE_SETTINGS) -- the count moved because the fallback path is
-    # gone, not because Portal Go behavior changed (KSM-TEST-063).
-    assert client.shell.await_count == 16
+    # gone. The remaining one-command reduction is KSM-BEHAVE-062: package
+    # verification is never disabled (KSM-TEST-097).
+    assert client.shell.await_count == 15
     grants = [c.args[0] for c in client.shell.await_args_list if c.args[0].startswith("pm grant ")]
     assert f"pm grant me.jxl.kiosk_satellite android.permission.WRITE_SECURE_SETTINGS" in grants
 
 
-async def test_portal_go_shell_sequence_is_unchanged_by_the_catalog():
-    """KSM-TEST-063: the acceptance criterion "current Portal Go provisioning
-    remains behaviorally unchanged". The literal command list below was taken
-    from the pre-catalog implementation (device_profiles.DeviceProfile
-    portal_go + get_profile), not from the new code's output."""
+async def test_portal_go_shell_sequence_excludes_verifier_disable():
+    """[KSM-TEST-097] The Portal sequence retains its explicit grants but
+    excludes the device-wide package-verifier mutation."""
     hass = _FakeHass()
     client = _fake_client()
     session = _fake_session()
@@ -482,7 +484,6 @@ async def test_portal_go_shell_sequence_is_unchanged_by_the_catalog():
         "appops set me.jxl.kiosk_satellite GET_USAGE_STATS allow",
         "dumpsys deviceidle whitelist +me.jxl.kiosk_satellite",
         "dpm set-active-admin me.jxl.kiosk_satellite/.KioskAdminReceiver",
-        "settings put global package_verifier_enable 0",
     ]
     assert shell_calls[0].startswith("rm -f ")
 

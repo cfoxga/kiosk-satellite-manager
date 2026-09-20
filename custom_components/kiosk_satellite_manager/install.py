@@ -368,9 +368,6 @@ async def install_and_launch(
     await verify_functional_capabilities(client, convergence)
     if recipe.sets_device_admin:
         await client.shell(f"dpm set-active-admin {KS_PACKAGE}/.KioskAdminReceiver")
-    if recipe.disables_package_verifier:
-        await client.shell("settings put global package_verifier_enable 0")
-
     if host is not None:
         # KSM-BEHAVE-040 (Phase 2): "am start exit 0 proves nothing" applies
         # to the preserve/skip branch too -- am start is itself a mutation

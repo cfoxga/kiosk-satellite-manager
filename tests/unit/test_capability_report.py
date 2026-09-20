@@ -25,7 +25,7 @@ def _catalog_block(
         "model_name": "Meta Portal Go",
         "classification": None if model_key else "unknown",
         "recipe_key": "meta_portal_standard" if executable else None,
-        "recipe_version": "v1" if executable else None,
+        "recipe_version": "v2" if executable else None,
         "assignment_state": "approved" if executable else None,
         "support_state": "recipe_assigned" if executable else "unknown",
         "reason": (
@@ -111,7 +111,7 @@ def test_onboarding_plan_never_leaks_destructive_options_into_automatic_actions(
         {
             "id": "test_harness_reset",
             "classification": "destructive_gated",
-            # KSM-BEHAVE-052: portal_go shares meta_portal_standard:v1 with
+            # KSM-BEHAVE-052: portal_go shares meta_portal_standard:v2 with
             # portal_mini, whose Test Harness reset *is* live-confirmed --
             # and still inherits none of that confirmation.
             "reason": "Not live-confirmed on this hardware (KSM-OPEN-003).",
@@ -234,7 +234,7 @@ async def test_report_is_sanitized_and_marks_unsupported_probes():
         "model_name": "Meta Portal Go",
         "classification": None,
         "recipe_key": "meta_portal_standard",
-        "recipe_version": "v1",
+        "recipe_version": "v2",
         "assignment_state": "approved",
         "support_state": "recipe_assigned",
         "reason": report["catalog"]["reason"],

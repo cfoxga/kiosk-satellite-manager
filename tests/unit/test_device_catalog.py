@@ -36,9 +36,9 @@ _PORTAL_MINI = DeviceFacts(manufacturer="Facebook", model="PortalMini", sdk=29)
 _PORTAL_TV = DeviceFacts(manufacturer="Facebook", model="PortalTV", characteristics="tv", sdk=29)
 
 
-def _qualifications(model_key: str, recipe_version: str = "v1", *, result: str = "pass"):
+def _qualifications(model_key: str, recipe_version: str = "v2", *, result: str = "pass"):
     recipe = get_recipe("meta_portal_standard", recipe_version) or get_recipe(
-        "meta_portal_standard", "v1"
+        "meta_portal_standard", "v2"
     )
     return tuple(
         QualificationRecord(
@@ -88,7 +88,7 @@ def test_catalog_rejects_an_assignment_referencing_an_unknown_model():
         RecipeAssignment(
             model_key="no_such_model",
             recipe_key="meta_portal_standard",
-            recipe_version="v1",
+            recipe_version="v2",
             state=ASSIGNMENT_APPROVED,
             effective_date="2026-09-20",
             rationale="deliberately broken reference",
@@ -118,7 +118,7 @@ def test_catalog_rejects_two_approved_assignments_for_one_model():
         RecipeAssignment(
             model_key="portal_go",
             recipe_key="meta_portal_tv",
-            recipe_version="v1",
+            recipe_version="v2",
             state=ASSIGNMENT_APPROVED,
             effective_date="2026-09-20",
             rationale="deliberately ambiguous",
@@ -173,7 +173,7 @@ def test_portal_go_and_mini_are_distinct_models_sharing_one_recipe_version():
 
     assert go.model_key == "portal_go"
     assert mini.model_key == "portal_mini"
-    assert go.recipe_identity == mini.recipe_identity == "meta_portal_standard:v1"
+    assert go.recipe_identity == mini.recipe_identity == "meta_portal_standard:v2"
     assert go.recipe is mini.recipe
     assert go.executable is True
 
@@ -192,7 +192,7 @@ def test_portal_tv_resolves_the_launcher_incapable_recipe():
     """KSM-TEST-058."""
     tv = resolve_catalog_entry(_PORTAL_TV)
     assert tv.model_key == "portal_tv"
-    assert tv.recipe_identity == "meta_portal_tv:v1"
+    assert tv.recipe_identity == "meta_portal_tv:v2"
     assert tv.recipe.home_launcher_supported is False
 
 
@@ -208,7 +208,7 @@ def test_inverted_portal_tv_assignment_fails_catalog_validation():
         RecipeAssignment(
             model_key="portal_tv",
             recipe_key="meta_portal_standard",
-            recipe_version="v1",
+            recipe_version="v2",
             state=ASSIGNMENT_APPROVED,
             effective_date="2026-09-20",
             rationale="deliberately inverted",
@@ -288,7 +288,7 @@ def test_evidence_for_an_earlier_recipe_version_goes_stale_on_a_new_version():
     """KSM-TEST-062: a behavior-changing v2 makes prior qualification stale
     rather than letting it carry over on key-only matching."""
     v2 = dataclasses.replace(
-        get_recipe("meta_portal_standard", "v1"),
+        get_recipe("meta_portal_standard", "v2"),
         version="v2",
         start_url_path="/portal-v2",
     )
@@ -321,8 +321,8 @@ def test_evidence_outside_the_observed_build_scope_requires_revalidation():
 
 
 def test_required_scenarios_drop_launcher_selection_for_a_launcher_incapable_recipe():
-    standard = required_scenarios(get_recipe("meta_portal_standard", "v1"))
-    tv = required_scenarios(get_recipe("meta_portal_tv", "v1"))
+    standard = required_scenarios(get_recipe("meta_portal_standard", "v2"))
+    tv = required_scenarios(get_recipe("meta_portal_tv", "v2"))
     assert "launcher_selection" in standard
     assert "launcher_selection" not in tv
     assert {"clean_install", "existing_reuse", "update", "reinstall", "uninstall"} <= tv
@@ -378,7 +378,7 @@ def test_catalog_rejects_a_launcher_recipe_on_launcher_incapable_hardware_while_
         RecipeAssignment(
             model_key="portal_tv",
             recipe_key="meta_portal_standard",
-            recipe_version="v1",
+            recipe_version="v2",
             state=ASSIGNMENT_PROPOSED,
             effective_date="2026-09-20",
             rationale="deliberately wrong: Portal TV cannot host a home launcher",

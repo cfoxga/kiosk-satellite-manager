@@ -6,6 +6,8 @@
   settings sync, explicitly clearing the legacy insecure browser setting.
 - Reject malformed device HTTP responses through aiohttp's real parser within
   a bounded KSM client operation.
+- Stop Portal provisioning from disabling Android's device-wide package
+  verification setting.
 - Make post-install health polling stop without an unnecessary final delay,
   while covering token persistence and install recovery cleanup paths.
 - Reject KSM service calls aimed at stale config entries before opening an ADB connection.

@@ -41,7 +41,7 @@ def _report(
         "catalog": {
             "model_key": "portal_go", "model_name": "Meta Portal Go",
             "classification": None, "recipe_key": "meta_portal_standard",
-            "recipe_version": "v1", "assignment_state": "approved",
+            "recipe_version": "v2", "assignment_state": "approved",
             "support_state": "recipe_assigned",
             "reason": "an approved recipe assignment applies",
             "executable_recipe": True,

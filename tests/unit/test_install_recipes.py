@@ -16,7 +16,7 @@ from custom_components.kiosk_satellite_manager.install_recipes import (
 
 
 def _recipe(**overrides):
-    base = get_recipe("meta_portal_standard", "v1")
+    base = get_recipe("meta_portal_standard", "v2")
     return dataclasses.replace(base, **overrides)
 
 
@@ -72,7 +72,7 @@ def test_recipes_are_immutable():
 def test_portal_standard_recipe_reproduces_the_pre_catalog_portal_behavior():
     """KSM-TEST-063 (unit half): the migrated recipe must resolve the exact
     permission/appop/launcher/name behavior `DeviceProfile` shipped."""
-    recipe = get_recipe("meta_portal_standard", "v1")
+    recipe = get_recipe("meta_portal_standard", "v2")
     perms = recipe.permissions_for_sdk(29)
     assert perms == [
         "android.permission.RECORD_AUDIO",
@@ -99,7 +99,7 @@ def test_portal_standard_recipe_reproduces_the_pre_catalog_portal_behavior():
 
 
 def test_sdk_33_portal_adds_the_modern_media_and_notification_permissions():
-    perms = get_recipe("meta_portal_standard", "v1").permissions_for_sdk(33)
+    perms = get_recipe("meta_portal_standard", "v2").permissions_for_sdk(33)
     assert "android.permission.POST_NOTIFICATIONS" in perms
     assert "android.permission.READ_MEDIA_IMAGES" in perms
     assert "android.permission.BLUETOOTH_SCAN" in perms
@@ -108,7 +108,7 @@ def test_sdk_33_portal_adds_the_modern_media_and_notification_permissions():
 
 def test_portal_tv_recipe_is_not_launcher_capable():
     """KSM-TEST-058: Portal TV's recipe differs precisely in launcher behavior."""
-    tv = get_recipe("meta_portal_tv", "v1")
+    tv = get_recipe("meta_portal_tv", "v2")
     assert tv.home_launcher_supported is False
     assert tv.start_url_path == "/portal"
 
@@ -124,7 +124,7 @@ def test_android_tv_recipe_exists_but_is_not_portal_shaped():
 
 
 def test_device_name_normalization_strips_the_model_suffix_android_appends():
-    recipe = get_recipe("meta_portal_standard", "v1")
+    recipe = get_recipe("meta_portal_standard", "v2")
     assert recipe.normalize_device_name("Kitchen PortalGo") == "Kitchen"
     assert recipe.normalize_device_name("Kitchen") == "Kitchen"
     # A label that is only the suffix is left alone rather than emptied.
@@ -145,7 +145,7 @@ def test_recipe_validation_scans_every_string_field_not_an_enrolled_subset():
     Proven field-by-field: every non-prose string field rejects a smuggled
     command, and the two prose fields accept ordinary punctuation.
     """
-    recipe = get_recipe("meta_portal_standard", "v1")
+    recipe = get_recipe("meta_portal_standard", "v2")
     scanned = [
         f.name
         for f in dataclasses.fields(recipe)
@@ -175,7 +175,7 @@ def test_recipe_operations_cannot_drift_from_what_install_actually_branches_on()
     reads; the booleans are what `install.py` executes. If the two can
     disagree the list is decoration, so `validate_recipe` rejects both
     directions of drift."""
-    recipe = get_recipe("meta_portal_standard", "v1")
+    recipe = get_recipe("meta_portal_standard", "v2")
     assert OP_SET_DEVICE_ADMIN in recipe.operations and recipe.sets_device_admin
 
     undeclared = dataclasses.replace(

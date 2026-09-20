@@ -230,7 +230,7 @@ RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
     RecipeAssignment(
         model_key="portal_go",
         recipe_key="meta_portal_standard",
-        recipe_version="v1",
+        recipe_version="v2",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale=(
@@ -242,7 +242,7 @@ RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
     RecipeAssignment(
         model_key="portal_mini",
         recipe_key="meta_portal_standard",
-        recipe_version="v1",
+        recipe_version="v2",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale=(
@@ -254,7 +254,7 @@ RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
     RecipeAssignment(
         model_key="portal_gen1",
         recipe_key="meta_portal_standard",
-        recipe_version="v1",
+        recipe_version="v2",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Behavior migrated verbatim from the portal_gen1 DeviceProfile.",
@@ -262,7 +262,7 @@ RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
     RecipeAssignment(
         model_key="portal_gen2",
         recipe_key="meta_portal_standard",
-        recipe_version="v1",
+        recipe_version="v2",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Behavior migrated verbatim from the portal_gen2 DeviceProfile.",
@@ -270,7 +270,7 @@ RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
     RecipeAssignment(
         model_key="portal_plus_gen1",
         recipe_key="meta_portal_standard",
-        recipe_version="v1",
+        recipe_version="v2",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Behavior migrated verbatim from the portal_plus_gen1 DeviceProfile.",
@@ -278,7 +278,7 @@ RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
     RecipeAssignment(
         model_key="portal_plus_gen2",
         recipe_key="meta_portal_standard",
-        recipe_version="v1",
+        recipe_version="v2",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Behavior migrated verbatim from the portal_plus_gen2 DeviceProfile.",
@@ -286,7 +286,7 @@ RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
     RecipeAssignment(
         model_key="portal_tv",
         recipe_key="meta_portal_tv",
-        recipe_version="v1",
+        recipe_version="v2",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale=(

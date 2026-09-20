@@ -7,7 +7,7 @@ hardware matching and no support claim -- those are `device_models.py` and
 `device_catalog.py` respectively.
 
 Several exact models may share one recipe version (Portal Go and Portal Mini
-both use `meta_portal_standard:v1`). Sharing a recipe never transfers
+both use `meta_portal_standard:v2`). Sharing a recipe never transfers
 qualification or recovery status between those models; see
 `device_catalog.derive_support_state` and `oem_recovery.py`.
 
@@ -34,7 +34,6 @@ OP_SET_APPOPS = "set_appops"
 OP_BATTERY_EXEMPTION = "battery_exemption"
 OP_CONVERGE_CONSENT_SERVICES = "converge_consent_services"
 OP_SET_DEVICE_ADMIN = "set_device_admin"
-OP_DISABLE_PACKAGE_VERIFIER = "disable_package_verifier"
 OP_SYNC_KS_SETTINGS = "sync_ks_settings"
 OP_VERIFY_HEALTH = "verify_health"
 
@@ -48,7 +47,6 @@ ALLOWED_OPERATIONS: frozenset[str] = frozenset(
         OP_BATTERY_EXEMPTION,
         OP_CONVERGE_CONSENT_SERVICES,
         OP_SET_DEVICE_ADMIN,
-        OP_DISABLE_PACKAGE_VERIFIER,
         OP_SYNC_KS_SETTINGS,
         OP_VERIFY_HEALTH,
     }
@@ -98,7 +96,6 @@ _PROSE_FIELDS: frozenset[str] = frozenset({"name", "postconditions"})
 _CONDITIONAL_OPERATIONS: dict[str, str] = {
     OP_BATTERY_EXEMPTION: "battery_exemption",
     OP_SET_DEVICE_ADMIN: "sets_device_admin",
-    OP_DISABLE_PACKAGE_VERIFIER: "disables_package_verifier",
 }
 
 
@@ -129,12 +126,11 @@ class InstallRecipe:
     uninstall_behavior: str = UNINSTALL_PM_UNINSTALL
     permission_policy: str = PERMISSION_POLICY_STANDARD
     appops_policy: str = PERMISSION_POLICY_STANDARD
-    # Conditional behavior. Each of these three is read by `install.py` and is
+    # Conditional behavior. Each is read by `install.py` and is
     # cross-checked against `operations` by `validate_recipe`, so the audited
     # operation list can never drift away from what actually executes.
     battery_exemption: bool = True
     sets_device_admin: bool = False
-    disables_package_verifier: bool = False
     operations: tuple[str, ...] = ()
     parameters: tuple[tuple[str, str | int | bool], ...] = ()
     postconditions: tuple[str, ...] = ()
@@ -292,7 +288,6 @@ _PORTAL_OPERATIONS: tuple[str, ...] = (
     OP_BATTERY_EXEMPTION,
     OP_CONVERGE_CONSENT_SERVICES,
     OP_SET_DEVICE_ADMIN,
-    OP_DISABLE_PACKAGE_VERIFIER,
     OP_VERIFY_HEALTH,
     OP_SYNC_KS_SETTINGS,
     OP_PM_UNINSTALL,
@@ -309,7 +304,7 @@ _PORTAL_POSTCONDITIONS: tuple[str, ...] = (
 INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
     InstallRecipe(
         recipe_key="meta_portal_standard",
-        version="v1",
+        version="v2",
         name="Meta Portal (standard, Home-launcher capable)",
         device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
         redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,
@@ -317,14 +312,13 @@ INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
         home_launcher_supported=True,
         permission_policy=PERMISSION_POLICY_PORTAL,
         sets_device_admin=True,
-        disables_package_verifier=True,
         operations=_PORTAL_OPERATIONS,
         parameters=(("browser.ignore_ssl_errors", True), ("home.enabled", True)),
         postconditions=_PORTAL_POSTCONDITIONS,
     ),
     InstallRecipe(
         recipe_key="meta_portal_tv",
-        version="v1",
+        version="v2",
         name="Meta Portal TV (no replaceable Home launcher)",
         device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
         redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,
@@ -332,7 +326,6 @@ INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
         home_launcher_supported=False,
         permission_policy=PERMISSION_POLICY_PORTAL,
         sets_device_admin=True,
-        disables_package_verifier=True,
         operations=_PORTAL_OPERATIONS,
         parameters=(("browser.ignore_ssl_errors", True),),
         postconditions=_PORTAL_POSTCONDITIONS,
@@ -350,7 +343,6 @@ INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
         home_launcher_supported=False,
         permission_policy=PERMISSION_POLICY_STANDARD,
         sets_device_admin=False,
-        disables_package_verifier=False,
         operations=(
             OP_PM_INSTALL,
             OP_AM_START,
