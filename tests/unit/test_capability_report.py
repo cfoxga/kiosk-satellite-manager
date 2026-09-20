@@ -7,12 +7,14 @@ from custom_components.kiosk_satellite_manager.capability_report import Capabili
 from custom_components.kiosk_satellite_manager.onboarding_plan import build_onboarding_plan
 
 
-def _observed_report(*, installed: bool = False, device_owner: bool | None = False) -> dict:
+def _observed_report(
+    *, installed: bool = False, device_owner: bool | None = False, account_count: int | None = 1
+) -> dict:
     return {
         "schema_version": 1,
         "facts": {
             "platform": {"manufacturer": "Facebook", "model": "PortalGo", "sdk": 29},
-            "management": {"account_count": 1, "device_owner": device_owner, "adb_uid": 2000, "user_count": 1},
+            "management": {"account_count": account_count, "device_owner": device_owner, "adb_uid": 2000, "user_count": 1},
             "applications": {"kiosk_satellite": {"installed": installed, "version": None}},
             "oem": {"bootloader_locked": True},
         },
@@ -49,10 +51,36 @@ def test_onboarding_plan_never_leaks_destructive_options_into_automatic_actions(
     assert plan["destructive_options"] == [{
         "id": "device_owner_enrollment",
         "classification": "destructive_gated",
-        "reason": "The device is not enrolled with a device owner.",
+        "reason": (
+            "The device is not enrolled with a device owner, and existing accounts make "
+            "enrollment ineligible without a reset."
+        ),
         "requires_explicit_user_consent": True,
         "executor_authorized": False,
+        "eligible_now": False,
     }]
+
+
+def test_onboarding_plan_marks_device_owner_eligible_when_no_accounts_present():
+    """KSM-BEHAVE-032/KSM-TEST-028: an ineligible populated device must never look
+
+    the same as an eligible empty one -- `dpm set-device-owner` only succeeds
+    with zero accounts (see docs/SPEC/device-management-strategy.md).
+    """
+    plan = build_onboarding_plan(_observed_report(device_owner=False, account_count=0))
+
+    option = plan["destructive_options"][0]
+    assert option["eligible_now"] is True
+    assert option["reason"] == "The device is not enrolled with a device owner."
+    assert option["executor_authorized"] is False
+
+
+def test_onboarding_plan_marks_device_owner_eligibility_unknown_when_account_count_unobserved():
+    plan = build_onboarding_plan(_observed_report(device_owner=False, account_count=None))
+
+    option = plan["destructive_options"][0]
+    assert option["eligible_now"] is None
+    assert option["reason"] == "The device is not enrolled with a device owner."
 
 
 async def test_report_is_sanitized_and_marks_unsupported_probes():

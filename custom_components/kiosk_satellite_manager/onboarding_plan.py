@@ -73,9 +73,22 @@ def build_onboarding_plan(report: dict[str, Any]) -> dict[str, Any]:
 
     if management.get("device_owner") is not True:
         blockers.append("device_owner_absent" if management.get("device_owner") is False else "device_owner_unknown")
+        # KSM-BEHAVE-032: dpm set-device-owner refuses outright once any account
+        # exists (see docs/SPEC/device-management-strategy.md) -- a populated
+        # device is ineligible today, not merely gated, and the plan must say so
+        # explicitly rather than looking identical to a genuinely empty device.
+        eligible_now = account_count == 0 if isinstance(account_count, int) else None
+        if management.get("device_owner") is False:
+            do_reason = "The device is not enrolled with a device owner."
+            if eligible_now is False:
+                do_reason = (
+                    "The device is not enrolled with a device owner, and existing accounts "
+                    "make enrollment ineligible without a reset."
+                )
+        else:
+            do_reason = "Device-owner state is not observed."
         device_owner_step = _step(
-            "device_owner_enrollment", "destructive_gated",
-            "The device is not enrolled with a device owner." if management.get("device_owner") is False else "Device-owner state is not observed.",
+            "device_owner_enrollment", "destructive_gated", do_reason,
             ["Explicit owner approval", "Physical access", "A separately approved reset/enrollment procedure"],
             "A device-owner decision has been made outside KSM.",
             "Continue without device-owner features; KSM will not reset or enroll the device.",
@@ -88,6 +101,7 @@ def build_onboarding_plan(report: dict[str, Any]) -> dict[str, Any]:
             "reason": device_owner_step["reason"],
             "requires_explicit_user_consent": True,
             "executor_authorized": False,
+            "eligible_now": eligible_now,
         })
 
     if kiosk_satellite.get("installed") is False:
