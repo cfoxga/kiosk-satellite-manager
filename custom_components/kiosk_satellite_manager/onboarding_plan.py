@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .oem_recovery import get_recovery_profile
+
 
 def _step(
     identifier: str,
@@ -122,6 +124,68 @@ def build_onboarding_plan(report: dict[str, Any]) -> dict[str, Any]:
     else:
         blockers.append("kiosk_satellite_state_unknown")
 
+    # KSM-BEHAVE-038, cfoxga/kiosk-satellite-manager#12 Phases 2-4: the
+    # Test Harness reset is a standing "if ordinary ADB provisioning cannot
+    # reach the required state" recovery option, gated by the OEM recovery
+    # profile's live-confirmed status -- never by this plan guessing.
+    # Present in every plan (Acceptance: "Unsupported OEM behavior produces a
+    # complete support report"), eligible only when confirmed.
+    recovery_profile = get_recovery_profile(platform.get("device_profile_key"))
+    test_harness_confirmed = recovery_profile.test_harness_confirmed
+    test_harness_eligible = test_harness_confirmed is True
+    steps.append(_step(
+        "test_harness_reset", "destructive_gated",
+        recovery_profile.test_harness_notes,
+        [
+            "Explicit destructive checkpoint confirmed by a human",
+            "The operating host's ADB key is already trusted by the device",
+            "The device is kept fully offline after the wipe until enrollment/setup completes",
+        ],
+        (
+            "; ".join(recovery_profile.postconditions)
+            if recovery_profile.postconditions
+            else "A person has confirmed the device's post-reset state locally."
+        ),
+        "Do not reset; continue with the device in its current state.",
+        user_presence_required=True,
+    ))
+    destructive_options.append({
+        "id": "test_harness_reset",
+        "classification": "destructive_gated",
+        "reason": recovery_profile.test_harness_notes,
+        "requires_explicit_user_consent": True,
+        "executor_authorized": False,
+        "eligible_now": test_harness_eligible,
+        "data_loss": [
+            "All accounts, apps, and settings on the device",
+            "Any data not preserved by the persistent data block (the trusted "
+            "ADB key itself does survive the wipe)",
+        ],
+        "rollback_notes": recovery_profile.rollback_notes,
+    })
+    if not test_harness_eligible:
+        blockers.append(
+            "test_harness_not_confirmed" if test_harness_confirmed is None
+            else "test_harness_known_unsupported"
+        )
+
+    # Acceptance: "Destructive and vulnerability-based options require
+    # distinct explicit authorization" -- kept as its own entry, never
+    # folded into test_harness_reset above, and permanently unsupported
+    # until a vulnerability-based recovery is itself live-verified
+    # (KSM-OPEN-005). This module never invokes an exploit.
+    destructive_options.append({
+        "id": "vulnerability_based_cleanup",
+        "classification": "unsupported",
+        "reason": (
+            "No vulnerability-based (non-wipe) account-cleanup recipe has "
+            "been live-verified for any device profile (KSM-OPEN-005)."
+        ),
+        "requires_explicit_user_consent": True,
+        "executor_authorized": False,
+        "eligible_now": False,
+    })
+
     return {
         "schema_version": 1,
         "summary": f"{len(steps)} planned step(s), {len(blockers)} blocker(s), no action executed.",
@@ -134,4 +198,12 @@ def build_onboarding_plan(report: dict[str, Any]) -> dict[str, Any]:
         # must make their own authorization decision.
         "automatic_actions": [],
         "destructive_options": destructive_options,
+        "oem_recovery": {
+            "profile_key": recovery_profile.key,
+            "test_harness_confirmed": recovery_profile.test_harness_confirmed,
+            "test_harness_notes": recovery_profile.test_harness_notes,
+            "restrictions": list(recovery_profile.restrictions),
+            "rollback_notes": recovery_profile.rollback_notes,
+            "vulnerability_recovery_available": recovery_profile.vulnerability_recovery_available,
+        },
     }
