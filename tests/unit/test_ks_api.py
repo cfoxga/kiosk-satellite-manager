@@ -128,7 +128,7 @@ async def test_latest_apk_url_queries_releases_with_github_accept_header():
 
 @pytest.mark.asyncio
 async def test_latest_release_returns_url_and_tag_name():
-    """KSM-BEHAVE-039 (Phase 2, "install and update"): install_and_launch
+    """KSM-BEHAVE-040 (Phase 2, "install and update"): install_and_launch
     needs the release's own tag_name as the version target -- confirmed live
     to match the app's own reported version (ks_api.py docstring)."""
     session = _FakeSession(_release(_ASSETS, tag_name="2026.9.61"))

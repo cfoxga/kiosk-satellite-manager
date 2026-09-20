@@ -68,7 +68,7 @@ async def latest_apk_url(session: aiohttp.ClientSession, abi: str) -> str:
 async def latest_release(session: aiohttp.ClientSession, abi: str) -> tuple[str, str]:
     """Return (download_url, tag_name) for the latest usable release.
 
-    KSM-BEHAVE-039 (Phase 2, "install and update"): the tag name is the
+    KSM-BEHAVE-040 (Phase 2, "install and update"): the tag name is the
     target version install_and_launch compares against the device's
     currently-installed versionName to decide whether to preserve a
     compatible install or push a new artifact, and to verify the postcondition

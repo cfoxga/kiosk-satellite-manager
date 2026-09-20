@@ -139,7 +139,7 @@ class AdbClient:
         return bool((await self.shell(f"pm path {KS_PACKAGE}")).strip())
 
     async def installed_version(self) -> str | None:
-        """KSM-BEHAVE-039 (Phase 2, "install and update"): the authoritative
+        """KSM-BEHAVE-040 (Phase 2, "install and update"): the authoritative
         installed versionName, or None if not installed/unreadable. Same
         `dumpsys package` + regex already used by capability_report.py --
         install_and_launch compares this against the release's tag_name to

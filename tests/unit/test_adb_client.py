@@ -199,7 +199,7 @@ async def test_install_apk_classifies_pm_failure(tmp_path, output, expected_cate
 
 
 async def test_installed_version_reads_versionname_from_dumpsys(tmp_path):
-    """KSM-BEHAVE-039 (Phase 2, "install and update"): the authoritative
+    """KSM-BEHAVE-040 (Phase 2, "install and update"): the authoritative
     installed version, same versionName regex capability_report.py already
     uses, so install_and_launch can decide preserve/repair/verify from the
     device's own package-manager state."""

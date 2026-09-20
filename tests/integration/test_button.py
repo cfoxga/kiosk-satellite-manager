@@ -56,7 +56,7 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
         sensor_entry = next(e for e in entries if e.domain == "sensor")
         assert hass.states.get(sensor_entry.entity_id).state == "old"
 
-        # KSM-BEHAVE-039: install_and_launch's own post-install health-poll
+        # KSM-BEHAVE-040: install_and_launch's own post-install health-poll
         # readback hits this same session (through the button's patched
         # async_get_clientsession), separately from the coordinator-level
         # fetch_health patched above -- route by URL so both the APK

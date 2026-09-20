@@ -69,7 +69,7 @@ class KsInstallVerificationFailed(Exception):
     postcondition -- installed versionName, or /api/health's appVersion --
     never matched what was expected. Raised instead of trusting a zero ADB
     shell exit or a "Success" pm-install string alone once a version target
-    is known (KSM-BEHAVE-039)."""
+    is known (KSM-BEHAVE-040)."""
 
 PORTAL_PERMISSIONS: Final = [
     "android.permission.RECORD_AUDIO",
@@ -120,7 +120,7 @@ async def install_and_launch(
     apk_url, target_version = await latest_release(session, abi)
     current_version = await client.installed_version()
     if target_version and current_version == target_version:
-        # KSM-BEHAVE-039 (Phase 2, "preserve compatible installations where
+        # KSM-BEHAVE-040 (Phase 2, "preserve compatible installations where
         # possible"): the device is already running the release we'd fetch,
         # so skip download/push/install entirely rather than reinstalling
         # over a working app. `am start`/permission grants below still run
@@ -145,7 +145,7 @@ async def install_and_launch(
                     # actually installed.
                     await client.install_apk(KS_APK_REMOTE_PATH)
                 except PmInstallFailed as err:
-                    # KSM-BEHAVE-039 (Phase 2, "choose... repair... from
+                    # KSM-BEHAVE-040 (Phase 2, "choose... repair... from
                     # observed state"): a signing-cert/update mismatch on a
                     # device that already had some version installed is
                     # recoverable by removing the stale install and retrying
@@ -185,7 +185,7 @@ async def install_and_launch(
         await client.shell("settings put global package_verifier_enable 0")
 
     if host is not None:
-        # KSM-BEHAVE-039 (Phase 2): "am start exit 0 proves nothing" applies
+        # KSM-BEHAVE-040 (Phase 2): "am start exit 0 proves nothing" applies
         # to the preserve/skip branch too -- am start is itself a mutation
         # every press, so its postcondition (the app actually came up and
         # reports the expected version) is read back unconditionally here,
@@ -218,7 +218,7 @@ async def install_and_launch(
 async def _verify_health(
     session: aiohttp.ClientSession, host: str, target_version: str | None
 ) -> None:
-    """KSM-BEHAVE-039 (Phase 5 precursor -- "KS health"): bounded poll of the
+    """KSM-BEHAVE-040 (Phase 5 precursor -- "KS health"): bounded poll of the
     device's own /api/health, the same authoritative readback channel
     provisioning.py uses, instead of trusting `am start`'s shell exit. If
     target_version is unknown (e.g. the releases API didn't return a

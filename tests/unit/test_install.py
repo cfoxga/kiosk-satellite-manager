@@ -70,7 +70,7 @@ def _fake_client():
     client.getprop = AsyncMock(return_value="arm64-v8a")
     client.push = AsyncMock()
     client.install_apk = AsyncMock()
-    # KSM-BEHAVE-039: pre-install check (not installed/unknown), then
+    # KSM-BEHAVE-040: pre-install check (not installed/unknown), then
     # post-install verify matching the release fetched by _fake_session's
     # default latest_release patch below -- the common "fresh install
     # succeeds" shape every pre-existing test in this file exercises.
@@ -81,7 +81,7 @@ def _fake_client():
 
 def _fake_session(app_version=_TARGET_VERSION):
     """session.get is URL-aware: the releases-asset download and
-    /api/health (KSM-BEHAVE-039's postcondition readback) share one mock
+    /api/health (KSM-BEHAVE-040's postcondition readback) share one mock
     session but must return different response shapes."""
     session = MagicMock()
 
@@ -405,7 +405,7 @@ async def test_install_and_launch_reuses_provided_token_and_respects_launcher_fl
 
 
 async def test_install_and_launch_skips_install_when_already_at_target_version():
-    """KSM-BEHAVE-039 (Phase 2, "preserve compatible installations where
+    """KSM-BEHAVE-040 (Phase 2, "preserve compatible installations where
     possible"): a device already running the release we'd fetch must not be
     reinstalled -- but am start/permission grants still run every press."""
     hass = _FakeHass()
@@ -427,7 +427,7 @@ async def test_install_and_launch_skips_install_when_already_at_target_version()
 
 
 async def test_install_and_launch_repairs_via_uninstall_on_signature_mismatch():
-    """KSM-BEHAVE-039 (Phase 2, "choose... repair... from observed state"):
+    """KSM-BEHAVE-040 (Phase 2, "choose... repair... from observed state"):
     a signing-cert/update mismatch on a device with an existing install is
     recovered by uninstalling and retrying once, not a hard failure."""
     hass = _FakeHass()
