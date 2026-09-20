@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from adb_shell.adb_device_async import AdbDeviceTcpAsync
@@ -91,6 +92,69 @@ def _classify_pm_install_output(output: str) -> tuple[str | None, str]:
     match = _PM_INSTALL_FAILURE_RE.search(output)
     code = match.group(1) if match else None
     return code, _PM_INSTALL_FAILURE_CATEGORIES.get(code, "other")
+
+
+class PmUninstallFailed(Exception):
+    """`pm uninstall` reported an explicit `Failure [...]` result.
+
+    Same rationale as PmInstallFailed (KSM-BEHAVE-035/042): a Failure code is
+    authoritative signal `pm uninstall`'s own stdout provides -- `category`
+    distinguishes an OEM/user restriction from a Device Policy Manager block
+    so a caller can report *why* a supported removal path came up short,
+    instead of a bare "still installed".
+    """
+
+    def __init__(self, code: str | None, category: str) -> None:
+        self.code = code
+        self.category = category
+        super().__init__(f"pm uninstall failed: {code or 'unrecognized failure'} ({category})")
+
+
+class UninstallPolicyBlocked(Exception):
+    """KS's Device Admin/Owner policy state did not clear via the one
+    KSM-supported ADB path (`dpm remove-active-admin`) -- raised instead of
+    proceeding to `pm uninstall` (which would fail anyway against a still-
+    privileged package) and instead of attempting any unsupported recovery
+    such as a factory reset or `dpm wipe-data`, which stays out of scope
+    (docs/SPEC/device-management-strategy.md).
+    """
+
+    def __init__(self, category: str) -> None:
+        self.category = category
+        super().__init__(f"could not clear device policy state: {category}")
+
+
+# KSM-BEHAVE-042: OEM/user-restriction failures are the same shaped
+# `Failure [DELETE_FAILED_*]` signal pm install already uses -- categorized,
+# not guessed at, from Android's own documented DevicePolicyManager/
+# PackageManager uninstall failure constants.
+_PM_UNINSTALL_FAILURE_CATEGORIES: dict[str, str] = {
+    "DELETE_FAILED_DEVICE_POLICY_MANAGER": "device_policy_blocked",
+    "DELETE_FAILED_OWNER_BLOCKED": "device_policy_blocked",
+    "DELETE_FAILED_USER_RESTRICTED": "oem_restricted",
+    "DELETE_FAILED_ABORTED": "oem_restricted",
+}
+_PM_UNINSTALL_FAILURE_RE = re.compile(r"Failure\s*\[\s*([A-Z_]+)")
+
+
+def _classify_pm_uninstall_output(output: str) -> tuple[str | None, str]:
+    match = _PM_UNINSTALL_FAILURE_RE.search(output)
+    code = match.group(1) if match else None
+    return code, _PM_UNINSTALL_FAILURE_CATEGORIES.get(code, "other")
+
+
+@dataclass
+class UninstallResult:
+    """KSM-BEHAVE-042: what `uninstall_ks()` actually observed and cleared --
+    returned so a caller can record policy state instead of assuming a
+    zero-exit removal cleared everything. `was_device_owner` is best-effort:
+    True only when `dpm get-device-owner` positively confirmed it, since a
+    False here can also mean the device's `dpm` build can't report owner
+    status at all (live-confirmed on Portal hardware)."""
+
+    was_active_admin: bool
+    was_device_owner: bool
+    policy_cleared: bool
 
 
 def ensure_adb_key(key_dir: str) -> str:
@@ -163,27 +227,82 @@ class AdbClient:
         match = _VERSION_NAME_RE.search(output)
         return match.group(1) if match else None
 
-    async def uninstall_ks(self) -> None:
-        """KSM-BEHAVE-022: remove Kiosk Satellite, verifying it actually went.
+    async def is_active_admin(self) -> bool:
+        """KSM-BEHAVE-042 (Phase 4, "uninstall"): whether KS's
+        KioskAdminReceiver is currently an active Device Admin, read from
+        `dumpsys device_policy`'s own "Enabled Device Admins" listing --
+        live-confirmed against the Test Portal. Never inferred from `dpm
+        remove-active-admin`'s exit code, which raises SecurityException for
+        KS's real (non-testOnly) admin on this hardware regardless of
+        whether the admin is later actually cleared (KSM-BEHAVE-022)."""
+        output = await self.shell("dumpsys device_policy")
+        return f"{KS_PACKAGE}/.KioskAdminReceiver" in output
 
-        Remove the active admin first because install configures it for Portal
-        and unknown profiles. On devices where KioskAdminReceiver is set (e.g.
-        Portal), ``dpm remove-active-admin`` fails for non-testOnly apps with
-        SecurityException: Attempt to remove non-test admin, which then makes a
-        direct ``pm uninstall`` fail with DELETE_FAILED_DEVICE_POLICY_MANAGER.
-        Disabling the package for user 0 deactivates the admin components, and
-        ``pm clear`` cleans state, allowing ``pm uninstall`` to succeed
-        cleanly. Then read back with ``pm path`` and raise rather than
-        returning a silently-still-installed device.
+    async def device_owner_component(self) -> str | None:
+        """KSM-BEHAVE-042: `dpm get-device-owner`'s own readback, or None
+        when the device reports no owner *or* when its `dpm` build doesn't
+        support the subcommand at all -- live-confirmed the latter is the
+        case on the Test Portal (SDK 29's `dpm` only implements
+        set-active-admin/set-device-owner/set-profile-owner/
+        remove-active-admin and rejects `get-device-owner` as an unknown
+        command). Best-effort/informational only: a None here can mean
+        either "confirmed no owner" or "this device can't say" and callers
+        must not treat it as a negative proof, only `is_active_admin()`'s
+        listing is a reliable read-only signal on this hardware family."""
+        output = (await self.shell("dpm get-device-owner")).strip()
+        lowered = output.lower()
+        if "no device owner" in lowered or "unknown command" in lowered:
+            return None
+        return output
+
+    async def uninstall_ks(self) -> UninstallResult:
+        """KSM-BEHAVE-022/042: remove Kiosk Satellite, distinguishing an
+        ordinary package from one holding active Device Admin (or Device
+        Owner, always a superset of active-admin privilege) state, and
+        verifying both package and policy state afterward instead of
+        trusting shell exit codes.
+
+        An ordinary, never-privileged package skips the admin-removal
+        attempt entirely (no `dpm remove-active-admin` call at all) rather
+        than issuing a pointless one. Where KS *is* an active admin,
+        `dpm remove-active-admin` is still attempted but its failure is
+        tolerated -- live-confirmed it raises SecurityException for KS's
+        real, non-testOnly admin on Portal hardware, and the already-
+        established working path is `pm disable-user` + `pm clear`, which is
+        what actually lets the subsequent `pm uninstall` succeed
+        (KSM-BEHAVE-022). `pm uninstall`'s own output is checked for an
+        explicit `Failure [DELETE_FAILED_*]` code (classified device-policy-
+        blocked vs. OEM/user-restricted) before falling back to the `pm
+        path` read-back that was already the sole postcondition; after a
+        confirmed removal, `is_active_admin()` is re-read as a policy-state
+        postcondition and raises UninstallPolicyBlocked if a previously
+        privileged package's admin registration somehow survived it.
         """
-        await self.shell(
-            f"dpm remove-active-admin --user 0 {KS_PACKAGE}/.KioskAdminReceiver"
-        )
+        was_admin = await self.is_active_admin()
+        owner_output = await self.device_owner_component()
+        was_owner = owner_output is not None and KS_PACKAGE in owner_output
+
+        if was_admin:
+            await self.shell(
+                f"dpm remove-active-admin --user 0 {KS_PACKAGE}/.KioskAdminReceiver"
+            )
+
         await self.shell(f"pm disable-user --user 0 {KS_PACKAGE}")
         await self.shell(f"pm clear {KS_PACKAGE}")
-        await self.shell(f"pm uninstall {KS_PACKAGE}")
+        output = await self.shell(f"pm uninstall {KS_PACKAGE}")
+        if "Failure" in output:
+            code, category = _classify_pm_uninstall_output(output)
+            raise PmUninstallFailed(code, category)
         if await self.is_ks_installed():
             raise RuntimeError(f"pm uninstall {KS_PACKAGE} did not remove the package")
+
+        policy_cleared = not await self.is_active_admin()
+        if (was_admin or was_owner) and not policy_cleared:
+            raise UninstallPolicyBlocked("device_owner" if was_owner else "device_admin")
+
+        return UninstallResult(
+            was_active_admin=was_admin, was_device_owner=was_owner, policy_cleared=policy_cleared
+        )
 
     async def install_apk(self, remote_path: str) -> None:
         """`pm install -r -g <remote_path>`, verified against pm's own stdout.

@@ -30,6 +30,8 @@ from custom_components.kiosk_satellite_manager.adb_client import (
     AdbClient,
     AdbConnectFailed,
     PmInstallFailed,
+    PmUninstallFailed,
+    UninstallPolicyBlocked,
     ensure_adb_key,
 )
 
@@ -165,20 +167,222 @@ async def test_uninstall_ks_raises_when_package_survives(tmp_path):
             await client.uninstall_ks()
 
 
-async def test_uninstall_ks_passes_when_package_is_gone(tmp_path):
+# KSM-BEHAVE-042: live-captured against the Test Portal -- this device's `dpm`
+# build only implements set-active-admin/set-device-owner/set-profile-owner/
+# remove-active-admin and rejects `get-device-owner` outright, unlike stock
+# AOSP. device_owner_component() must treat this the same as "no owner", not
+# crash on it or misread the usage text as a component name.
+_LIVE_DPM_GET_DEVICE_OWNER_UNSUPPORTED = (
+    "usage: dpm [subcommand] [options]\n"
+    "usage: dpm set-active-admin [ --user <USER_ID> | current ] <COMPONENT>\n"
+    "\n\nError: unknown command 'get-device-owner'"
+)
+_LIVE_DEVICE_POLICY_ADMIN_BLOCK = (
+    "Current Device Policy Manager state:\n\n"
+    "  Enabled Device Admins (User 0, provisioningState: 0):\n"
+    "    me.jxl.kiosk_satellite/.KioskAdminReceiver:\n"
+    "      uid=10133\n"
+    "      testOnlyAdmin=false\n"
+    "      policies:\n"
+    "        force-lock\n"
+)
+_NO_ADMINS_BLOCK = "Current Device Policy Manager state:\n\n  Enabled Device Admins (User 0):\n"
+
+
+async def test_uninstall_ks_ordinary_package_skips_admin_removal_call(tmp_path):
+    """KSM-BEHAVE-042: no active admin, no owner -- never issues the
+    dpm remove-active-admin call at all, distinguishing an ordinary package
+    from a privileged one operationally, not just by label."""
     key_path = ensure_adb_key(str(tmp_path / "keys"))
     client = AdbClient("1.2.3.4", 5555, key_path)
     with patch.object(
-        client._device, "shell", new=AsyncMock(side_effect=["", "", "", "", ""])
+        client._device,
+        "shell",
+        new=AsyncMock(
+            side_effect=[
+                _NO_ADMINS_BLOCK,  # is_active_admin() pre-check
+                "No device owner",  # device_owner_component()
+                "",  # pm disable-user
+                "",  # pm clear
+                "",  # pm uninstall
+                "",  # pm path (is_ks_installed -> False)
+                _NO_ADMINS_BLOCK,  # is_active_admin() postcondition
+            ]
+        ),
     ) as mock_shell:
-        await client.uninstall_ks()
-    assert [call.args[0] for call in mock_shell.await_args_list] == [
-        "dpm remove-active-admin --user 0 me.jxl.kiosk_satellite/.KioskAdminReceiver",
+        result = await client.uninstall_ks()
+    calls = [call.args[0] for call in mock_shell.await_args_list]
+    assert "dpm remove-active-admin --user 0 me.jxl.kiosk_satellite/.KioskAdminReceiver" not in calls
+    assert calls == [
+        "dumpsys device_policy",
+        "dpm get-device-owner",
         "pm disable-user --user 0 me.jxl.kiosk_satellite",
         "pm clear me.jxl.kiosk_satellite",
         "pm uninstall me.jxl.kiosk_satellite",
         "pm path me.jxl.kiosk_satellite",
+        "dumpsys device_policy",
     ]
+    assert result.was_active_admin is False
+    assert result.was_device_owner is False
+    assert result.policy_cleared is True
+
+
+async def test_uninstall_ks_active_admin_attempts_removal_and_verifies_cleared(tmp_path):
+    """KSM-BEHAVE-042: an active Device Admin gets the removal attempt, and
+    the postcondition (not just `pm path`) is re-read afterward."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(
+        client._device,
+        "shell",
+        new=AsyncMock(
+            side_effect=[
+                _LIVE_DEVICE_POLICY_ADMIN_BLOCK,  # is_active_admin() pre-check -> True
+                "No device owner",  # device_owner_component() -> not owner
+                "",  # dpm remove-active-admin (SecurityException tolerated in practice)
+                "",  # pm disable-user
+                "",  # pm clear
+                "",  # pm uninstall
+                "",  # pm path (is_ks_installed -> False)
+                _NO_ADMINS_BLOCK,  # is_active_admin() postcondition -> cleared
+            ]
+        ),
+    ) as mock_shell:
+        result = await client.uninstall_ks()
+    calls = [call.args[0] for call in mock_shell.await_args_list]
+    assert calls[2] == "dpm remove-active-admin --user 0 me.jxl.kiosk_satellite/.KioskAdminReceiver"
+    assert result.was_active_admin is True
+    assert result.was_device_owner is False
+    assert result.policy_cleared is True
+
+
+async def test_uninstall_ks_raises_policy_blocked_when_admin_registration_survives(tmp_path):
+    """KSM-TEST-045 negative control: package gone, but the admin
+    registration is still listed afterward -- must not report success."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(
+        client._device,
+        "shell",
+        new=AsyncMock(
+            side_effect=[
+                _LIVE_DEVICE_POLICY_ADMIN_BLOCK,  # pre-check -> True
+                "No device owner",
+                "",  # dpm remove-active-admin
+                "",  # pm disable-user
+                "",  # pm clear
+                "",  # pm uninstall
+                "",  # pm path -> package gone
+                _LIVE_DEVICE_POLICY_ADMIN_BLOCK,  # postcondition still shows the admin
+            ]
+        ),
+    ):
+        with pytest.raises(UninstallPolicyBlocked) as excinfo:
+            await client.uninstall_ks()
+    assert excinfo.value.category == "device_admin"
+
+
+async def test_uninstall_ks_raises_policy_blocked_with_device_owner_category(tmp_path):
+    """KSM-BEHAVE-042: when `dpm get-device-owner` does positively confirm
+    KS as owner, an uncleared postcondition is reported as device_owner, not
+    the generic device_admin category."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(
+        client._device,
+        "shell",
+        new=AsyncMock(
+            side_effect=[
+                _LIVE_DEVICE_POLICY_ADMIN_BLOCK,  # pre-check -> True
+                "Device owner: me.jxl.kiosk_satellite/.KioskAdminReceiver",
+                "",  # dpm remove-active-admin
+                "",  # pm disable-user
+                "",  # pm clear
+                "",  # pm uninstall
+                "",  # pm path -> package gone
+                _LIVE_DEVICE_POLICY_ADMIN_BLOCK,  # postcondition still shows the admin
+            ]
+        ),
+    ):
+        with pytest.raises(UninstallPolicyBlocked) as excinfo:
+            await client.uninstall_ks()
+    assert excinfo.value.category == "device_owner"
+
+
+@pytest.mark.parametrize(
+    "output,expected_code,expected_category",
+    [
+        ("Failure [DELETE_FAILED_DEVICE_POLICY_MANAGER]", "DELETE_FAILED_DEVICE_POLICY_MANAGER", "device_policy_blocked"),
+        ("Failure [DELETE_FAILED_OWNER_BLOCKED]", "DELETE_FAILED_OWNER_BLOCKED", "device_policy_blocked"),
+        ("Failure [DELETE_FAILED_USER_RESTRICTED]", "DELETE_FAILED_USER_RESTRICTED", "oem_restricted"),
+        ("Failure [DELETE_FAILED_ABORTED]", "DELETE_FAILED_ABORTED", "oem_restricted"),
+        ("Failure [DELETE_FAILED_INTERNAL_ERROR]", "DELETE_FAILED_INTERNAL_ERROR", "other"),
+    ],
+)
+async def test_uninstall_ks_classifies_pm_uninstall_failure(
+    tmp_path, output, expected_code, expected_category
+):
+    """KSM-BEHAVE-042: an OEM/user restriction is distinguished from a
+    device-policy block by pm uninstall's own Failure code, same as
+    KSM-BEHAVE-035 already does for pm install."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(
+        client._device,
+        "shell",
+        new=AsyncMock(
+            side_effect=[_NO_ADMINS_BLOCK, "No device owner", "", "", output]
+        ),
+    ):
+        with pytest.raises(PmUninstallFailed) as excinfo:
+            await client.uninstall_ks()
+    assert excinfo.value.code == expected_code
+    assert excinfo.value.category == expected_category
+
+
+async def test_is_active_admin_true_when_component_listed(tmp_path):
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(
+        client._device, "shell", new=AsyncMock(return_value=_LIVE_DEVICE_POLICY_ADMIN_BLOCK)
+    ):
+        assert await client.is_active_admin() is True
+
+
+async def test_is_active_admin_false_when_absent(tmp_path):
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(client._device, "shell", new=AsyncMock(return_value=_NO_ADMINS_BLOCK)):
+        assert await client.is_active_admin() is False
+
+
+async def test_device_owner_component_none_when_dpm_build_unsupported(tmp_path):
+    """KSM-BEHAVE-042: live-confirmed against the Test Portal -- `dpm
+    get-device-owner` is rejected as an unknown command on this hardware's
+    dpm build, and that must read as "can't tell", not as a component."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(
+        client._device,
+        "shell",
+        new=AsyncMock(return_value=_LIVE_DPM_GET_DEVICE_OWNER_UNSUPPORTED),
+    ):
+        assert await client.device_owner_component() is None
+
+
+async def test_device_owner_component_none_when_no_owner_set(tmp_path):
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(client._device, "shell", new=AsyncMock(return_value="No device owner")):
+        assert await client.device_owner_component() is None
+
+
+async def test_device_owner_component_returns_raw_value_when_reported(tmp_path):
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    owner_line = "Device owner: me.jxl.kiosk_satellite/.KioskAdminReceiver"
+    with patch.object(client._device, "shell", new=AsyncMock(return_value=owner_line)):
+        assert await client.device_owner_component() == owner_line
 
 
 async def test_install_apk_passes_on_success_output(tmp_path):
