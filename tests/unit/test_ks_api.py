@@ -42,6 +42,12 @@ def test_raises_when_no_apk_assets():
         select_apk_asset([], "arm64-v8a")
 
 
+def test_all_split_assets_fall_back_to_the_first_publishable_apk():
+    """[KSM-TEST-009] A legacy release with no universal asset stays usable."""
+    split_only = _ASSETS[1:]
+    assert select_apk_asset(split_only, "mips") == "https://example.invalid/arm64-v8a.apk"
+
+
 def _release(assets, *, draft=False, prerelease=False, tag_name=None):
     return {
         "draft": draft,

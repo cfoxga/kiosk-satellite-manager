@@ -61,6 +61,16 @@ def test_recipe_rejects_an_unknown_typed_parameter():
         validate_recipe(bad)
 
 
+def test_recipe_rejects_non_scalar_parameter_and_unknown_policy_fields():
+    """[KSM-TEST-056] Data stays typed and closed over declared policy names."""
+    with pytest.raises(RecipeError, match="not a typed scalar"):
+        validate_recipe(_recipe(parameters=(("browser.ignore_ssl_errors", ("bad",)),)))
+    with pytest.raises(RecipeError, match="device_name_source"):
+        validate_recipe(_recipe(device_name_source="unknown:source"))
+    with pytest.raises(RecipeError, match="permission_policy"):
+        validate_recipe(_recipe(permission_policy="unreviewed"))
+
+
 def test_recipes_are_immutable():
     """KSM-BEHAVE-047: source data, not runtime state."""
     recipe = INSTALL_RECIPES[0]
@@ -134,6 +144,8 @@ def test_device_name_normalization_strips_the_model_suffix_android_appends():
 def test_get_recipe_returns_none_for_an_unknown_key_or_version():
     assert get_recipe("meta_portal_standard", "v99") is None
     assert get_recipe("no_such_recipe", "v1") is None
+    assert get_recipe(None, "v1") is None
+    assert get_recipe("meta_portal_standard", None) is None
 
 
 def test_recipe_validation_scans_every_string_field_not_an_enrolled_subset():

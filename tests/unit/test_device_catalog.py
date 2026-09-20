@@ -22,6 +22,8 @@ from custom_components.kiosk_satellite_manager.device_catalog import (
     CatalogError,
     QualificationRecord,
     RecipeAssignment,
+    derive_support_state,
+    require_recipe,
     required_scenarios,
     resolve_catalog_entry,
     validate_catalog,
@@ -150,6 +152,58 @@ def test_catalog_records_are_frozen():
         CATALOG.models[0].name = "mutated"  # type: ignore[misc]
 
 
+def test_catalog_rejects_mutable_rows_and_unknown_assignment_state():
+    """[KSM-TEST-055] Each source table rejects runtime-mutable data."""
+    MutableModel = dataclasses.make_dataclass("MutableModel", [("model_key", str)])
+    with pytest.raises(CatalogError, match="device model .* mutable"):
+        validate_catalog(_catalog(models=(MutableModel("mutable"),)))
+
+    MutableRecipe = dataclasses.make_dataclass("MutableRecipe", [("identity", str)])
+    with pytest.raises(CatalogError, match="install recipe .* mutable"):
+        validate_catalog(_catalog(recipes=(MutableRecipe("mutable:v1"),)))
+
+    MutableAssignment = dataclasses.make_dataclass("MutableAssignment", [("model_key", str)])
+    with pytest.raises(CatalogError, match="assignment .* mutable"):
+        validate_catalog(_catalog(assignments=(MutableAssignment("portal_go"),)))
+
+    invalid_state = dataclasses.replace(CATALOG.assignments[0], state="unreviewed")
+    with pytest.raises(CatalogError, match="undeclared state"):
+        validate_catalog(_catalog(assignments=(invalid_state,)))
+
+
+def test_qualification_scope_and_validation_reject_untrusted_claims():
+    """[KSM-TEST-055/062] Evidence applies only to its exact observed build."""
+    scoped = dataclasses.replace(
+        _qualifications("portal_go")[0], min_sdk=29, max_sdk=30, fingerprint_prefixes=("build/ok",)
+    )
+    assert scoped.covers(sdk=0, fingerprint="build/ok") is False
+    assert scoped.covers(sdk=28, fingerprint="build/ok") is False
+    assert scoped.covers(sdk=31, fingerprint="build/ok") is False
+    assert scoped.covers(sdk=29, fingerprint="") is False
+    assert scoped.covers(sdk=29, fingerprint="build/no") is False
+    assert scoped.covers(sdk=29, fingerprint="BUILD/OK.1") is True
+    assert dataclasses.replace(scoped, min_sdk=None, max_sdk=None, fingerprint_prefixes=()).covers() is True
+
+    MutableQualification = dataclasses.make_dataclass("MutableQualification", [("model_key", str)])
+    with pytest.raises(CatalogError, match="qualification .* mutable"):
+        validate_catalog(_catalog(qualifications=(MutableQualification("portal_go"),)))
+
+    unknown_model = dataclasses.replace(_qualifications("portal_go")[0], model_key="unknown")
+    with pytest.raises(CatalogError, match="unknown device model"):
+        validate_catalog(_catalog(qualifications=(unknown_model,)))
+    unknown_scenario = dataclasses.replace(_qualifications("portal_go")[0], scenario="invented")
+    with pytest.raises(CatalogError, match="undeclared scenario"):
+        validate_catalog(_catalog(qualifications=(unknown_scenario,)))
+    unknown_result = dataclasses.replace(_qualifications("portal_go")[0], result="invented")
+    with pytest.raises(CatalogError, match="undeclared result"):
+        validate_catalog(_catalog(qualifications=(unknown_result,)))
+
+    proposed = dataclasses.replace(CATALOG.assignments[0], state=ASSIGNMENT_PROPOSED)
+    validate_catalog(_catalog(assignments=(proposed,)))
+    failed = dataclasses.replace(_qualifications("portal_go")[0], result="fail")
+    validate_catalog(_catalog(qualifications=(failed,)))
+
+
 def test_catalog_modules_use_no_sql_or_home_assistant_storage():
     """KSM-TEST-055: catalog persistence through SQL or HA `.storage` is
     prohibited -- the catalog is source, not runtime state."""
@@ -250,6 +304,9 @@ def test_a_recognized_model_without_an_approved_assignment_fails_closed():
     assert entry.recipe is None
     assert entry.executable is False
     assert entry.support_state == SUPPORT_RECOGNIZED
+    with pytest.raises(device_catalog.NoApprovedRecipe, match="no approved recipe"):
+        require_recipe("portal_go", catalog=_catalog(assignments=assignments))
+    assert derive_support_state("not-a-model")[0] == SUPPORT_UNKNOWN
 
 
 # --- KSM-TEST-061/062: derived support state --------------------------------

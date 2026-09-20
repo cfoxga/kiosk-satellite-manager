@@ -84,6 +84,16 @@ def test_portal_generation_with_missing_sdk_does_not_match_the_wrong_generation(
     )
 
 
+def test_exact_model_max_sdk_and_fallback_characteristics_fail_closed():
+    """[KSM-TEST-059/060] Upper SDK bounds and TV classification are exact."""
+    gen1 = get_device_model("portal_gen1")
+    assert gen1.matches(_facts(manufacturer="Facebook", model="Portal", sdk=29)) is False
+    assert (
+        classify_fallback(_facts(manufacturer="onn", characteristics="automotive")).key
+        == CLASSIFICATION_GENERIC_ANDROID
+    )
+
+
 def test_generic_meta_device_is_a_fallback_classification_not_a_model():
     """KSM-TEST-060 (identity half): `meta_portal` is not on the known list."""
     facts = _facts(manufacturer="Facebook")

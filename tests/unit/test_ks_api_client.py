@@ -93,6 +93,19 @@ async def test_login_posts_password_returns_token():
     assert kwargs["json"] == {"password": "hunter22"}
 
 
+async def test_login_and_settings_rejections_fall_back_to_http_status():
+    """[KSM-TEST-010] Empty device errors remain actionable and bounded."""
+    login_session = _fake_session(post=_fake_response({}, ok=False, status=401))
+    with pytest.raises(KsApiError, match="HTTP 401"):
+        await ks_api_client.login(login_session, "192.168.1.50", "hunter22")
+
+    settings_session = _fake_session(patch=_fake_response({}, ok=False, status=503))
+    with pytest.raises(KsApiError, match="HTTP 503"):
+        await ks_api_client.patch_settings(
+            settings_session, "192.168.1.50", "tok-789", {"ha.url": "https://ha.example"}
+        )
+
+
 async def test_patch_settings_sends_bearer_token_and_values():
     session = _fake_session(patch=_fake_response({"rejected": []}))
     await ks_api_client.patch_settings(
