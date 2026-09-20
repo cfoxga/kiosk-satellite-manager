@@ -56,3 +56,29 @@ async def test_sensor_available_while_installing_even_if_health_never_succeeded(
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
     assert hass.states.get(sensor_entry.entity_id).state == "Installing"
+
+
+async def test_sensor_is_unavailable_without_health_data_unless_installing(hass):
+    """KSM-TEST-077: no health data has no version to report."""
+    import aiohttp
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.fetch_health",
+        new=AsyncMock(side_effect=aiohttp.ClientConnectionError("unreachable")),
+    ):
+        ctx = await init_integration(hass)
+
+    coordinator = hass.data[DOMAIN][ctx.entry.entry_id]
+    ent_reg = er.async_get(hass)
+    sensor_entry = next(
+        entry
+        for entry in er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)
+        if entry.domain == "sensor"
+    )
+    assert coordinator.data is None
+    assert hass.states.get(sensor_entry.entity_id).state == "unavailable"
+
+    coordinator.ksm_installing = True
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    assert hass.states.get(sensor_entry.entity_id).state == "Installing"

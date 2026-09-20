@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 from homeassistant.helpers import entity_registry as er
 
+from custom_components.kiosk_satellite_manager import async_unload_entry
 from custom_components.kiosk_satellite_manager.const import DOMAIN
 
 from .conftest import init_integration
@@ -42,6 +43,47 @@ async def test_unload_entry_removes_coordinator(hass):
     assert await hass.config_entries.async_unload(ctx.entry.entry_id)
     await hass.async_block_till_done()
     assert ctx.entry.entry_id not in hass.data.get(DOMAIN, {})
+
+
+async def test_services_survive_one_of_two_entries_unloading_until_last_entry(hass):
+    """KSM-TEST-075: shared services belong to the active entry set."""
+    with patch(
+        "custom_components.kiosk_satellite_manager.fetch_health",
+        new=AsyncMock(return_value={"appVersion": "1.0.0"}),
+    ):
+        first = await init_integration(hass)
+        second = await init_integration(hass, data={"host": "192.168.99.100"})
+
+    assert await hass.config_entries.async_unload(first.entry.entry_id)
+    await hass.async_block_till_done()
+    assert first.entry.entry_id not in hass.data[DOMAIN]
+    assert hass.services.has_service(DOMAIN, "provision")
+    assert hass.services.has_service(DOMAIN, "capability_report")
+    assert hass.services.has_service(DOMAIN, "onboarding_plan")
+
+    assert await hass.config_entries.async_unload(second.entry.entry_id)
+    await hass.async_block_till_done()
+    assert DOMAIN not in hass.data or not hass.data[DOMAIN]
+    assert not hass.services.has_service(DOMAIN, "provision")
+    assert not hass.services.has_service(DOMAIN, "capability_report")
+    assert not hass.services.has_service(DOMAIN, "onboarding_plan")
+
+
+async def test_failed_unload_keeps_coordinator_and_services(hass):
+    """KSM-TEST-076: failed platform unload must retain usable state."""
+    with patch(
+        "custom_components.kiosk_satellite_manager.fetch_health",
+        new=AsyncMock(return_value={"appVersion": "1.0.0"}),
+    ):
+        ctx = await init_integration(hass)
+
+    with patch.object(hass.config_entries, "async_unload_platforms", new=AsyncMock(return_value=False)):
+        assert not await async_unload_entry(hass, ctx.entry)
+    await hass.async_block_till_done()
+
+    assert ctx.entry.entry_id in hass.data[DOMAIN]
+    assert hass.services.has_service(DOMAIN, "provision")
+    assert await async_unload_entry(hass, ctx.entry)
 
 
 async def test_setup_entry_succeeds_when_device_unprovisioned(hass):

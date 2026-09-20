@@ -69,6 +69,15 @@ CAPABILITY_REPORT_SCHEMA = vol.Schema({vol.Required("config_entry_id"): str})
 ONBOARDING_PLAN_SCHEMA = vol.Schema({vol.Required("config_entry_id"): str})
 
 
+def _active_target(hass: HomeAssistant, config_entry_id: str) -> tuple[ConfigEntry, DataUpdateCoordinator]:
+    """Return an active KSM target, rejecting stale config entries before ADB."""
+    target_entry = hass.config_entries.async_get_entry(config_entry_id)
+    target_coordinator = hass.data.get(DOMAIN, {}).get(config_entry_id)
+    if target_entry is None or target_entry.domain != DOMAIN or target_coordinator is None:
+        raise ServiceValidationError(f"Unknown or not active {DOMAIN} config entry: {config_entry_id}")
+    return target_entry, target_coordinator
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up a config entry: start the health-poll coordinator, then the
     button/sensor platforms."""
@@ -94,12 +103,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not hass.services.has_service(DOMAIN, SERVICE_PROVISION):
 
         async def _handle_provision(call: ServiceCall) -> None:
-            target_entry = hass.config_entries.async_get_entry(call.data["config_entry_id"])
-            if target_entry is None or target_entry.domain != DOMAIN:
-                raise ServiceValidationError(
-                    f"Unknown {DOMAIN} config entry: {call.data['config_entry_id']}"
-                )
-            target_coordinator = hass.data.get(DOMAIN, {}).get(target_entry.entry_id)
+            target_entry, target_coordinator = _active_target(hass, call.data["config_entry_id"])
             client = AdbClient(
                 target_entry.data[CONF_HOST],
                 target_entry.data[CONF_PORT],
@@ -117,8 +121,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 raise ServiceValidationError(str(err)) from err
             finally:
                 await client.close()
-            if target_coordinator is not None:
-                await target_coordinator.async_request_refresh()
+            await target_coordinator.async_request_refresh()
 
         hass.services.async_register(
             DOMAIN, SERVICE_PROVISION, _handle_provision, schema=PROVISION_SCHEMA
@@ -127,9 +130,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not hass.services.has_service(DOMAIN, SERVICE_CAPABILITY_REPORT):
 
         async def _handle_capability_report(call: ServiceCall) -> dict:
-            target_entry = hass.config_entries.async_get_entry(call.data["config_entry_id"])
-            if target_entry is None or target_entry.domain != DOMAIN:
-                raise ServiceValidationError(f"Unknown {DOMAIN} config entry: {call.data['config_entry_id']}")
+            target_entry, _ = _active_target(hass, call.data["config_entry_id"])
             client = AdbClient(
                 target_entry.data[CONF_HOST], target_entry.data[CONF_PORT], target_entry.data[CONF_KEY_PATH]
             )
@@ -147,9 +148,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not hass.services.has_service(DOMAIN, SERVICE_ONBOARDING_PLAN):
 
         async def _handle_onboarding_plan(call: ServiceCall) -> dict:
-            target_entry = hass.config_entries.async_get_entry(call.data["config_entry_id"])
-            if target_entry is None or target_entry.domain != DOMAIN:
-                raise ServiceValidationError(f"Unknown {DOMAIN} config entry: {call.data['config_entry_id']}")
+            target_entry, _ = _active_target(hass, call.data["config_entry_id"])
             client = AdbClient(
                 target_entry.data[CONF_HOST], target_entry.data[CONF_PORT], target_entry.data[CONF_KEY_PATH]
             )
