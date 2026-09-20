@@ -20,6 +20,7 @@ raw connection failure is AdbConnectFailed.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from pathlib import Path
@@ -113,7 +114,8 @@ class AdbClient:
     def __init__(self, host: str, port: int, key_path: str) -> None:
         self._host = host
         self._port = port
-        self._signer = CryptographySigner(key_path)
+        self._key_path = key_path
+        self._signer: CryptographySigner | None = None
         self._device = AdbDeviceTcpAsync(host, port, default_transport_timeout_s=10)
 
     async def connect(self, auth_timeout_s: float = 5) -> None:
@@ -124,6 +126,11 @@ class AdbClient:
         just DeviceAuthError (KSM-BEHAVE-005). Raises AdbConnectFailed for a
         raw connection failure (unreachable, refused, wrong port).
         """
+        if self._signer is None:
+            # CryptographySigner opens the private key synchronously. Service
+            # handlers call connect() on Home Assistant's event loop, so keep
+            # that filesystem read in a worker thread.
+            self._signer = await asyncio.to_thread(CryptographySigner, self._key_path)
         try:
             await self._device.connect(rsa_keys=[self._signer], auth_timeout_s=auth_timeout_s)
         except (DeviceAuthError, AdbTimeoutError, TcpTimeoutException) as err:

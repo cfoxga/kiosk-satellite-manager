@@ -54,6 +54,26 @@ def test_ensure_adb_key_reuses_existing(tmp_path):
     assert original == again
 
 
+async def test_connect_loads_signer_off_the_event_loop(tmp_path):
+    """The signer opens the private key, so construction must not do it inline."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    signer = object()
+    with patch(
+        "custom_components.kiosk_satellite_manager.adb_client.CryptographySigner"
+    ) as signer_cls, patch(
+        "custom_components.kiosk_satellite_manager.adb_client.asyncio.to_thread",
+        new=AsyncMock(return_value=signer),
+    ) as to_thread:
+        client = AdbClient("1.2.3.4", 5555, key_path)
+
+        assert client._signer is None
+        signer_cls.assert_not_called()
+        with patch.object(client._device, "connect", new=AsyncMock()):
+            await client.connect()
+
+    to_thread.assert_awaited_once_with(signer_cls, key_path)
+
+
 async def test_connect_raises_auth_pending_on_device_auth_error(tmp_path):
     key_path = ensure_adb_key(str(tmp_path / "keys"))
     client = AdbClient("1.2.3.4", 5555, key_path)

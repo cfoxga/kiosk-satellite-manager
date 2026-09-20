@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Move ADB private-key loading to a worker thread so KSM service calls do not block Home Assistant's event loop.
 - Block automatic Kiosk Satellite installation when the package-state probe is denied, errors, or
   missing, instead reporting that the package state is unknown.
 - Add the response-only `kiosk_satellite_manager.onboarding_plan` service, which converts
