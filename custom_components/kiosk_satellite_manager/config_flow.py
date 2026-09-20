@@ -65,6 +65,7 @@ from .const import (
 )
 
 from .device_catalog import require_recipe, resolve_catalog_entry
+from .credentials import TokenCredential, async_revoke_owned_credential
 from .device_models import DeviceFacts
 from .install import install_and_launch
 
@@ -132,7 +133,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._password: str | None = None
         self._home_launcher: bool = True
         self._token_mode: str = TOKEN_MODE_AUTO
-        self._ha_token: str | None = None
+        self._credential: TokenCredential | None = None
         self._reuse_entry_id: str | None = None
         self._ks_installed: bool = False
         self._existing_install_action: str | None = None
@@ -251,21 +252,23 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             password = user_input[CONF_PASSWORD]
             home_launcher = user_input.get(CONF_HOME_LAUNCHER, True)
             token_mode = user_input.get(CONF_TOKEN_MODE, TOKEN_MODE_AUTO)
-            ha_token = None
+            credential = None
 
             if token_mode != TOKEN_MODE_AUTO:
                 token = self.hass.auth.async_get_refresh_token(token_mode)
                 if token is None or token.token_type != TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN:
                     errors[CONF_TOKEN_MODE] = "token_not_found"
                 else:
-                    ha_token = self.hass.auth.async_create_access_token(token)
+                    credential = TokenCredential(
+                        self.hass.auth.async_create_access_token(token), token.id, owned=False
+                    )
 
             if not errors:
                 self._name = self._discovered_name
                 self._password = password
                 self._home_launcher = home_launcher
                 self._token_mode = token_mode
-                self._ha_token = ha_token
+                self._credential = credential
                 return await self.async_step_install()
 
         fields: dict[vol.Marker, Any] = {
@@ -403,12 +406,13 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     host=self._host,
                     device_name=self._name,
                     password=self._password,
-                    ha_token=self._ha_token,
+                    ha_token=self._credential.access_token if self._credential else None,
+                    token_credential=self._credential,
                     home_launcher=self._home_launcher,
                     device_model=self._profile_key,
                 )
                 if used_token:
-                    self._ha_token = used_token
+                    self._credential = used_token
             finally:
                 await client.close()
 
@@ -443,10 +447,19 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 {
                     CONF_HOME_LAUNCHER: self._home_launcher,
                     CONF_TOKEN_MODE: self._token_mode,
-                    CONF_HA_TOKEN: self._ha_token,
+                    **(self._credential.as_entry_data() if self._credential else {}),
                 }
             )
         return self.async_create_entry(
             title=self._name,
             data=data,
+        )
+
+    def async_abort(self, *, reason: str, description_placeholders=None, next_flow=None) -> FlowResult:
+        """Revoke an auto-created token when the operator abandons this flow."""
+        self.hass.async_create_task(async_revoke_owned_credential(self.hass, self._credential))
+        return super().async_abort(
+            reason=reason,
+            description_placeholders=description_placeholders,
+            next_flow=next_flow,
         )

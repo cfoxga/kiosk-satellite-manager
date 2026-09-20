@@ -23,6 +23,8 @@ TOKEN_MODE_AUTO: Final = "auto"
 TOKEN_MODE_REUSE: Final = "reuse"
 TOKEN_MODE_MANUAL: Final = "manual"
 CONF_HA_TOKEN: Final = "ha_token"
+CONF_HA_REFRESH_TOKEN_ID: Final = "ha_refresh_token_id"
+CONF_HA_TOKEN_OWNED: Final = "ha_token_owned"
 CONF_REUSE_ENTRY_ID: Final = "reuse_entry_id"
 CONF_HOME_LAUNCHER: Final = "home_launcher"
 

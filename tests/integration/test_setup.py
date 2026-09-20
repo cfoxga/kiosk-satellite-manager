@@ -6,8 +6,13 @@ from unittest.mock import AsyncMock, patch
 
 from homeassistant.helpers import entity_registry as er
 
-from custom_components.kiosk_satellite_manager import async_unload_entry
-from custom_components.kiosk_satellite_manager.const import DOMAIN
+from custom_components.kiosk_satellite_manager import async_remove_entry, async_unload_entry
+from custom_components.kiosk_satellite_manager.const import (
+    CONF_HA_REFRESH_TOKEN_ID,
+    CONF_HA_TOKEN,
+    CONF_HA_TOKEN_OWNED,
+    DOMAIN,
+)
 
 from .conftest import init_integration
 
@@ -43,6 +48,41 @@ async def test_unload_entry_removes_coordinator(hass):
     assert await hass.config_entries.async_unload(ctx.entry.entry_id)
     await hass.async_block_till_done()
     assert ctx.entry.entry_id not in hass.data.get(DOMAIN, {})
+
+
+async def test_remove_entry_revokes_only_its_owned_credential(hass):
+    """[KSM-TEST-100/103] Removal revokes KSM-owned but never shared tokens."""
+    with patch(
+        "custom_components.kiosk_satellite_manager.fetch_health",
+        new=AsyncMock(return_value={"appVersion": "1.0.0"}),
+    ):
+        owned = await init_integration(
+            hass,
+            data={
+                CONF_HA_TOKEN: "owned-access",
+                CONF_HA_REFRESH_TOKEN_ID: "owned-refresh",
+                CONF_HA_TOKEN_OWNED: True,
+            },
+        )
+        shared = await init_integration(
+            hass,
+            data={
+                "host": "192.168.99.101",
+                CONF_HA_TOKEN: "shared-access",
+                CONF_HA_REFRESH_TOKEN_ID: "shared-refresh",
+                CONF_HA_TOKEN_OWNED: False,
+            },
+        )
+
+    refresh_token = object()
+    with patch.object(hass.auth, "async_get_refresh_token", return_value=refresh_token) as get_token, patch.object(
+        hass.auth, "async_remove_refresh_token", new=AsyncMock()
+    ) as remove_token:
+        await async_remove_entry(hass, owned.entry)
+        await async_remove_entry(hass, shared.entry)
+
+    get_token.assert_called_once_with("owned-refresh")
+    remove_token.assert_awaited_once_with(refresh_token)
 
 
 async def test_services_survive_one_of_two_entries_unloading_until_last_entry(hass):

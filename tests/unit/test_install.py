@@ -16,6 +16,7 @@ live-extracted call shapes.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -31,6 +32,7 @@ from custom_components.kiosk_satellite_manager.install import (
     install_and_launch,
     verify_functional_capabilities,
 )
+from custom_components.kiosk_satellite_manager.credentials import TokenCredential
 from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
 
 _TARGET_VERSION = "2026.9.99"
@@ -53,8 +55,12 @@ class _FakeHass:
     def __init__(self) -> None:
         self.auth = MagicMock()
         self.auth.async_get_owner = AsyncMock(return_value="the-owner")
-        self.auth.async_create_refresh_token = AsyncMock(return_value="the-refresh-token")
+        self.auth.async_create_refresh_token = AsyncMock(
+            return_value=SimpleNamespace(id="the-refresh-token")
+        )
         self.auth.async_create_access_token = MagicMock(return_value="minted-ha-token")
+        self.auth.async_get_refresh_token = MagicMock(return_value=SimpleNamespace(id="the-refresh-token"))
+        self.auth.async_remove_refresh_token = AsyncMock()
 
     async def async_add_executor_job(self, func, *args):
         return func(*args)
@@ -364,6 +370,36 @@ async def test_install_and_launch_mints_a_unique_managed_token_name():
     assert client_name.endswith("]")
 
 
+async def test_install_failure_after_mint_revokes_the_owned_refresh_token():
+    """[KSM-TEST-099] A sync failure cannot orphan KSM's newly minted token."""
+    hass = _FakeHass()
+    client = _fake_client()
+    session = _fake_session()
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ), patch(
+        "custom_components.kiosk_satellite_manager.install.ks_api_client"
+    ) as mock_api, patch(
+        "custom_components.kiosk_satellite_manager.install.get_url",
+        return_value="http://192.168.1.2:8123",
+    ):
+        mock_api.get_setup_status = AsyncMock(return_value={"passwordNeeded": True})
+        mock_api.setup_password = AsyncMock(return_value="ks-token")
+        mock_api.patch_settings = AsyncMock(side_effect=KsApiError("offline"))
+
+        result = await install_and_launch(
+            hass, client, session, host="192.168.1.50", device_name="Kitchen", password="hunter22",
+            device_model="portal_go",
+        )
+
+    assert result is None
+    hass.auth.async_remove_refresh_token.assert_awaited_once_with(
+        hass.auth.async_get_refresh_token.return_value
+    )
+
+
 async def test_install_and_launch_logs_in_and_patches_name_when_password_already_set():
     hass = _FakeHass()
     client = _fake_client()
@@ -531,7 +567,7 @@ async def test_install_and_launch_reuses_provided_token_and_respects_launcher_fl
             home_launcher=False,
         )
 
-    assert res == "pre-existing-token"
+    assert res == TokenCredential("pre-existing-token", None, owned=False)
     hass.auth.async_get_owner.assert_not_called()
     assert mock_api.patch_settings.await_args_list[0].args[3] == {
         "ha.url": "http://192.168.1.2:8123",

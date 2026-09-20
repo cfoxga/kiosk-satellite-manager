@@ -35,6 +35,8 @@ from custom_components.kiosk_satellite_manager.const import (
     EXISTING_INSTALL_REUSE,
     TOKEN_MODE_AUTO,
 )
+from custom_components.kiosk_satellite_manager.config_flow import KioskSatelliteManagerConfigFlow
+from custom_components.kiosk_satellite_manager.credentials import TokenCredential
 
 
 def _getprop(**props: str) -> AsyncMock:
@@ -67,6 +69,21 @@ _PORTAL_GO_PROPS = {
     "ro.product.device": "terry",
     "ro.build.version.sdk": "29",
 }
+
+
+async def test_abandoned_flow_revokes_only_auto_created_token(hass):
+    """[KSM-TEST-102] Flow cancellation cleans up an unpersisted KSM token."""
+    flow = KioskSatelliteManagerConfigFlow()
+    flow.hass = hass
+    flow._credential = TokenCredential("owned-access", "owned-refresh", owned=True)
+    refresh_token = object()
+    with patch.object(hass.auth, "async_get_refresh_token", return_value=refresh_token), patch.object(
+        hass.auth, "async_remove_refresh_token", new=AsyncMock()
+    ) as remove_token:
+        flow.async_abort(reason="user")
+        await hass.async_block_till_done()
+
+    remove_token.assert_awaited_once_with(refresh_token)
 
 async def test_user_flow_shows_device_info_step_with_discovered_name_default(hass):
     """[KSM-TEST-049] Detected metadata precedes only KSM-owned fields."""
@@ -488,7 +505,7 @@ async def test_user_flow_uses_selected_long_lived_token(hass):
     """[KSM-TEST-050] Selected token IDs resolve only at submission."""
     async def _install_ok(*args, **kwargs):
         await asyncio.sleep(0)
-        return kwargs["ha_token"]
+        return kwargs["token_credential"]
 
     selected_token = SimpleNamespace(
         id="existing-token-id",

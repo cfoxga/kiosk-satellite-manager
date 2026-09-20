@@ -35,6 +35,7 @@ from .const import (
     INSTALL_LAUNCH_POLL_ATTEMPTS,
     INSTALL_LAUNCH_POLL_DELAY_S,
 )
+from .credentials import TokenCredential, async_replace_entry_credential
 
 from .helpers import resolve_area_name
 from .install import install_and_launch
@@ -83,6 +84,7 @@ class KioskSatelliteInstallButton(ButtonEntity):
         try:
             await client.connect()
             try:
+                credential = TokenCredential.from_entry_data(self._entry.data)
                 used_token = await install_and_launch(
                     self.hass,
                     client,
@@ -90,16 +92,14 @@ class KioskSatelliteInstallButton(ButtonEntity):
                     host=self._entry.data[CONF_HOST],
                     device_name=self._entry.data.get(CONF_NAME, self._entry.title),
                     password=self._entry.data.get(CONF_PASSWORD),
-                    ha_token=self._entry.data.get(CONF_HA_TOKEN),
+                    ha_token=credential.access_token if credential else None,
+                    token_credential=credential,
                     home_launcher=self._entry.data.get(CONF_HOME_LAUNCHER, True),
                     device_model=self._entry.data.get(CONF_DEVICE_PROFILE),
                 )
 
                 if used_token and not self._entry.data.get(CONF_HA_TOKEN):
-                    self.hass.config_entries.async_update_entry(
-                        self._entry,
-                        data={**self._entry.data, CONF_HA_TOKEN: used_token},
-                    )
+                    await async_replace_entry_credential(self.hass, self._entry, used_token)
             finally:
                 await client.close()
 

@@ -41,6 +41,7 @@ from .capability_report import CapabilityReportCollector
 from .device_catalog import validate_catalog
 from .onboarding_plan import build_onboarding_plan
 from .const import CONF_HOST, CONF_KEY_PATH, CONF_PORT, DOMAIN, HEALTH_SCAN_INTERVAL_MIN, PLATFORMS
+from .credentials import TokenCredential, async_revoke_owned_credential
 from .provisioning import ProvisioningMismatch, apply_provisioning, fetch_health
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ _LOGGER = logging.getLogger(__name__)
 # gate, instead of surfacing mid-provision on a real device.
 validate_catalog()
 
-__all__ = ["DOMAIN", "async_setup_entry", "async_unload_entry"]
+__all__ = ["DOMAIN", "async_remove_entry", "async_setup_entry", "async_unload_entry"]
 
 SERVICE_PROVISION = "provision"
 SERVICE_CAPABILITY_REPORT = "capability_report"
@@ -177,3 +178,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.services.async_remove(DOMAIN, SERVICE_CAPABILITY_REPORT)
             hass.services.async_remove(DOMAIN, SERVICE_ONBOARDING_PLAN)
     return unloaded
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Revoke a credential that KSM itself created when its entry is removed."""
+    await async_revoke_owned_credential(hass, TokenCredential.from_entry_data(entry.data))

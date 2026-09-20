@@ -59,6 +59,7 @@ from .const import (
     SYNC_STATUS_POLL_DELAY_S,
 )
 from .device_catalog import require_recipe
+from .credentials import TokenCredential, async_revoke_owned_credential
 from .install_recipes import InstallRecipe
 from .ks_api import latest_release
 from .ks_api_client import KsApiError
@@ -289,9 +290,10 @@ async def install_and_launch(
     device_name: str | None = None,
     password: str | None = None,
     ha_token: str | None = None,
+    token_credential: TokenCredential | None = None,
     home_launcher: bool = True,
     device_model: str | None = None,
-) -> str | None:
+) -> TokenCredential | None:
     """Fetch the latest KS APK matching the device's ABI, install it, launch
     it, and grant full permissions. If a password is configured on the entry,
     also sync the device's admin password/Device Name and connect it to this
@@ -381,6 +383,7 @@ async def install_and_launch(
             device_name or host,
             password,
             ha_token=ha_token,
+            token_credential=token_credential,
             home_launcher=home_launcher,
             recipe=recipe,
         )
@@ -427,7 +430,7 @@ async def _wait_for_setup_status(session: aiohttp.ClientSession, host: str) -> d
     raise KsApiError(f"setup status never became reachable: {last_err}")
 
 
-async def _mint_ha_token(hass: HomeAssistant, client_name: str) -> str:
+async def _mint_ha_token(hass: HomeAssistant, client_name: str) -> TokenCredential:
     """A fresh long-lived access token for the device to use, following the
     same auth-manager calls HA's own "Long-Lived Access Tokens" profile-page
     feature uses (components/auth's websocket_create_long_lived_access_token)."""
@@ -438,7 +441,11 @@ async def _mint_ha_token(hass: HomeAssistant, client_name: str) -> str:
         token_type=TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN,
         access_token_expiration=timedelta(days=HA_TOKEN_LIFESPAN_DAYS),
     )
-    return hass.auth.async_create_access_token(refresh_token)
+    return TokenCredential(
+        access_token=hass.auth.async_create_access_token(refresh_token),
+        refresh_token_id=refresh_token.id,
+        owned=True,
+    )
 
 
 async def _sync_device_and_connect_ha(
@@ -450,8 +457,9 @@ async def _sync_device_and_connect_ha(
     *,
     recipe: InstallRecipe,
     ha_token: str | None = None,
+    token_credential: TokenCredential | None = None,
     home_launcher: bool = True,
-) -> str:
+) -> TokenCredential:
     status = await _wait_for_setup_status(session, host)
     if status.get("passwordNeeded", True):
         token = await ks_api_client.setup_password(session, host, password, device_name)
@@ -460,33 +468,41 @@ async def _sync_device_and_connect_ha(
         if status.get("deviceName") != device_name:
             await ks_api_client.patch_settings(session, host, token, {"device.name": device_name})
 
-    if not ha_token:
+    credential = token_credential
+    created_credential = False
+    if credential is None and ha_token:
+        credential = TokenCredential(ha_token, None, owned=False)
+    if credential is None:
         # HA requires client names to be unique across refresh tokens. A
         # reset/reprovisioned kiosk may have left a revoked-but-stored token
         # with the same user-visible name, so retain that name for operators
         # and add a short opaque suffix for the token identity.
         client_name = f"Kiosk Satellite Manager - {device_name} [{uuid.uuid4().hex}]"
-        ha_token = await _mint_ha_token(hass, client_name)
-    ha_url = get_url(hass, prefer_external=False).rstrip("/")
-    # KSM-BEHAVE-049: the start path is recipe data, with no "/portal if we
-    # can't tell" default -- an unidentified device never reaches this call.
-    start_path = recipe.start_url_path
-    start_url = f"{ha_url}{start_path}" if start_path else ha_url
-    settings_payload: dict[str, Any] = {
-        "ha.url": ha_url,
-        "ha.token": ha_token,
-        "browser.start_url": start_url,
-        # KSM-BEHAVE-061: send an explicit false so a kiosk previously
-        # configured by KSM's unsafe historical default is remediated too.
-        "browser.ignore_ssl_errors": False,
-    }
+        credential = await _mint_ha_token(hass, client_name)
+        created_credential = True
+    try:
+        ha_url = get_url(hass, prefer_external=False).rstrip("/")
+        # KSM-BEHAVE-049: the start path is recipe data, with no "/portal if we
+        # can't tell" default -- an unidentified device never reaches this call.
+        start_path = recipe.start_url_path
+        start_url = f"{ha_url}{start_path}" if start_path else ha_url
+        settings_payload: dict[str, Any] = {
+            "ha.url": ha_url,
+            "ha.token": credential.access_token,
+            "browser.start_url": start_url,
+            # KSM-BEHAVE-061: clear KSM's legacy unsafe browser setting.
+            "browser.ignore_ssl_errors": False,
+        }
 
-    # KSM-TEST-058: the entry's preference cannot turn on a launcher the
-    # recipe (and therefore the hardware) does not support.
-    if home_launcher and recipe.home_launcher_supported:
-        settings_payload["home.enabled"] = True
-
-    await ks_api_client.patch_settings(session, host, token, settings_payload)
-    if not await ks_api_client.check_ha_connection(session, host, token):
-        _LOGGER.warning("Kiosk Satellite reported the HA connection check failed for %s", host)
-    return ha_token
+        # KSM-TEST-058: the entry's preference cannot turn on a launcher the
+        # recipe (and therefore the hardware) does not support.
+        if home_launcher and recipe.home_launcher_supported:
+            settings_payload["home.enabled"] = True
+        await ks_api_client.patch_settings(session, host, token, settings_payload)
+        if not await ks_api_client.check_ha_connection(session, host, token):
+            _LOGGER.warning("Kiosk Satellite reported the HA connection check failed for %s", host)
+    except Exception:
+        if created_credential:
+            await async_revoke_owned_credential(hass, credential)
+        raise
+    return credential

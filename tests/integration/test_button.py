@@ -19,6 +19,7 @@ from custom_components.kiosk_satellite_manager.const import (
     DOMAIN,
     INSTALL_LAUNCH_POLL_ATTEMPTS,
 )
+from custom_components.kiosk_satellite_manager.credentials import TokenCredential
 from custom_components.kiosk_satellite_manager.device_catalog import NoApprovedRecipe
 
 from .conftest import init_integration
@@ -138,8 +139,8 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
 @pytest.mark.parametrize(
     ("stored_token", "returned_token", "expected_token"),
     [
-        (None, "new-device-token", "new-device-token"),
-        ("existing-device-token", "replacement-token", "existing-device-token"),
+        (None, TokenCredential("new-device-token", "new-refresh", True), "new-device-token"),
+        ("existing-device-token", TokenCredential("replacement-token", "replacement-refresh", True), "existing-device-token"),
     ],
 )
 async def test_press_persists_only_a_new_device_token(
