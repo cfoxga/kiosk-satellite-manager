@@ -97,6 +97,8 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
             "custom_components.kiosk_satellite_manager.install.latest_release",
             new=AsyncMock(return_value=("https://example.invalid/ks.apk", "new")),
         ), patch(
+            "custom_components.kiosk_satellite_manager.install.verify_ks_apk_signer"
+        ), patch(
             "custom_components.kiosk_satellite_manager.button.async_get_clientsession",
             return_value=fake_session,
         ), patch.object(

@@ -48,7 +48,8 @@ from homeassistant.helpers.network import get_url
 from typing import Any, Final
 
 from . import ks_api_client
-from .adb_client import AdbClient, PmInstallFailed
+from .adb_client import AdbClient
+from .apk_signing import verify_ks_apk_signer
 from .const import (
     HA_TOKEN_LIFESPAN_DAYS,
     KS_APK_REMOTE_PATH,
@@ -324,29 +325,19 @@ async def install_and_launch(
         async with session.get(apk_url) as resp:
             resp.raise_for_status()
             data = await resp.read()
+        # KSM-BEHAVE-063: this pin check must precede push/install and, in
+        # particular, any recovery action. Android validates the signature
+        # itself at install time; KSM establishes that the identity being
+        # validated is one the integration has independently trusted.
+        await hass.async_add_executor_job(verify_ks_apk_signer, data)
         tmp_path = await hass.async_add_executor_job(_write_temp_apk, data)
         try:
             await client.push(tmp_path, KS_APK_REMOTE_PATH)
             try:
-                try:
-                    # KSM-BEHAVE-035: a rejected artifact (wrong ABI, device
-                    # SDK too old, insufficient storage, or a signing-cert/
-                    # update mismatch) must abort here -- before am start and
-                    # permission grants run against a package that was never
-                    # actually installed.
-                    await client.install_apk(KS_APK_REMOTE_PATH)
-                except PmInstallFailed as err:
-                    # KSM-BEHAVE-040 (Phase 2, "choose... repair... from
-                    # observed state"): a signing-cert/update mismatch on a
-                    # device that already had some version installed is
-                    # recoverable by removing the stale install and retrying
-                    # once. A fresh/never-installed device has nothing to
-                    # repair by uninstalling, so it still hard-fails.
-                    if err.category == "incompatible_signature" and current_version:
-                        await client.uninstall_ks()
-                        await client.install_apk(KS_APK_REMOTE_PATH)
-                    else:
-                        raise
+                # KSM-BEHAVE-035/063: rejected artifacts, including signer
+                # mismatch, abort here. Never uninstall and retry as a fresh
+                # install; that would bypass certificate continuity.
+                await client.install_apk(KS_APK_REMOTE_PATH)
             finally:
                 await client.shell(f"rm -f {KS_APK_REMOTE_PATH}")
         finally:

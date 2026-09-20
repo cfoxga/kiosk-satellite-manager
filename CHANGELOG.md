@@ -10,6 +10,10 @@
   verification setting.
 - Protect KSM's shared ADB private key with private directory/file modes,
   ownership checks, symlink rejection, and serialized first-run generation.
+- Fail closed when a Kiosk Satellite APK signer is not explicitly pinned in
+  KSM's trusted policy, and never uninstall/retry after Android rejects an
+  update for an incompatible signing certificate. This preserves certificate
+  continuity and installed app data.
 - Make post-install health polling stop without an unnecessary final delay,
   while covering token persistence and install recovery cleanup paths.
 - Reject KSM service calls aimed at stale config entries before opening an ADB connection.

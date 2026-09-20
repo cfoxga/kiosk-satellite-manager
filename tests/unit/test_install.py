@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from custom_components.kiosk_satellite_manager.adb_client import PmInstallFailed
+from custom_components.kiosk_satellite_manager.apk_signing import ApkSignerVerificationFailed
 from custom_components.kiosk_satellite_manager.device_catalog import NoApprovedRecipe
 from custom_components.kiosk_satellite_manager.install_recipes import get_recipe
 from custom_components.kiosk_satellite_manager.install import (
@@ -120,6 +121,14 @@ def _fake_session(app_version=_TARGET_VERSION):
 
     session.get = MagicMock(side_effect=_get)
     return session
+
+
+@pytest.fixture(autouse=True)
+def _accept_fake_apk_artifacts(monkeypatch):
+    """Existing install-flow tests use arbitrary bytes, not signed APK files."""
+    monkeypatch.setattr(
+        "custom_components.kiosk_satellite_manager.install.verify_ks_apk_signer", MagicMock()
+    )
 
 
 async def test_install_and_launch_runs_expected_shell_sequence():
@@ -554,18 +563,15 @@ async def test_install_and_launch_skips_install_when_already_at_target_version()
     assert shell_calls[0] == "am start -n me.jxl.kiosk_satellite/.MainActivity"
 
 
-async def test_install_and_launch_repairs_via_uninstall_on_signature_mismatch():
-    """KSM-BEHAVE-040 (Phase 2, "choose... repair... from observed state"):
-    a signing-cert/update mismatch on a device with an existing install is
-    recovered by uninstalling and retrying once, not a hard failure."""
+async def test_install_and_launch_never_uninstalls_on_signature_mismatch():
+    """[KSM-TEST-098] Android's incompatible-signature response is not a
+    recovery signal: uninstalling would bypass certificate continuity and
+    discard the installed app's data."""
     hass = _FakeHass()
     client = _fake_client()
-    client.installed_version = AsyncMock(side_effect=["9.0.0", _TARGET_VERSION])
+    client.installed_version = AsyncMock(return_value="9.0.0")
     client.install_apk = AsyncMock(
-        side_effect=[
-            PmInstallFailed("INSTALL_FAILED_UPDATE_INCOMPATIBLE", "incompatible_signature"),
-            None,
-        ]
+        side_effect=PmInstallFailed("INSTALL_FAILED_UPDATE_INCOMPATIBLE", "incompatible_signature")
     )
     client.uninstall_ks = AsyncMock()
     session = _fake_session()
@@ -574,10 +580,36 @@ async def test_install_and_launch_repairs_via_uninstall_on_signature_mismatch():
         "custom_components.kiosk_satellite_manager.install.latest_release",
         new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ):
-        await install_and_launch(hass, client, session, device_model="portal_go")
+        with pytest.raises(PmInstallFailed):
+            await install_and_launch(hass, client, session, device_model="portal_go")
 
-    client.uninstall_ks.assert_awaited_once()
-    assert client.install_apk.await_count == 2
+    client.uninstall_ks.assert_not_awaited()
+    client.install_apk.assert_awaited_once()
+
+
+async def test_install_and_launch_rejects_untrusted_apk_before_device_mutation():
+    """[KSM-TEST-098] An artifact outside the reviewed signer policy cannot
+    be pushed, installed, uninstalled around, launched, or granted access."""
+    hass = _FakeHass()
+    client = _fake_client()
+    client.uninstall_ks = AsyncMock()
+    session = _fake_session()
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ), patch(
+        "custom_components.kiosk_satellite_manager.install.verify_ks_apk_signer",
+        side_effect=ApkSignerVerificationFailed("APK signer is not trusted by KSM policy"),
+    ) as verify:
+        with pytest.raises(ApkSignerVerificationFailed, match="not trusted"):
+            await install_and_launch(hass, client, session, device_model="portal_go")
+
+    verify.assert_called_once_with(b"fake-apk-bytes")
+    client.push.assert_not_awaited()
+    client.install_apk.assert_not_awaited()
+    client.uninstall_ks.assert_not_awaited()
+    client.shell.assert_not_awaited()
 
 
 async def test_install_and_launch_does_not_repair_signature_mismatch_on_fresh_device():
