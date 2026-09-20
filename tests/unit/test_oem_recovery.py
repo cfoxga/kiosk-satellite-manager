@@ -26,9 +26,12 @@ def test_android_9_portal_generation_stays_unconfirmed():
     assert profile.test_harness_confirmed is None
 
 
-def test_android_10_plus_portal_generation_is_confirmed():
+def test_android_10_plus_portal_generation_stays_unconfirmed():
+    """KSM-OPEN-003: live evidence is on portal_mini hardware, not the distinct
+    portal_gen2 ("portal") model string -- platform-family resemblance is not
+    a substitute for a direct confirmation on this profile."""
     profile = get_recovery_profile("portal_gen2")
-    assert profile.test_harness_confirmed is True
+    assert profile.test_harness_confirmed is None
 
 
 def test_no_profile_claims_vulnerability_recovery_is_available():

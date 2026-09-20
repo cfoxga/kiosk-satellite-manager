@@ -72,21 +72,24 @@ RECOVERY_PROFILES: dict[str, RecoveryProfile] = {
         restrictions=_PORTAL_TEST_HARNESS_RESTRICTIONS,
         postconditions=_PORTAL_TEST_HARNESS_POSTCONDITIONS,
     ),
-    # Generic Android 10+ Portal (Gen 2). Not itself live-confirmed by
-    # serial/model, but the two confirmed devices above are the same "omni"
-    # Android 10 platform family -- Test Harness Mode is an AOSP platform
-    # feature, not app-specific, so this generalization is carried forward
-    # (see ~/.claude/.../memory/portal-device-owner-blockers.md "How to
-    # apply"). Still None (unconfirmed), not True, for any Portal profile
-    # this note doesn't cover -- see KSM-OPEN-003 for what remains open.
+    # Generic Android 10+ Portal (Gen 2, model string "portal" -- a different
+    # physical SKU from the "portalmini" hardware the two live confirmations
+    # above actually ran on). The `True` contract above means live-confirmed
+    # *on this profile*; a platform-family resemblance (same "omni" Android
+    # 10 base, Test Harness Mode being an AOSP platform feature) is a
+    # plausible reason to expect the same behavior, but it is not that
+    # confirmation, so this stays None -- fail closed on unconfirmed
+    # evidence, same as every other unconfirmed profile. See KSM-OPEN-003.
     "portal_gen2": RecoveryProfile(
         key="portal_gen2",
-        test_harness_confirmed=True,
+        test_harness_confirmed=None,
         test_harness_notes=(
-            "Inferred from the portal_mini live confirmation: same Android 10 "
-            "'omni' platform family, and Test Harness Mode is a platform "
-            "feature rather than a per-model one. Not independently "
-            "live-confirmed against this exact model string (KSM-OPEN-003)."
+            "Not live-confirmed on this exact model (\"portal\", not "
+            "\"portalmini\"). The two live confirmations are on portal_mini "
+            "hardware; portal_gen2 shares the same Android 10 'omni' "
+            "platform family, which is a reason to expect similar behavior "
+            "but not a substitute for a direct check on this hardware "
+            "(KSM-OPEN-003)."
         ),
         restrictions=_PORTAL_TEST_HARNESS_RESTRICTIONS,
         postconditions=_PORTAL_TEST_HARNESS_POSTCONDITIONS,
