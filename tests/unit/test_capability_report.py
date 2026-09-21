@@ -239,13 +239,13 @@ async def test_report_is_sanitized_and_marks_unsupported_probes():
         "recipe_key": "meta_portal_standard",
         "recipe_version": "v2",
         "assignment_state": "approved",
-        "support_state": "recipe_assigned",
+        "support_state": "revalidation_required",
         "reason": report["catalog"]["reason"],
         "executable_recipe": True,
     }
     # Support is derived from qualification evidence, never claimed: there is
-    # no install-lifecycle evidence in the shipped catalog yet, so an
-    # assigned, executable recipe still does not read as "supported".
+    # this fixture differs from the failed physical qualification build, so
+    # it requires its own validation rather than inheriting that failure.
     assert report["catalog"]["support_state"] != "supported"
     assert "no_executable_recipe" not in report["inferences"]
     assert report["facts"]["management"] == {

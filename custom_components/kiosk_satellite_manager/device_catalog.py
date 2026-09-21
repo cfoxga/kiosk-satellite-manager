@@ -296,13 +296,41 @@ RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
     ),
 )
 
-# Deliberately empty. The only live, sanitized physical evidence on file today
-# is PortalGo *identity* (tests/fixtures/profile-portal-go-2026-09-20.json,
-# KSM-BEHAVE-045) and PortalMini *recovery* (docs/SPEC/oem-recovery.md) --
-# neither is install-lifecycle qualification. Every shipped model therefore
-# derives `recipe_assigned`, not `supported`, until the reversible lifecycle
-# matrix in cfoxga/kiosk-satellite-manager#18 is run and its records land here.
-QUALIFICATIONS: tuple[QualificationRecord, ...] = ()
+# Exact-device negative qualification from issue #40. This is an installed-app
+# limitation observed on this build, not a claim that Portal hardware can never
+# grant the permission. New app/recipe evidence requires explicit revalidation.
+QUALIFICATIONS: tuple[QualificationRecord, ...] = (
+    QualificationRecord(
+        model_key="portal_go",
+        recipe_key="meta_portal_standard",
+        recipe_version="v2",
+        scenario=SCENARIO_PERMISSION_CONVERGENCE,
+        result=RESULT_FAIL,
+        verified_on="2026-09-21",
+        min_sdk=29,
+        max_sdk=29,
+        fingerprint_prefixes=(
+            "facebook/terry_prod/terry:10/qkq1.210213.001/5051355900018050:user/prod-keys",
+        ),
+        evidence=(
+            "KS 2026.9.70 (versionCode 269) does not request WRITE_SECURE_SETTINGS; "
+            "Android rejects pm grant with 'has not requested permission'. "
+            "See docs/developer/android-support/portal-go-permission-qualification.md "
+            "in ham-harness/kiosk-satellite-manager and KSM issue #40."
+        ),
+        positive_control="READ_LOGS grant and Android granted=true readback succeed.",
+        negative_control=(
+            "WRITE_SECURE_SETTINGS grant is rejected and remains absent from granted "
+            "permissions; the physical matrix permission assertion returns false."
+        ),
+        limitations=(
+            "Required secure-settings permission is not converged; no supported claim.",
+            "Evidence applies to the observed KS app build; revalidate after an app update.",
+            "Other Portal SKUs and launcher qualification are not covered.",
+        ),
+        rollback_notes="No new privilege or device setting was added; no rollback required.",
+    ),
+)
 
 _RECOVERY_QUALIFIED_MODEL_KEYS: tuple[str, ...] = (
     "portal_go",
@@ -560,14 +588,6 @@ def derive_support_state(
             f"{stale} only; {assignment.recipe_identity} has none",
         )
 
-    failed = sorted({q.scenario for q in current if q.result != RESULT_PASS})
-    if failed:
-        return (
-            SUPPORT_BLOCKED,
-            f"{model.model_key} has a failing or blocked scenario on "
-            f"{assignment.recipe_identity}: {', '.join(failed)}",
-        )
-
     in_scope = [q for q in current if q.covers(sdk, fingerprint)]
     if not in_scope:
         return (
@@ -575,6 +595,14 @@ def derive_support_state(
             f"the observed build (sdk={sdk or 'unobserved'}) is outside the build scope of "
             f"every qualification record for {model.model_key} on "
             f"{assignment.recipe_identity}",
+        )
+
+    failed = sorted({q.scenario for q in in_scope if q.result != RESULT_PASS})
+    if failed:
+        return (
+            SUPPORT_BLOCKED,
+            f"{model.model_key} has a failing or blocked scenario on "
+            f"{assignment.recipe_identity}: {', '.join(failed)}",
         )
 
     required = required_scenarios(recipe)

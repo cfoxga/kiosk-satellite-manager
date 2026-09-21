@@ -131,7 +131,7 @@ def test_catalog_rejects_two_approved_assignments_for_one_model():
 
 
 def test_catalog_rejects_qualification_for_an_unassigned_recipe():
-    quals = CATALOG.qualifications + _qualifications("portal_go", "v97")
+    quals = _qualifications("portal_go", "v97")
     with pytest.raises(CatalogError, match="unknown install recipe"):
         validate_catalog(_catalog(qualifications=quals))
 
@@ -234,7 +234,7 @@ def test_portal_go_and_mini_are_distinct_models_sharing_one_recipe_version():
 
 def test_sharing_a_recipe_never_shares_qualification_evidence():
     """KSM-TEST-057 negative control: Mini's evidence stays Mini's."""
-    catalog = _catalog(qualifications=CATALOG.qualifications + _qualifications("portal_mini"))
+    catalog = _catalog(qualifications=_qualifications("portal_mini"))
     go = resolve_catalog_entry(_PORTAL_GO, catalog=catalog, sdk=29)
     mini = resolve_catalog_entry(_PORTAL_MINI, catalog=catalog, sdk=29)
 
@@ -314,7 +314,7 @@ def test_a_recognized_model_without_an_approved_assignment_fails_closed():
 
 def test_full_matrix_yields_supported_only_for_the_qualified_model():
     """KSM-TEST-061."""
-    catalog = _catalog(qualifications=CATALOG.qualifications + _qualifications("portal_go"))
+    catalog = _catalog(qualifications=_qualifications("portal_go"))
     assert resolve_catalog_entry(_PORTAL_GO, catalog=catalog, sdk=29).support_state == (
         SUPPORT_SUPPORTED
     )
@@ -326,7 +326,7 @@ def test_full_matrix_yields_supported_only_for_the_qualified_model():
 def test_a_partial_matrix_is_partially_qualified_not_supported():
     """KSM-TEST-061: evidence for some scenarios is not evidence for all."""
     partial = _qualifications("portal_go")[:2]
-    catalog = _catalog(qualifications=CATALOG.qualifications + partial)
+    catalog = _catalog(qualifications=partial)
     assert resolve_catalog_entry(_PORTAL_GO, catalog=catalog, sdk=29).support_state == (
         SUPPORT_PARTIALLY_QUALIFIED
     )
@@ -336,7 +336,7 @@ def test_a_failed_scenario_blocks_the_model():
     quals = _qualifications("portal_go")[:-1] + (
         dataclasses.replace(_qualifications("portal_go")[-1], result="fail"),
     )
-    catalog = _catalog(qualifications=CATALOG.qualifications + quals)
+    catalog = _catalog(qualifications=quals)
     entry = resolve_catalog_entry(_PORTAL_GO, catalog=catalog, sdk=29)
     assert entry.support_state == SUPPORT_BLOCKED
 
@@ -356,7 +356,7 @@ def test_evidence_for_an_earlier_recipe_version_goes_stale_on_a_new_version():
     catalog = _catalog(
         recipes=CATALOG.recipes + (v2,),
         assignments=assignments,
-        qualifications=CATALOG.qualifications + _qualifications("portal_go", "v1"),
+        qualifications=_qualifications("portal_go", "v1"),
     )
     entry = resolve_catalog_entry(_PORTAL_GO, catalog=catalog, sdk=29)
     assert entry.recipe_identity == "meta_portal_standard:v2"
@@ -367,7 +367,7 @@ def test_evidence_for_an_earlier_recipe_version_goes_stale_on_a_new_version():
 def test_evidence_outside_the_observed_build_scope_requires_revalidation():
     """KSM-TEST-062: an SDK outside the evidence's build scope is out of scope,
     not silently covered."""
-    catalog = _catalog(qualifications=CATALOG.qualifications + _qualifications("portal_go"))
+    catalog = _catalog(qualifications=_qualifications("portal_go"))
     in_scope = resolve_catalog_entry(_PORTAL_GO, catalog=catalog, sdk=29)
     out_of_scope = resolve_catalog_entry(
         dataclasses.replace(_PORTAL_GO, sdk=33), catalog=catalog, sdk=33
@@ -443,3 +443,60 @@ def test_catalog_rejects_a_launcher_recipe_on_launcher_incapable_hardware_while_
     )
     with pytest.raises(CatalogError, match="home launcher incapable"):
         validate_catalog(_catalog(assignments=proposed))
+
+
+_PORTAL_GO_40_FINGERPRINT = (
+    "Facebook/terry_prod/terry:10/QKQ1.210213.001/5051355900018050:user/prod-keys"
+)
+
+
+def test_portal_go_secure_settings_limitation_is_exact_build_evidence():
+    """[KSM-TEST-123] A denied required grant never becomes supported hardware."""
+    observed = dataclasses.replace(_PORTAL_GO, fingerprint=_PORTAL_GO_40_FINGERPRINT)
+    entry = resolve_catalog_entry(observed)
+    assert entry.support_state == SUPPORT_BLOCKED
+    assert "permission_convergence" in entry.reason
+    assert "android.permission.WRITE_SECURE_SETTINGS" in entry.recipe.permissions_for_sdk(29)
+    record, = [q for q in CATALOG.qualifications if q.model_key == "portal_go"]
+    assert record.result == "fail"
+    assert "2026.9.70" in record.evidence
+    assert record.positive_control and record.negative_control
+    assert record.min_sdk == record.max_sdk == 29
+    assert record.fingerprint_prefixes == (_PORTAL_GO_40_FINGERPRINT.lower(),)
+    for facts in (
+        _PORTAL_GO,
+        dataclasses.replace(observed, fingerprint="another/build"),
+        dataclasses.replace(observed, sdk=30),
+    ):
+        assert resolve_catalog_entry(facts).support_state == SUPPORT_REVALIDATION_REQUIRED
+    assert resolve_catalog_entry(_PORTAL_MINI).support_state == SUPPORT_RECIPE_ASSIGNED
+    new_recipe = dataclasses.replace(entry.recipe, version="v3")
+    assignments = tuple(
+        dataclasses.replace(a, recipe_version="v3")
+        if a.model_key == "portal_go" and a.state == ASSIGNMENT_APPROVED else a
+        for a in CATALOG.assignments
+    )
+    changed = _catalog(recipes=CATALOG.recipes + (new_recipe,), assignments=assignments)
+    assert resolve_catalog_entry(observed, catalog=changed).support_state == SUPPORT_REVALIDATION_REQUIRED
+
+
+@pytest.mark.parametrize("result", ["fail", "blocked"])
+def test_failed_qualification_does_not_leak_across_builds(result):
+    """[KSM-TEST-124] Apply the scope before interpreting any outcome."""
+    failure = dataclasses.replace(
+        _qualifications("portal_go")[0], result=result, fingerprint_prefixes=("bad/build",)
+    )
+    passing = tuple(dataclasses.replace(q, fingerprint_prefixes=("good/build",))
+                    for q in _qualifications("portal_go"))
+    catalog = _catalog(qualifications=(failure,) + passing)
+    assert resolve_catalog_entry(
+        dataclasses.replace(_PORTAL_GO, fingerprint="good/build"), catalog=catalog
+    ).support_state == SUPPORT_SUPPORTED
+    assert resolve_catalog_entry(
+        dataclasses.replace(_PORTAL_GO, fingerprint="bad/build"), catalog=catalog
+    ).support_state == SUPPORT_BLOCKED
+    assert resolve_catalog_entry(_PORTAL_GO, catalog=catalog).support_state == SUPPORT_REVALIDATION_REQUIRED
+    overlapping = _catalog(qualifications=(failure,) + _qualifications("portal_go"))
+    assert resolve_catalog_entry(
+        dataclasses.replace(_PORTAL_GO, fingerprint="bad/build"), catalog=overlapping
+    ).support_state == SUPPORT_BLOCKED

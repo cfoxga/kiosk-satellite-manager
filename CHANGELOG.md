@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Record Portal Go's exact-build secure-settings qualification failure: KS
+  2026.9.70 does not declare the required permission. Scope failed qualification
+  records by firmware/SDK before deriving support, keeping other builds and
+  sibling models independent. Correct the physical matrix's negative permission
+  control to distinguish a manifest declaration from a granted permission.
+
 - Qualify Meta Portal Go's Test Harness recovery profile from an authorized
   live reset on the Test Portal. The reset remains explicitly consent-gated;
   KSM only reports the exact-model evidence and never executes it.
