@@ -16,8 +16,12 @@ from homeassistant.helpers import entity_registry as er
 from custom_components.kiosk_satellite_manager.const import (
     CONF_DEVICE_PROFILE,
     CONF_HA_TOKEN,
+    CONF_HA_REFRESH_TOKEN_ID,
+    CONF_HA_TOKEN_OWNED,
+    CONF_TOKEN_MODE,
     DOMAIN,
     INSTALL_LAUNCH_POLL_ATTEMPTS,
+    TOKEN_MODE_AUTO,
 )
 from custom_components.kiosk_satellite_manager.credentials import TokenCredential
 from custom_components.kiosk_satellite_manager.device_catalog import NoApprovedRecipe
@@ -180,6 +184,44 @@ async def test_press_persists_only_a_new_device_token(
 
     assert ctx.entry.data.get(CONF_HA_TOKEN) == expected_token
     mock_client.close.assert_awaited_once()
+
+
+async def test_auto_credential_recovery_rotates_after_the_replacement_is_verified(hass):
+    """[KSM-TEST-110] Auto credentials rotate; selected tokens never do."""
+    async def fake_fetch_health(session, host):
+        return {"appVersion": "old"}
+
+    entry_data = {
+        CONF_HA_TOKEN: "old-kiosk-token",
+        CONF_HA_REFRESH_TOKEN_ID: "old-refresh",
+        CONF_HA_TOKEN_OWNED: True,
+        CONF_TOKEN_MODE: TOKEN_MODE_AUTO,
+    }
+    new_credential = TokenCredential("new-kiosk-token", "new-refresh", True)
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
+        ctx = await init_integration(hass, data=entry_data)
+        ent_reg = er.async_get(hass)
+        install_entry = next(
+            entry for entry in er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)
+            if entry.unique_id == f"{ctx.entry.entry_id}_install"
+        )
+        with patch("custom_components.kiosk_satellite_manager.button.AdbClient") as mock_client_cls, patch(
+            "custom_components.kiosk_satellite_manager.button.install_and_launch",
+            new=AsyncMock(return_value=new_credential),
+        ) as install, patch(
+            "custom_components.kiosk_satellite_manager.button.async_replace_entry_credential",
+            new=AsyncMock(),
+        ) as replace:
+            mock_client = mock_client_cls.return_value
+            mock_client.connect = AsyncMock()
+            mock_client.close = AsyncMock()
+            await hass.services.async_call(
+                "button", "press", {"entity_id": install_entry.entity_id}, blocking=True
+            )
+
+    assert install.await_args.kwargs["ha_token"] is None
+    assert install.await_args.kwargs["token_credential"] is None
+    replace.assert_awaited_once_with(hass, ctx.entry, new_credential)
 
 
 async def test_press_retries_health_until_success_without_a_terminal_delay(hass):

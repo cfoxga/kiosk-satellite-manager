@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Stop automatic onboarding from issuing owner credentials: each kiosk now
+  receives a dedicated local-only read-only user, a 90-day credential, and
+  managed credential rotation on Install/Reinstall.
 - Restore strict certificate validation on every Kiosk Satellite Home Assistant
   settings sync, explicitly clearing the legacy insecure browser setting.
 - Reject malformed device HTTP responses through aiohttp's real parser within

@@ -25,6 +25,7 @@ from .const import (
     CONF_AREA_ID,
     CONF_DEVICE_PROFILE,
     CONF_HA_TOKEN,
+    CONF_TOKEN_MODE,
     CONF_HOME_LAUNCHER,
     CONF_HOST,
     CONF_KEY_PATH,
@@ -34,6 +35,7 @@ from .const import (
     DOMAIN,
     INSTALL_LAUNCH_POLL_ATTEMPTS,
     INSTALL_LAUNCH_POLL_DELAY_S,
+    TOKEN_MODE_AUTO,
 )
 from .credentials import TokenCredential, async_replace_entry_credential
 
@@ -85,6 +87,9 @@ class KioskSatelliteInstallButton(ButtonEntity):
             await client.connect()
             try:
                 credential = TokenCredential.from_entry_data(self._entry.data)
+                rotate_managed_credential = (
+                    self._entry.data.get(CONF_TOKEN_MODE) == TOKEN_MODE_AUTO
+                )
                 used_token = await install_and_launch(
                     self.hass,
                     client,
@@ -92,13 +97,17 @@ class KioskSatelliteInstallButton(ButtonEntity):
                     host=self._entry.data[CONF_HOST],
                     device_name=self._entry.data.get(CONF_NAME, self._entry.title),
                     password=self._entry.data.get(CONF_PASSWORD),
-                    ha_token=credential.access_token if credential else None,
-                    token_credential=credential,
+                    # Auto-created credentials are KSM-managed: a recovery
+                    # press proves the replacement on-device before the helper
+                    # revokes the previous owned token. Selected credentials
+                    # are never replaced or revoked.
+                    ha_token=None if rotate_managed_credential else (credential.access_token if credential else None),
+                    token_credential=None if rotate_managed_credential else credential,
                     home_launcher=self._entry.data.get(CONF_HOME_LAUNCHER, True),
                     device_model=self._entry.data.get(CONF_DEVICE_PROFILE),
                 )
 
-                if used_token and not self._entry.data.get(CONF_HA_TOKEN):
+                if used_token and (rotate_managed_credential or not self._entry.data.get(CONF_HA_TOKEN)):
                     await async_replace_entry_credential(self.hass, self._entry, used_token)
             finally:
                 await client.close()

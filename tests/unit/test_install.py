@@ -34,6 +34,7 @@ from custom_components.kiosk_satellite_manager.install import (
 )
 from custom_components.kiosk_satellite_manager.credentials import TokenCredential
 from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
+from homeassistant.auth.const import GROUP_ID_READ_ONLY
 
 _TARGET_VERSION = "2026.9.99"
 
@@ -55,6 +56,7 @@ class _FakeHass:
     def __init__(self) -> None:
         self.auth = MagicMock()
         self.auth.async_get_owner = AsyncMock(return_value="the-owner")
+        self.auth.async_create_user = AsyncMock(return_value="the-kiosk-user")
         self.auth.async_create_refresh_token = AsyncMock(
             return_value=SimpleNamespace(id="the-refresh-token")
         )
@@ -296,7 +298,7 @@ async def test_install_and_launch_skips_sync_when_no_password_configured():
 
 
 async def test_install_and_launch_syncs_password_and_name_on_first_run():
-    """[KSM-TEST-096] First-run sync explicitly retains browser TLS checks."""
+    """[KSM-TEST-109] Automatic minting creates a dedicated kiosk identity."""
     hass = _FakeHass()
     client = _fake_client()
     session = _fake_session()
@@ -324,7 +326,10 @@ async def test_install_and_launch_syncs_password_and_name_on_first_run():
 
     mock_api.setup_password.assert_awaited_once_with(session, "192.168.1.50", "hunter22", "Kitchen")
     mock_api.login.assert_not_called()
-    hass.auth.async_get_owner.assert_awaited_once()
+    hass.auth.async_get_owner.assert_not_called()
+    hass.auth.async_create_user.assert_awaited_once_with(
+        "Kiosk Satellite - Kitchen", group_ids=[GROUP_ID_READ_ONLY], local_only=True
+    )
     mock_api.patch_settings.assert_awaited_once_with(
         session,
         "192.168.1.50",

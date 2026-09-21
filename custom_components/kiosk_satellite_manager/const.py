@@ -66,9 +66,7 @@ INSTALL_LAUNCH_POLL_DELAY_S: Final = 2
 SYNC_STATUS_POLL_ATTEMPTS: Final = 15
 SYNC_STATUS_POLL_DELAY_S: Final = 2
 
-# KSM-BEHAVE-011: matches the order of magnitude of HA's own "Long-Lived
-# Access Tokens" profile-page feature (auth/long_lived_access_token, default
-# lifespan shown in its docs example is 365 days; the profile-page UI's own
-# default is multi-year) -- long enough not to need rotation for a kiosk's
-# operational life.
-HA_TOKEN_LIFESPAN_DAYS: Final = 3650
+# KSM-BEHAVE-066: automatic KSM credentials are rotated by Install/Reinstall
+# and expire in 90 days if a kiosk is retired or lost before that lifecycle
+# action can run. Operator-supplied credentials remain untouched.
+HA_TOKEN_LIFESPAN_DAYS: Final = 90

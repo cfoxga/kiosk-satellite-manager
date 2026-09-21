@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 import aiohttp
+from homeassistant.auth.const import GROUP_ID_READ_ONLY
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.network import get_url
@@ -431,10 +432,19 @@ async def _wait_for_setup_status(session: aiohttp.ClientSession, host: str) -> d
 
 
 async def _mint_ha_token(hass: HomeAssistant, client_name: str) -> TokenCredential:
-    """A fresh long-lived access token for the device to use, following the
-    same auth-manager calls HA's own "Long-Lived Access Tokens" profile-page
-    feature uses (components/auth's websocket_create_long_lived_access_token)."""
-    user = await hass.auth.async_get_owner()
+    """Create a dedicated, local-only read-only credential for one kiosk.
+
+    Kiosk Satellite only needs to render Home Assistant; it must never inherit
+    an operator's owner authority. The built-in read-only group denies entity
+    control and all administrator-only APIs. A local-only user also prevents a
+    compromised kiosk token from being used through HA's public endpoint.
+    """
+    device_name = client_name.removeprefix("Kiosk Satellite Manager - ").split(" [", 1)[0]
+    user = await hass.auth.async_create_user(
+        f"Kiosk Satellite - {device_name}",
+        group_ids=[GROUP_ID_READ_ONLY],
+        local_only=True,
+    )
     refresh_token = await hass.auth.async_create_refresh_token(
         user,
         client_name=client_name,
