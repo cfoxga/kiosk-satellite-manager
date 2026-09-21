@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import voluptuous as vol
@@ -78,12 +78,12 @@ async def test_abandoned_flow_revokes_only_auto_created_token(hass):
     flow._credential = TokenCredential("owned-access", "owned-refresh", owned=True)
     refresh_token = object()
     with patch.object(hass.auth, "async_get_refresh_token", return_value=refresh_token), patch.object(
-        hass.auth, "async_remove_refresh_token", new=AsyncMock()
+        hass.auth, "async_remove_refresh_token", new=MagicMock()
     ) as remove_token:
         flow.async_abort(reason="user")
         await hass.async_block_till_done()
 
-    remove_token.assert_awaited_once_with(refresh_token)
+    remove_token.assert_called_once_with(refresh_token)
 
 async def test_user_flow_shows_device_info_step_with_discovered_name_default(hass):
     """[KSM-TEST-049] Detected metadata precedes only KSM-owned fields."""

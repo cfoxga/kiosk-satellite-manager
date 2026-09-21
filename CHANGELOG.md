@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fix KSM-owned Home Assistant credential cleanup on current Home Assistant:
+  refresh-token removal is synchronous and no longer raises during entry
+  removal.
 - Stop automatic onboarding from issuing owner credentials: each kiosk now
   receives a dedicated local-only read-only user, a 90-day credential, and
   managed credential rotation on Install/Reinstall.

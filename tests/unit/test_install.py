@@ -62,7 +62,7 @@ class _FakeHass:
         )
         self.auth.async_create_access_token = MagicMock(return_value="minted-ha-token")
         self.auth.async_get_refresh_token = MagicMock(return_value=SimpleNamespace(id="the-refresh-token"))
-        self.auth.async_remove_refresh_token = AsyncMock()
+        self.auth.async_remove_refresh_token = MagicMock()
 
     async def async_add_executor_job(self, func, *args):
         return func(*args)
@@ -400,7 +400,7 @@ async def test_install_failure_after_mint_revokes_the_owned_refresh_token():
         )
 
     assert result is None
-    hass.auth.async_remove_refresh_token.assert_awaited_once_with(
+    hass.auth.async_remove_refresh_token.assert_called_once_with(
         hass.auth.async_get_refresh_token.return_value
     )
 

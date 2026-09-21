@@ -45,7 +45,7 @@ async def async_revoke_owned_credential(hass, credential: TokenCredential | None
         return
     refresh_token = hass.auth.async_get_refresh_token(credential.refresh_token_id)
     if refresh_token is not None:
-        await hass.auth.async_remove_refresh_token(refresh_token)
+        hass.auth.async_remove_refresh_token(refresh_token)
 
 
 async def async_replace_entry_credential(hass, entry, credential: TokenCredential) -> None:
