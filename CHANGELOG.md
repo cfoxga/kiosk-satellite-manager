@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Qualify Meta Portal Go's Test Harness recovery profile from an authorized
+  live reset on the Test Portal. The reset remains explicitly consent-gated;
+  KSM only reports the exact-model evidence and never executes it.
 - Require an authenticated Home Assistant administrator or a user with
   control permission for a KSM device's Install button before any KSM
   device-management service opens ADB. Provisioning now accepts only a small,

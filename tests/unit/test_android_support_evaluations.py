@@ -22,13 +22,6 @@ from custom_components.kiosk_satellite_manager.capability_report import Capabili
 from custom_components.kiosk_satellite_manager.device_models import DeviceFacts, match_device_model
 from custom_components.kiosk_satellite_manager.onboarding_plan import build_onboarding_plan
 
-# portal_go has no live-confirmed Test Harness evidence (KSM-OPEN-003), so every
-# plan built from this fixture carries the fixed test_harness_reset /
-# vulnerability_based_cleanup destructive_options entries, ineligible, plus the
-# test_harness_not_confirmed blocker -- same as any other unconfirmed profile.
-_PORTAL_GO_TEST_HARNESS_BLOCKER = "test_harness_not_confirmed"
-
-
 def _report(
     *,
     device_owner: bool | None,
@@ -91,7 +84,7 @@ def test_scenario_2_root_observed_adb_never_unlocks_the_owner_blocker():
     rooted = build_onboarding_plan(_report(device_owner=False, adb_uid=0, installed=False))
     shell = build_onboarding_plan(_report(device_owner=False, adb_uid=2000, installed=False))
 
-    assert rooted["blockers"] == shell["blockers"] == ["device_owner_absent", _PORTAL_GO_TEST_HARNESS_BLOCKER]
+    assert rooted["blockers"] == shell["blockers"] == ["device_owner_absent"]
     assert rooted["destructive_options"] == shell["destructive_options"]
     assert rooted["automatic_actions"] == []
 
@@ -127,7 +120,7 @@ def test_scenario_4_legacy_device_admin_with_no_owner_still_fails_closed():
     way, matching the documented fail-closed guidance for unmodeled evidence."""
     plan = build_onboarding_plan(_report(device_owner=False, adb_uid=2000, installed=True))
 
-    assert plan["blockers"] == ["device_owner_absent", _PORTAL_GO_TEST_HARNESS_BLOCKER]
+    assert plan["blockers"] == ["device_owner_absent"]
     assert plan["destructive_options"][0]["executor_authorized"] is False
 
 

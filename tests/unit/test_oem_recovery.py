@@ -34,6 +34,15 @@ def test_android_10_plus_portal_generation_stays_unconfirmed():
     assert profile.test_harness_confirmed is None
 
 
+def test_portal_go_test_harness_recovery_is_exact_model_confirmed():
+    """KSM-TEST-122: PortalGo's confirmation comes from its own live reset."""
+    profile = get_recovery_profile("portal_go")
+
+    assert profile.test_harness_confirmed is True
+    assert profile.postconditions
+    assert "PortalGo" in profile.test_harness_notes
+
+
 def test_no_profile_claims_vulnerability_recovery_is_available():
     """KSM-OPEN-005: no vulnerability-based recipe has ever been live-verified."""
     for profile in RECOVERY_PROFILES.values():
@@ -71,11 +80,12 @@ def test_every_recovery_profile_is_keyed_on_an_exact_device_model():
     assert classification_keys.isdisjoint(RECOVERY_PROFILES)
 
 
-def test_a_shared_install_recipe_does_not_share_recovery_confirmation():
-    """KSM-TEST-066: Portal Go and Portal Mini are assigned the same recipe
-    version; only Mini's Test Harness reset is live-confirmed."""
+def test_shared_install_recipe_does_not_confer_unrelated_recovery_evidence():
+    """KSM-TEST-066: Portal Go and Portal Mini share an install recipe, but
+    each Test Harness confirmation is its own exact-model evidence."""
     from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
 
     assert require_recipe("portal_go") is require_recipe("portal_mini")
     assert get_recovery_profile("portal_mini").test_harness_confirmed is True
-    assert get_recovery_profile("portal_go").test_harness_confirmed is None
+    assert get_recovery_profile("portal_go").test_harness_confirmed is True
+    assert get_recovery_profile("portal_gen2").test_harness_confirmed is None

@@ -111,13 +111,16 @@ def test_onboarding_plan_never_leaks_destructive_options_into_automatic_actions(
         {
             "id": "test_harness_reset",
             "classification": "destructive_gated",
-            # KSM-BEHAVE-052: portal_go shares meta_portal_standard:v2 with
-            # portal_mini, whose Test Harness reset *is* live-confirmed --
-            # and still inherits none of that confirmation.
-            "reason": "Not live-confirmed on this hardware (KSM-OPEN-003).",
+            "reason": (
+                "Live-confirmed on the Test Portal (PortalGo, Android 10): "
+                "cmd testharness enable reset the device; its previously trusted "
+                "ADB identity reconnected, persist.sys.test_harness read 1, the "
+                "lock screen was disabled, and Kiosk Satellite plus its Device "
+                "Admin registration were absent afterward (KSM-TEST-122)."
+            ),
             "requires_explicit_user_consent": True,
             "executor_authorized": False,
-            "eligible_now": False,
+            "eligible_now": True,
             "data_loss": [
                 "All accounts, apps, and settings on the device",
                 "Any data not preserved by the persistent data block (the trusted "
@@ -434,9 +437,9 @@ def test_onboarding_plan_fails_closed_when_no_recipe_is_executable():
 
 def test_onboarding_plan_recovery_evidence_does_not_follow_a_shared_recipe():
     """KSM-TEST-066: Portal Mini and Portal Go run the same install recipe
-    version. Mini's Test Harness reset is live-confirmed; Go's is not, and
-    sharing the recipe must not transfer that confirmation. Neither ends up
-    in automatic_actions either way."""
+    version. Both have independently confirmed Test Harness recovery; sharing
+    the recipe cannot be the source of either confirmation. Neither ends up
+    in automatic_actions."""
     mini = build_onboarding_plan(_observed_report(device_model_key="portal_mini"))
     go = build_onboarding_plan(_observed_report(device_model_key="portal_go"))
 
@@ -444,6 +447,7 @@ def test_onboarding_plan_recovery_evidence_does_not_follow_a_shared_recipe():
     mini_reset = next(o for o in mini["destructive_options"] if o["id"] == "test_harness_reset")
     go_reset = next(o for o in go["destructive_options"] if o["id"] == "test_harness_reset")
     assert mini_reset["eligible_now"] is True
-    assert go_reset["eligible_now"] is False
-    assert go["oem_recovery"]["test_harness_confirmed"] is None
+    assert go_reset["eligible_now"] is True
+    assert go["oem_recovery"]["test_harness_confirmed"] is True
+    assert mini_reset["reason"] != go_reset["reason"]
     assert mini["automatic_actions"] == [] and go["automatic_actions"] == []

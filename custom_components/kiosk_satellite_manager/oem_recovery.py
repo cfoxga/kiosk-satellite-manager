@@ -115,9 +115,16 @@ RECOVERY_PROFILES: dict[str, RecoveryProfile] = {
     ),
     "portal_go": RecoveryProfile(
         key="portal_go",
-        test_harness_confirmed=None,
-        test_harness_notes="Not live-confirmed on this hardware (KSM-OPEN-003).",
+        test_harness_confirmed=True,
+        test_harness_notes=(
+            "Live-confirmed on the Test Portal (PortalGo, Android 10): "
+            "cmd testharness enable reset the device; its previously trusted "
+            "ADB identity reconnected, persist.sys.test_harness read 1, the "
+            "lock screen was disabled, and Kiosk Satellite plus its Device "
+            "Admin registration were absent afterward (KSM-TEST-122)."
+        ),
         restrictions=_PORTAL_TEST_HARNESS_RESTRICTIONS,
+        postconditions=_PORTAL_TEST_HARNESS_POSTCONDITIONS,
     ),
     "portal_plus_gen1": RecoveryProfile(
         key="portal_plus_gen1",
