@@ -15,7 +15,7 @@ from homeassistant.exceptions import ServiceValidationError
 from custom_components.kiosk_satellite_manager import SERVICE_PROVISION
 from custom_components.kiosk_satellite_manager.const import DOMAIN
 
-from .conftest import init_integration
+from .conftest import admin_context, init_integration
 
 
 async def test_provision_applies_and_refreshes_on_match(hass):
@@ -44,6 +44,7 @@ async def test_provision_applies_and_refreshes_on_match(hass):
                     "settings": {"device.name": "Kitchen Portal"},
                 },
                 blocking=True,
+                context=await admin_context(hass),
             )
 
     mock_apply.assert_awaited_once()
@@ -76,6 +77,7 @@ async def test_provision_raises_service_validation_error_on_mismatch(hass):
                         "settings": {"device.name": "Kitchen Portal"},
                     },
                     blocking=True,
+                    context=await admin_context(hass),
                 )
 
 
@@ -92,4 +94,5 @@ async def test_provision_rejects_unknown_config_entry(hass):
             SERVICE_PROVISION,
             {"config_entry_id": "does-not-exist", "settings": {"device.name": "x"}},
             blocking=True,
+            context=await admin_context(hass),
         )

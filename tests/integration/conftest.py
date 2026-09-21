@@ -23,6 +23,8 @@ from custom_components.kiosk_satellite_manager.const import (  # noqa: E402
     CONF_PORT,
     DOMAIN,
 )
+from homeassistant.auth.const import GROUP_ID_ADMIN  # noqa: E402
+from homeassistant.core import Context  # noqa: E402
 from pytest_homeassistant_custom_component.common import MockConfigEntry  # noqa: E402
 
 
@@ -50,3 +52,9 @@ async def init_integration(hass, *, data: dict | None = None) -> KSMContext:
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     return KSMContext(entry=entry)
+
+
+async def admin_context(hass) -> Context:
+    """Create an authenticated HA administrator service-call context."""
+    user = await hass.auth.async_create_user("KSM service test admin", group_ids=[GROUP_ID_ADMIN])
+    return Context(user_id=user.id)

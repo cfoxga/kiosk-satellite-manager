@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Require an authenticated Home Assistant administrator or a user with
+  control permission for a KSM device's Install button before any KSM
+  device-management service opens ADB. Provisioning now accepts only a small,
+  typed allowlist of supported settings.
 - Stop KSM from sending a kiosk password, device token, or Home Assistant
   credential to Kiosk Satellite's HTTP-only management service. These
   credential-bearing calls now fail closed until the device offers verified

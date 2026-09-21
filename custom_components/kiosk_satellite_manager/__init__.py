@@ -33,7 +33,9 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .adb_client import AdbClient
@@ -59,10 +61,36 @@ SERVICE_PROVISION = "provision"
 SERVICE_CAPABILITY_REPORT = "capability_report"
 SERVICE_ONBOARDING_PLAN = "onboarding_plan"
 
+# KSM-BEHAVE-068: the device accepts arbitrary settings through its intent,
+# but the public HA service does not. Keep this small enough that every key has
+# an intentional operator-facing use and an exact runtime type.
+PROVISIONING_SETTINGS: dict[str, type] = {
+    "device.name": str,
+    "device.hostname": str,
+    "remote.enabled": bool,
+    "remote.password": str,
+    "esphome.node_name": str,
+}
+
+
+def _validate_provisioning_settings(settings: dict) -> dict:
+    """Reject unknown, empty, and mistyped service settings before ADB work."""
+    if not settings:
+        raise vol.Invalid("settings must contain at least one supported key")
+    for key, value in settings.items():
+        expected_type = PROVISIONING_SETTINGS.get(key)
+        if expected_type is None:
+            raise vol.Invalid(f"unsupported provisioning setting: {key}")
+        if type(value) is not expected_type:
+            raise vol.Invalid(f"setting {key} must be a {expected_type.__name__}")
+        if expected_type is str and not value:
+            raise vol.Invalid(f"setting {key} must not be empty")
+    return settings
+
 PROVISION_SCHEMA = vol.Schema(
     {
         vol.Required("config_entry_id"): str,
-        vol.Required("settings"): dict,
+        vol.Required("settings"): vol.All(dict, _validate_provisioning_settings),
     }
 )
 
@@ -77,6 +105,33 @@ def _active_target(hass: HomeAssistant, config_entry_id: str) -> tuple[ConfigEnt
     if target_entry is None or target_entry.domain != DOMAIN or target_coordinator is None:
         raise ServiceValidationError(f"Unknown or not active {DOMAIN} config entry: {config_entry_id}")
     return target_entry, target_coordinator
+
+
+async def _authorize_target(call: ServiceCall, hass: HomeAssistant, target_entry: ConfigEntry) -> None:
+    """Require an admin or control permission for this entry's action button.
+
+    HA custom-service registration has no target-aware authorization hook. The
+    service therefore resolves the caller and the entry's button entity itself,
+    before constructing an ADB client. Calls without a human user context
+    (including automations) deliberately fail closed.
+    """
+    user_id = call.context.user_id
+    if user_id is None:
+        raise ServiceValidationError("Caller is not authorized to manage this KSM device")
+    user = await hass.auth.async_get_user(user_id)
+    if user is None:
+        raise ServiceValidationError("Caller is not authorized to manage this KSM device")
+    if user.is_admin:
+        return
+    entity_registry = er.async_get(hass)
+    target_buttons = (
+        entity.entity_id
+        for entity in er.async_entries_for_config_entry(entity_registry, target_entry.entry_id)
+        if entity.domain == "button"
+    )
+    if any(user.permissions.check_entity(entity_id, POLICY_CONTROL) for entity_id in target_buttons):
+        return
+    raise ServiceValidationError("Caller is not authorized to manage this KSM device")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -105,6 +160,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async def _handle_provision(call: ServiceCall) -> None:
             target_entry, target_coordinator = _active_target(hass, call.data["config_entry_id"])
+            await _authorize_target(call, hass, target_entry)
             client = AdbClient(
                 target_entry.data[CONF_HOST],
                 target_entry.data[CONF_PORT],
@@ -132,6 +188,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async def _handle_capability_report(call: ServiceCall) -> dict:
             target_entry, _ = _active_target(hass, call.data["config_entry_id"])
+            await _authorize_target(call, hass, target_entry)
             client = AdbClient(
                 target_entry.data[CONF_HOST], target_entry.data[CONF_PORT], target_entry.data[CONF_KEY_PATH]
             )
@@ -150,6 +207,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async def _handle_onboarding_plan(call: ServiceCall) -> dict:
             target_entry, _ = _active_target(hass, call.data["config_entry_id"])
+            await _authorize_target(call, hass, target_entry)
             client = AdbClient(
                 target_entry.data[CONF_HOST], target_entry.data[CONF_PORT], target_entry.data[CONF_KEY_PATH]
             )

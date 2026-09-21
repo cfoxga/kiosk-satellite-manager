@@ -15,8 +15,9 @@ provision:
     settings:
       name: Settings
       description: >-
-        Settings keys/values to apply, e.g. device.name, device.hostname,
-        remote.enabled, remote.password, esphome.node_name, screen.*.
+        Supported typed keys: device.name (text), device.hostname (text),
+        remote.enabled (boolean), remote.password (text), and
+        esphome.node_name (text). Other keys are rejected.
       required: true
       example: {"device.name": "Kitchen Portal"}
       selector:

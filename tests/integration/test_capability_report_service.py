@@ -8,7 +8,7 @@ from homeassistant.exceptions import ServiceValidationError
 import pytest
 
 from custom_components.kiosk_satellite_manager.const import DOMAIN
-from .conftest import init_integration
+from .conftest import admin_context, init_integration
 
 
 async def test_capability_report_returns_the_sanitized_report_and_closes_client(hass):
@@ -23,7 +23,7 @@ async def test_capability_report_returns_the_sanitized_report_and_closes_client(
         client_cls.return_value.close = AsyncMock()
         response = await hass.services.async_call(
             DOMAIN, "capability_report", {"config_entry_id": ctx.entry.entry_id},
-            blocking=True, return_response=True,
+            blocking=True, return_response=True, context=await admin_context(hass),
         )
     assert response == {"report": report}
     assert hass.services.supports_response(DOMAIN, "capability_report") is SupportsResponse.ONLY
@@ -36,7 +36,7 @@ async def test_capability_report_rejects_unknown_entry_and_closes_after_failure(
     with pytest.raises(ServiceValidationError):
         await hass.services.async_call(
             DOMAIN, "capability_report", {"config_entry_id": "not-an-entry"},
-            blocking=True, return_response=True,
+            blocking=True, return_response=True, context=await admin_context(hass),
         )
     with patch("custom_components.kiosk_satellite_manager.AdbClient") as client_cls, patch(
         "custom_components.kiosk_satellite_manager.CapabilityReportCollector.collect",
@@ -47,7 +47,7 @@ async def test_capability_report_rejects_unknown_entry_and_closes_after_failure(
         with pytest.raises(RuntimeError, match="probe failed"):
             await hass.services.async_call(
                 DOMAIN, "capability_report", {"config_entry_id": ctx.entry.entry_id},
-                blocking=True, return_response=True,
+                blocking=True, return_response=True, context=await admin_context(hass),
             )
     client_cls.return_value.close.assert_awaited_once()
 
@@ -65,7 +65,7 @@ async def test_onboarding_plan_returns_report_and_dry_run_plan(hass):
         client_cls.return_value.close = AsyncMock()
         response = await hass.services.async_call(
             DOMAIN, "onboarding_plan", {"config_entry_id": ctx.entry.entry_id},
-            blocking=True, return_response=True,
+            blocking=True, return_response=True, context=await admin_context(hass),
         )
     assert response == {"report": report, "plan": plan}
     assert hass.services.supports_response(DOMAIN, "onboarding_plan") is SupportsResponse.ONLY
