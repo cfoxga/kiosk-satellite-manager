@@ -16,9 +16,11 @@ live-extracted call shapes.
 """
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 
 from custom_components.kiosk_satellite_manager.adb_client import PmInstallFailed
@@ -28,11 +30,14 @@ from custom_components.kiosk_satellite_manager.install_recipes import get_recipe
 from custom_components.kiosk_satellite_manager.install import (
     KsInstallVerificationFailed,
     PermissionConvergenceResult,
+    _verify_health,
+    _wait_for_setup_status,
     converge_permissions,
     install_and_launch,
     verify_functional_capabilities,
 )
 from custom_components.kiosk_satellite_manager.credentials import TokenCredential
+from custom_components.kiosk_satellite_manager.const import SYNC_STATUS_POLL_ATTEMPTS
 from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
 from homeassistant.auth.const import GROUP_ID_READ_ONLY
 
@@ -674,6 +679,69 @@ async def test_install_and_launch_does_not_repair_signature_mismatch_on_fresh_de
 
     client.uninstall_ks.assert_not_called()
     assert client.install_apk.await_count == 1
+
+
+async def test_install_uses_sdk_29_fallback_when_the_sdk_probe_fails():
+    """[KSM-TEST-113] A failed SDK probe takes the documented safe fallback."""
+    hass = _FakeHass()
+    client = _fake_client()
+    client.getprop = AsyncMock(side_effect=["arm64-v8a", OSError("probe failed")])
+    session = _fake_session()
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ):
+        await install_and_launch(hass, client, session, device_model="portal_go")
+
+    shell_calls = [call.args[0] for call in client.shell.await_args_list]
+    assert "pm grant me.jxl.kiosk_satellite android.permission.WRITE_EXTERNAL_STORAGE" in shell_calls
+    assert "pm grant me.jxl.kiosk_satellite android.permission.BLUETOOTH_SCAN" not in shell_calls
+
+
+async def test_health_poll_retries_transport_failure_then_returns_on_matching_readback(monkeypatch):
+    """[KSM-TEST-114] Health retries only after a transport failure."""
+    fetch = AsyncMock(side_effect=[aiohttp.ClientConnectionError("refused"), {"appVersion": _TARGET_VERSION}])
+    sleep = AsyncMock()
+    monkeypatch.setattr("custom_components.kiosk_satellite_manager.install.fetch_health", fetch)
+    monkeypatch.setattr("custom_components.kiosk_satellite_manager.install.asyncio.sleep", sleep)
+
+    await _verify_health(MagicMock(), "192.168.1.50", _TARGET_VERSION)
+
+    assert fetch.await_count == 2
+    sleep.assert_awaited_once()
+
+
+async def test_health_poll_reports_the_last_failed_readback(monkeypatch):
+    """[KSM-TEST-114] A reachable but wrong app version cannot pass health verification."""
+    fetch = AsyncMock(return_value={"appVersion": "stale"})
+    sleep = AsyncMock()
+    monkeypatch.setattr("custom_components.kiosk_satellite_manager.install.fetch_health", fetch)
+    monkeypatch.setattr("custom_components.kiosk_satellite_manager.install.asyncio.sleep", sleep)
+
+    with pytest.raises(KsInstallVerificationFailed, match="appVersion='stale'"):
+        await _verify_health(MagicMock(), "192.168.1.50", _TARGET_VERSION)
+
+    assert fetch.await_count == SYNC_STATUS_POLL_ATTEMPTS
+    assert sleep.await_count == SYNC_STATUS_POLL_ATTEMPTS - 1
+
+
+async def test_setup_status_poll_retries_and_exhaustion_is_actionable(monkeypatch):
+    """[KSM-TEST-115] Setup-status sync is bounded for both recovery and failure."""
+    sleep = AsyncMock()
+    status = AsyncMock(side_effect=[asyncio.TimeoutError(), {"passwordNeeded": False}])
+    monkeypatch.setattr("custom_components.kiosk_satellite_manager.install.ks_api_client.get_setup_status", status)
+    monkeypatch.setattr("custom_components.kiosk_satellite_manager.install.asyncio.sleep", sleep)
+
+    assert await _wait_for_setup_status(MagicMock(), "192.168.1.50") == {"passwordNeeded": False}
+    assert status.await_count == 2
+    sleep.assert_awaited_once()
+
+    status.reset_mock(side_effect=True)
+    status.side_effect = aiohttp.ClientConnectionError("refused")
+    with pytest.raises(KsApiError, match="never became reachable: refused"):
+        await _wait_for_setup_status(MagicMock(), "192.168.1.50")
+    assert status.await_count == SYNC_STATUS_POLL_ATTEMPTS
 
 
 async def test_install_and_launch_raises_when_installed_version_mismatches_after_install():

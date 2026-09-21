@@ -161,6 +161,48 @@ async def test_connect_loads_signer_off_the_event_loop(tmp_path):
     to_thread.assert_awaited_once_with(signer_cls, key_path)
 
 
+async def test_connect_reuses_the_existing_signer_and_delegates_close(tmp_path):
+    """[KSM-TEST-116] Reconnects keep one signer and close the ADB transport."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    signer = object()
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch(
+        "custom_components.kiosk_satellite_manager.adb_client.CryptographySigner"
+    ) as signer_cls, patch(
+        "custom_components.kiosk_satellite_manager.adb_client.asyncio.to_thread",
+        new=AsyncMock(return_value=signer),
+    ) as to_thread, patch.object(client._device, "connect", new=AsyncMock()) as connect, patch.object(
+        client._device, "close", new=AsyncMock()
+    ) as close:
+        await client.connect()
+        await client.connect()
+        await client.close()
+
+    to_thread.assert_awaited_once_with(signer_cls, key_path)
+    assert connect.await_count == 2
+    close.assert_awaited_once()
+
+
+async def test_push_and_bluetooth_readback_use_the_device_transport(tmp_path):
+    """[KSM-TEST-117] Bluetooth uses its documented command and exact on value."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(client._device, "push", new=AsyncMock()) as push, patch.object(
+        client._device, "shell", new=AsyncMock(side_effect=[" 1\n", "0\n", "unexpected\n"])
+    ) as shell:
+        await client.push("/tmp/ks.apk", "/data/local/tmp/ks.apk")
+        assert await client.bluetooth_enabled() is True
+        assert await client.bluetooth_enabled() is False
+        assert await client.bluetooth_enabled() is False
+
+    push.assert_awaited_once_with("/tmp/ks.apk", "/data/local/tmp/ks.apk")
+    assert [item.args[0] for item in shell.await_args_list] == [
+        "settings get global bluetooth_on",
+        "settings get global bluetooth_on",
+        "settings get global bluetooth_on",
+    ]
+
+
 async def test_connect_raises_auth_pending_on_device_auth_error(tmp_path):
     key_path = ensure_adb_key(str(tmp_path / "keys"))
     client = AdbClient("1.2.3.4", 5555, key_path)
