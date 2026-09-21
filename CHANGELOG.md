@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Stop KSM from sending a kiosk password, device token, or Home Assistant
+  credential to Kiosk Satellite's HTTP-only management service. These
+  credential-bearing calls now fail closed until the device offers verified
+  HTTPS; unauthenticated status and health checks remain available.
 - Fix KSM-owned Home Assistant credential cleanup on current Home Assistant:
   refresh-token removal is synchronous and no longer raises during entry
   removal.

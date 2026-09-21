@@ -21,6 +21,8 @@ guessed:
 """
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 import aiohttp
 
 from .const import HEALTH_PORT, HEALTH_TIMEOUT_S
@@ -32,6 +34,31 @@ class KsApiError(Exception):
 
 def _base_url(host: str) -> str:
     return f"http://{host}:{HEALTH_PORT}"
+
+
+def _credential_url(host: str, path: str) -> str:
+    """Return a verified HTTPS endpoint for a credential-bearing request.
+
+    The released Kiosk Satellite management server is HTTP-only, so this
+    deliberately rejects every current authenticated API call *before* a
+    connection is opened. The explicit origin check prevents a future base-url
+    override from silently sending credentials to a different device.
+    """
+    base = urlsplit(_base_url(host))
+    expected_host = host.strip("[]").lower()
+    if (
+        base.scheme != "https"
+        or base.hostname != expected_host
+        or base.port != HEALTH_PORT
+        or base.path not in ("", "/")
+        or base.query
+        or base.fragment
+    ):
+        raise KsApiError(
+            "credential-bearing Kiosk Satellite API calls require verified HTTPS "
+            "to the configured device; refusing insecure management transport"
+        )
+    return f"{base.scheme}://{base.netloc}{path}"
 
 
 async def get_setup_status(session: aiohttp.ClientSession, host: str) -> dict:
@@ -49,8 +76,10 @@ async def setup_password(
     """First-run only (passwordNeeded is true): sets the admin password and
     Device Name together, returns the auth token."""
     async with session.post(
-        f"{_base_url(host)}/api/setup/password",
+        _credential_url(host, "/api/setup/password"),
         json={"password": password, "deviceName": device_name},
+        allow_redirects=False,
+        ssl=True,
         timeout=aiohttp.ClientTimeout(total=HEALTH_TIMEOUT_S),
     ) as resp:
         data = await resp.json()
@@ -61,8 +90,10 @@ async def setup_password(
 
 async def login(session: aiohttp.ClientSession, host: str, password: str) -> str:
     async with session.post(
-        f"{_base_url(host)}/api/login",
+        _credential_url(host, "/api/login"),
         json={"password": password},
+        allow_redirects=False,
+        ssl=True,
         timeout=aiohttp.ClientTimeout(total=HEALTH_TIMEOUT_S),
     ) as resp:
         data = await resp.json()
@@ -75,9 +106,11 @@ async def patch_settings(
     session: aiohttp.ClientSession, host: str, token: str, values: dict
 ) -> dict:
     async with session.patch(
-        f"{_base_url(host)}/api/settings",
+        _credential_url(host, "/api/settings"),
         json=values,
         headers={"Authorization": f"Bearer {token}"},
+        allow_redirects=False,
+        ssl=True,
         timeout=aiohttp.ClientTimeout(total=HEALTH_TIMEOUT_S),
     ) as resp:
         data = await resp.json()
@@ -91,9 +124,11 @@ async def patch_settings(
 
 async def check_ha_connection(session: aiohttp.ClientSession, host: str, token: str) -> bool:
     async with session.post(
-        f"{_base_url(host)}/api/commands/haCheckConnection",
+        _credential_url(host, "/api/commands/haCheckConnection"),
         data="{}",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        allow_redirects=False,
+        ssl=True,
         timeout=aiohttp.ClientTimeout(total=HEALTH_TIMEOUT_S),
     ) as resp:
         data = await resp.json()
