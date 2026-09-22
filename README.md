@@ -29,10 +29,10 @@ remotely — do them once per device, in order:
 - **Provision** — the `kiosk_satellite_manager.provision` service applies a settings payload (device
   name, Home Assistant URL, dashboard, kiosk lockdown, etc.) in a single ADB intent and reads back
   `/api/health` to confirm the change actually took, rather than trusting `adb shell`'s exit code.
-- **Credential safety** — KSM will not send Kiosk Satellite's admin password, a device bearer token,
-  or a Home Assistant credential to the app's HTTP-only management service. Until Kiosk Satellite
-  offers verified HTTPS, automatic device-name and Home Assistant credential sync is intentionally
-  unavailable; installation, launcher selection, and unauthenticated health checks still work.
+- **Credential transport** — KSM sends the device password and HA token to KS's HTTP-only
+  management API on the configured device and refuses redirects. Anyone who can observe that
+  network traffic can read those credentials. Automatic device-name and HA connection sync works
+  with the released KS app; use a trusted management network until KS offers HTTPS.
 - **Capability report** — the `kiosk_satellite_manager.capability_report` response service gathers a
   versioned, read-only evidence bundle for an unfamiliar Android device. It returns parsed platform,
   management, and Kiosk Satellite facts plus explicit probe status; it never returns raw shell output,

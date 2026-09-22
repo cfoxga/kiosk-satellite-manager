@@ -33,12 +33,6 @@ def _fake_session(**method_returns):
     return session
 
 
-@pytest.fixture
-def verified_https(monkeypatch):
-    """Make mock-only credential tests exercise the future secure branch."""
-    monkeypatch.setattr(ks_api_client, "_base_url", lambda host: f"https://{host}:2324")
-
-
 async def test_get_setup_status_gets_unauthenticated_status_url():
     resp_cm = _fake_response({"setupNeeded": True, "passwordNeeded": True})
     session = _fake_session(get=resp_cm)
@@ -78,27 +72,43 @@ async def test_get_setup_status_bounds_a_malformed_http_response(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "operation",
+    "operation, expected_secret",
     [
-        lambda session, host: ks_api_client.setup_password(
-            session, host, "synthetic-password", "Kitchen"
+        (
+            lambda session, host: ks_api_client.setup_password(
+                session, host, "synthetic-password", "Kitchen"
+            ),
+            b"synthetic-password",
         ),
-        lambda session, host: ks_api_client.login(session, host, "synthetic-password"),
-        lambda session, host: ks_api_client.patch_settings(
-            session, host, "synthetic-device-token", {"ha.token": "synthetic-ha-token"}
+        (lambda session, host: ks_api_client.login(session, host, "synthetic-password"), b"synthetic-password"),
+        (
+            lambda session, host: ks_api_client.patch_settings(
+                session, host, "synthetic-device-token", {"ha.token": "synthetic-ha-token"}
+            ),
+            b"synthetic-ha-token",
         ),
-        lambda session, host: ks_api_client.check_ha_connection(
-            session, host, "synthetic-device-token"
+        (
+            lambda session, host: ks_api_client.check_ha_connection(
+                session, host, "synthetic-device-token"
+            ),
+            b"synthetic-device-token",
         ),
     ],
 )
-async def test_credential_operations_fail_closed_before_http_capture(monkeypatch, operation):
-    """[KSM-TEST-118] No credential-bearing call may reach HTTP."""
+async def test_credential_operations_reach_configured_http_device(monkeypatch, operation, expected_secret):
+    """[KSM-TEST-126] KS HTTP compatibility sends each operation to its configured host."""
     requests_received = asyncio.Event()
+    captured = []
 
     async def capture_server(reader, writer):
+        headers = await reader.readuntil(b"\r\n\r\n")
+        length = 0
+        for line in headers.split(b"\r\n"):
+            if line.lower().startswith(b"content-length:"):
+                length = int(line.split(b":", 1)[1])
+        body = await reader.readexactly(length) if length else b""
+        captured.append((headers, body))
         requests_received.set()
-        await reader.readuntil(b"\r\n\r\n")
         body = b'{"token":"device-token","rejected":[],"ok":true}'
         writer.write(
             b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n'
@@ -111,20 +121,21 @@ async def test_credential_operations_fail_closed_before_http_capture(monkeypatch
 
     server = await asyncio.start_server(capture_server, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
-    monkeypatch.setattr(ks_api_client, "_base_url", lambda _host: f"http://127.0.0.1:{port}")
+    monkeypatch.setattr(ks_api_client, "HEALTH_PORT", port)
     try:
         async with aiohttp.ClientSession() as session:
-            with pytest.raises(KsApiError, match="verified HTTPS"):
-                await operation(session, "captured-device")
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(requests_received.wait(), timeout=0.1)
+            await operation(session, "127.0.0.1")
+        await asyncio.wait_for(requests_received.wait(), timeout=1)
+        assert len(captured) == 1
+        assert b"Host: 127.0.0.1:" in captured[0][0]
+        assert expected_secret in captured[0][0] + captured[0][1]
     finally:
         server.close()
         await server.wait_closed()
 
 
 async def test_status_request_remains_available_to_http_capture(monkeypatch):
-    """[KSM-TEST-119] HTTP stays limited to unauthenticated status reads."""
+    """[KSM-TEST-126] Unauthenticated status remains reachable over HTTP."""
     received = asyncio.Event()
 
     async def status_server(reader, writer):
@@ -156,46 +167,106 @@ async def test_status_request_remains_available_to_http_capture(monkeypatch):
         await server.wait_closed()
 
 
-async def test_credential_operation_rejects_a_different_https_origin(monkeypatch):
-    """[KSM-TEST-119] TLS alone cannot substitute a different device identity."""
+async def test_credential_operation_rejects_a_different_http_origin(monkeypatch):
+    """[KSM-TEST-127] A base URL override cannot send a secret to another host."""
     monkeypatch.setattr(
-        ks_api_client, "_base_url", lambda _host: "https://other-device.invalid:2324"
+        ks_api_client, "_base_url", lambda _host: "http://other-device.invalid:2324"
     )
     session = _fake_session(post=_fake_response({"token": "unused"}))
 
-    with pytest.raises(KsApiError, match="verified HTTPS"):
+    with pytest.raises(KsApiError, match="configured device"):
         await ks_api_client.login(session, "configured-device.invalid", "synthetic-password")
 
     session.post.assert_not_called()
 
 
-async def test_setup_password_posts_password_and_device_name_returns_token(verified_https):
+async def test_credential_operation_rejects_a_different_port(monkeypatch):
+    """[KSM-TEST-127] Host equality cannot hide a substituted port."""
+    monkeypatch.setattr(ks_api_client, "_base_url", lambda _host: "http://127.0.0.1:8080")
+    session = _fake_session(post=_fake_response({"token": "unused"}))
+
+    with pytest.raises(KsApiError, match="configured device"):
+        await ks_api_client.login(session, "127.0.0.1", "synthetic-password")
+
+    session.post.assert_not_called()
+
+
+async def test_credential_operation_rejects_a_different_scheme(monkeypatch):
+    """[KSM-TEST-127] The allowed origin includes the current HTTP scheme."""
+    monkeypatch.setattr(ks_api_client, "_base_url", lambda _host: "https://127.0.0.1:2324")
+    session = _fake_session(post=_fake_response({"token": "unused"}))
+
+    with pytest.raises(KsApiError, match="configured device"):
+        await ks_api_client.login(session, "127.0.0.1", "synthetic-password")
+
+    session.post.assert_not_called()
+
+
+async def test_credential_redirect_does_not_forward_password(monkeypatch):
+    """[KSM-TEST-128] A real 307 cannot deliver the password to another origin."""
+    forwarded = asyncio.Event()
+
+    async def destination(reader, writer):
+        forwarded.set()
+        writer.close()
+        await writer.wait_closed()
+
+    destination_server = await asyncio.start_server(destination, "127.0.0.1", 0)
+    destination_port = destination_server.sockets[0].getsockname()[1]
+
+    async def redirect(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        response = (
+            "HTTP/1.1 307 Temporary Redirect\r\n"
+            f"Location: http://127.0.0.1:{destination_port}/stolen\r\n"
+            "Content-Length: 0\r\n\r\n"
+        )
+        writer.write(response.encode())
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    redirect_server = await asyncio.start_server(redirect, "127.0.0.1", 0)
+    monkeypatch.setattr(ks_api_client, "HEALTH_PORT", redirect_server.sockets[0].getsockname()[1])
+    try:
+        async with aiohttp.ClientSession() as session:
+            with pytest.raises(aiohttp.ContentTypeError):
+                await ks_api_client.login(session, "127.0.0.1", "synthetic-password")
+        assert not forwarded.is_set()
+    finally:
+        redirect_server.close()
+        destination_server.close()
+        await redirect_server.wait_closed()
+        await destination_server.wait_closed()
+
+
+async def test_setup_password_posts_password_and_device_name_returns_token():
     session = _fake_session(post=_fake_response({"token": "tok-123"}))
     token = await ks_api_client.setup_password(session, "192.168.1.50", "hunter22", "Kitchen")
     assert token == "tok-123"
     _, kwargs = session.post.call_args
     assert kwargs["json"] == {"password": "hunter22", "deviceName": "Kitchen"}
     assert kwargs["allow_redirects"] is False
-    assert kwargs["ssl"] is True
+    assert session.post.call_args.args[0] == "http://192.168.1.50:2324/api/setup/password"
 
 
-async def test_setup_password_raises_ksapierror_on_rejection(verified_https):
+async def test_setup_password_raises_ksapierror_on_rejection():
     session = _fake_session(post=_fake_response({"error": "already set"}, ok=False, status=403))
     with pytest.raises(KsApiError, match="already set"):
         await ks_api_client.setup_password(session, "192.168.1.50", "hunter22", "Kitchen")
 
 
-async def test_login_posts_password_returns_token(verified_https):
+async def test_login_posts_password_returns_token():
     session = _fake_session(post=_fake_response({"token": "tok-456"}))
     token = await ks_api_client.login(session, "192.168.1.50", "hunter22")
     assert token == "tok-456"
     _, kwargs = session.post.call_args
     assert kwargs["json"] == {"password": "hunter22"}
     assert kwargs["allow_redirects"] is False
-    assert kwargs["ssl"] is True
+    assert session.post.call_args.args[0] == "http://192.168.1.50:2324/api/login"
 
 
-async def test_login_and_settings_rejections_fall_back_to_http_status(verified_https):
+async def test_login_and_settings_rejections_fall_back_to_http_status():
     """[KSM-TEST-010] Empty device errors remain actionable and bounded."""
     login_session = _fake_session(post=_fake_response({}, ok=False, status=401))
     with pytest.raises(KsApiError, match="HTTP 401"):
@@ -208,7 +279,7 @@ async def test_login_and_settings_rejections_fall_back_to_http_status(verified_h
         )
 
 
-async def test_patch_settings_sends_bearer_token_and_values(verified_https):
+async def test_patch_settings_sends_bearer_token_and_values():
     session = _fake_session(patch=_fake_response({"rejected": []}))
     await ks_api_client.patch_settings(
         session, "192.168.1.50", "tok-789", {"device.name": "Kitchen"}
@@ -217,10 +288,10 @@ async def test_patch_settings_sends_bearer_token_and_values(verified_https):
     assert kwargs["json"] == {"device.name": "Kitchen"}
     assert kwargs["headers"]["Authorization"] == "Bearer tok-789"
     assert kwargs["allow_redirects"] is False
-    assert kwargs["ssl"] is True
+    assert session.patch.call_args.args[0] == "http://192.168.1.50:2324/api/settings"
 
 
-async def test_patch_settings_raises_when_key_rejected(verified_https):
+async def test_patch_settings_raises_when_key_rejected():
     session = _fake_session(patch=_fake_response({"rejected": ["ha.url"]}))
     with pytest.raises(KsApiError, match="ha.url"):
         await ks_api_client.patch_settings(
@@ -228,17 +299,17 @@ async def test_patch_settings_raises_when_key_rejected(verified_https):
         )
 
 
-async def test_check_ha_connection_returns_ok_flag(verified_https):
+async def test_check_ha_connection_returns_ok_flag():
     session = _fake_session(post=_fake_response({"ok": True}))
     assert await ks_api_client.check_ha_connection(session, "192.168.1.50", "tok-789") is True
     _, kwargs = session.post.call_args
     assert kwargs["allow_redirects"] is False
-    assert kwargs["ssl"] is True
+    assert session.post.call_args.args[0] == "http://192.168.1.50:2324/api/commands/haCheckConnection"
 
 
-async def test_check_ha_connection_false_on_failure(verified_https):
+async def test_check_ha_connection_false_on_failure():
     session = _fake_session(post=_fake_response({"ok": False, "error": "unreachable"}))
     assert await ks_api_client.check_ha_connection(session, "192.168.1.50", "tok-789") is False
     _, kwargs = session.post.call_args
     assert kwargs["allow_redirects"] is False
-    assert kwargs["ssl"] is True
+    assert session.post.call_args.args[0] == "http://192.168.1.50:2324/api/commands/haCheckConnection"

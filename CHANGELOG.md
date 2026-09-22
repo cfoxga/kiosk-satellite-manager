@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Restore automatic device-name and Home Assistant setup with released Kiosk Satellite's
+  HTTP-only management API. Credential requests stay on the configured device and never
+  follow redirects. The management network can observe the password and tokens.
+
 - Decouple default-launcher selection from Kiosk Satellite's HTTP management API. Launcher-capable
   installs now enable the fixed Home alias over ADB, select it through Android's package manager,
   and fail unless the HOME resolver reads back Kiosk Satellite; no password or token is sent. Portal

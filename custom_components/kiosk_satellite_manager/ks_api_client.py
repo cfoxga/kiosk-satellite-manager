@@ -37,27 +37,23 @@ def _base_url(host: str) -> str:
 
 
 def _credential_url(host: str, path: str) -> str:
-    """Return a verified HTTPS endpoint for a credential-bearing request.
+    """Bind credential requests to this device's management origin.
 
-    The released Kiosk Satellite management server is HTTP-only, so this
-    deliberately rejects every current authenticated API call *before* a
-    connection is opened. The explicit origin check prevents a future base-url
-    override from silently sending credentials to a different device.
+    KS currently serves management only over HTTP. This operator-approved
+    compatibility path is restricted to the configured host and fixed port;
+    callers also disable redirects so credentials cannot be forwarded onward.
     """
     base = urlsplit(_base_url(host))
     expected_host = host.strip("[]").lower()
     if (
-        base.scheme != "https"
+        base.scheme != "http"
         or base.hostname != expected_host
         or base.port != HEALTH_PORT
         or base.path not in ("", "/")
         or base.query
         or base.fragment
     ):
-        raise KsApiError(
-            "credential-bearing Kiosk Satellite API calls require verified HTTPS "
-            "to the configured device; refusing insecure management transport"
-        )
+        raise KsApiError("credential request must target the configured device and management port")
     return f"{base.scheme}://{base.netloc}{path}"
 
 
