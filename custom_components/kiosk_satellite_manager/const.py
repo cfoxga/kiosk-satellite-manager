@@ -27,6 +27,8 @@ CONF_HA_REFRESH_TOKEN_ID: Final = "ha_refresh_token_id"
 CONF_HA_TOKEN_OWNED: Final = "ha_token_owned"
 CONF_REUSE_ENTRY_ID: Final = "reuse_entry_id"
 CONF_HOME_LAUNCHER: Final = "home_launcher"
+# KSM-BEHAVE-073: per-entry opt-in, stored in entry.options, default off.
+CONF_AUTO_UPDATE: Final = "auto_update"
 
 # KSM-BEHAVE-021: an already-installed device is detected during the flow and
 # the user chooses whether to keep the existing install or replace it.
@@ -45,7 +47,13 @@ KS_HOME_ACTIVITY: Final = f"{KS_PACKAGE}/.HomeAlias"
 KS_APK_REMOTE_PATH: Final = "/data/local/tmp/kiosk-satellite.apk"
 KS_GITHUB_REPO: Final = "jxlarrea/kiosk-satellite"
 
-PLATFORMS: Final = ["button", "sensor"]
+PLATFORMS: Final = ["button", "sensor", "switch", "update"]
+
+# KSM-BEHAVE-071: one release check per HA instance, kept beside (not inside)
+# hass.data[DOMAIN], which maps entry_id -> health coordinator and is emptied
+# to decide when the last entry has unloaded.
+RELEASE_COORDINATOR_KEY: Final = f"{DOMAIN}_release"
+RELEASE_CHECK_INTERVAL_MIN: Final = 60
 
 # KSM-BEHAVE-018: Allow up to 120s (24 * 5s) for the user to tap "Allow USB debugging?"
 # on a new or factory-reset device screen during the initial pairing attempt.

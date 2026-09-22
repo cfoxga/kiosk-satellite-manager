@@ -26,6 +26,12 @@ remotely — do them once per device, in order:
   and installs it. A `button` entity (Install/Reinstall) and a `sensor` entity (installed KS version)
   are provided per device. On launcher-capable devices, the same ADB-only path enables Kiosk
   Satellite's fixed Home alias and verifies Android's HOME resolver selected it.
+- **Update** — each device gets an `update` entity that compares the installed KS version with the
+  latest GitHub release. The release check runs once an hour for all devices, or on demand with
+  `homeassistant.update_entity`. Installing from it runs the same verified path as the Install
+  button. Updates show up in Home Assistant's Settings → Updates without ESPHome. A per-device
+  `Auto-update Kiosk Satellite` switch (off by default) installs new releases automatically. It
+  never installs a version you skipped, and it tries each version only once.
 - **Provision** — the `kiosk_satellite_manager.provision` service applies a settings payload (device
   name, Home Assistant URL, dashboard, kiosk lockdown, etc.) in a single ADB intent and reads back
   `/api/health` to confirm the change actually took, rather than trusting `adb shell`'s exit code.

@@ -16,6 +16,7 @@ import logging
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -56,6 +57,71 @@ async def async_setup_entry(
     )
 
 
+async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Install/upgrade Kiosk Satellite on one entry's device.
+
+    The single entry-level install sequence: the Install button, the update
+    entity's Install, and opt-in auto-update (KSM-BEHAVE-072/073) all run
+    this, so an upgrade has exactly the button's postconditions.
+
+    KSM-BEHAVE-072: refuses while this entry already has an install running
+    -- two concurrent ADB installs on one device is never intended, and
+    auto-update makes an overlap with a manual press plausible.
+    """
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator is not None and coordinator.ksm_installing:
+        raise HomeAssistantError(
+            f"Kiosk Satellite install already in progress on {entry.title}"
+        )
+    session = async_get_clientsession(hass)
+    client = AdbClient(
+        entry.data[CONF_HOST],
+        entry.data[CONF_PORT],
+        entry.data[CONF_KEY_PATH],
+    )
+    if coordinator is not None:
+        coordinator.ksm_installing = True
+        coordinator.async_update_listeners()
+    try:
+        await client.connect()
+        try:
+            credential = TokenCredential.from_entry_data(entry.data)
+            rotate_managed_credential = entry.data.get(CONF_TOKEN_MODE) == TOKEN_MODE_AUTO
+            used_token = await install_and_launch(
+                hass,
+                client,
+                session,
+                host=entry.data[CONF_HOST],
+                device_name=entry.data.get(CONF_NAME, entry.title),
+                password=entry.data.get(CONF_PASSWORD),
+                # Auto-created credentials are KSM-managed: a recovery
+                # press proves the replacement on-device before the helper
+                # revokes the previous owned token. Selected credentials
+                # are never replaced or revoked.
+                ha_token=None if rotate_managed_credential else (credential.access_token if credential else None),
+                token_credential=None if rotate_managed_credential else credential,
+                home_launcher=entry.data.get(CONF_HOME_LAUNCHER, True),
+                device_model=entry.data.get(CONF_DEVICE_PROFILE),
+            )
+
+            if used_token and (rotate_managed_credential or not entry.data.get(CONF_HA_TOKEN)):
+                await async_replace_entry_credential(hass, entry, used_token)
+        finally:
+            await client.close()
+
+        if coordinator is not None:
+            for attempt in range(INSTALL_LAUNCH_POLL_ATTEMPTS):
+                await coordinator.async_request_refresh()
+                if coordinator.last_update_success:
+                    break
+                if attempt < INSTALL_LAUNCH_POLL_ATTEMPTS - 1:
+                    await asyncio.sleep(INSTALL_LAUNCH_POLL_DELAY_S)
+    finally:
+        if coordinator is not None:
+            coordinator.ksm_installing = False
+            coordinator.async_update_listeners()
+
+
 class KioskSatelliteInstallButton(ButtonEntity):
     """Installs or reinstalls the Kiosk Satellite APK on the device."""
 
@@ -73,56 +139,7 @@ class KioskSatelliteInstallButton(ButtonEntity):
         )
 
     async def async_press(self) -> None:
-        session = async_get_clientsession(self.hass)
-        client = AdbClient(
-            self._entry.data[CONF_HOST],
-            self._entry.data[CONF_PORT],
-            self._entry.data[CONF_KEY_PATH],
-        )
-        coordinator = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
-        if coordinator is not None:
-            coordinator.ksm_installing = True
-            coordinator.async_update_listeners()
-        try:
-            await client.connect()
-            try:
-                credential = TokenCredential.from_entry_data(self._entry.data)
-                rotate_managed_credential = (
-                    self._entry.data.get(CONF_TOKEN_MODE) == TOKEN_MODE_AUTO
-                )
-                used_token = await install_and_launch(
-                    self.hass,
-                    client,
-                    session,
-                    host=self._entry.data[CONF_HOST],
-                    device_name=self._entry.data.get(CONF_NAME, self._entry.title),
-                    password=self._entry.data.get(CONF_PASSWORD),
-                    # Auto-created credentials are KSM-managed: a recovery
-                    # press proves the replacement on-device before the helper
-                    # revokes the previous owned token. Selected credentials
-                    # are never replaced or revoked.
-                    ha_token=None if rotate_managed_credential else (credential.access_token if credential else None),
-                    token_credential=None if rotate_managed_credential else credential,
-                    home_launcher=self._entry.data.get(CONF_HOME_LAUNCHER, True),
-                    device_model=self._entry.data.get(CONF_DEVICE_PROFILE),
-                )
-
-                if used_token and (rotate_managed_credential or not self._entry.data.get(CONF_HA_TOKEN)):
-                    await async_replace_entry_credential(self.hass, self._entry, used_token)
-            finally:
-                await client.close()
-
-            if coordinator is not None:
-                for attempt in range(INSTALL_LAUNCH_POLL_ATTEMPTS):
-                    await coordinator.async_request_refresh()
-                    if coordinator.last_update_success:
-                        break
-                    if attempt < INSTALL_LAUNCH_POLL_ATTEMPTS - 1:
-                        await asyncio.sleep(INSTALL_LAUNCH_POLL_DELAY_S)
-        finally:
-            if coordinator is not None:
-                coordinator.ksm_installing = False
-                coordinator.async_update_listeners()
+        await async_install_entry(self.hass, self._entry)
 
 
 class KioskSatelliteUninstallButton(ButtonEntity):

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add a Kiosk Satellite `update` entity per device. It checks GitHub releases hourly, shares one
+  check across all devices, and installs through the Install button's verified path, with
+  progress and release notes. Add an opt-in per-device auto-update switch. Installs on one
+  device no longer overlap: a second install is refused while one is running.
+
 - Restore automatic device-name and Home Assistant setup with released Kiosk Satellite's
   HTTP-only management API. Credential requests stay on the configured device and never
   follow redirects. The management network can observe the password and tokens.

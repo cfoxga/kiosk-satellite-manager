@@ -6,6 +6,7 @@ from custom_components.kiosk_satellite_manager.ks_api import (
     ApkAssetNotFound,
     latest_apk_url,
     latest_release,
+    latest_release_info,
     select_apk_asset,
 )
 from custom_components.kiosk_satellite_manager.const import KS_GITHUB_REPO
@@ -48,11 +49,13 @@ def test_all_split_assets_fall_back_to_the_first_publishable_apk():
     assert select_apk_asset(split_only, "mips") == "https://example.invalid/arm64-v8a.apk"
 
 
-def _release(assets, *, draft=False, prerelease=False, tag_name=None):
+def _release(assets, *, draft=False, prerelease=False, tag_name=None, html_url=None, body=None):
     return {
         "draft": draft,
         "prerelease": prerelease,
         "tag_name": tag_name,
+        "html_url": html_url,
+        "body": body,
         "assets": [
             {"name": name, "browser_download_url": url} for name, url in assets
         ],
@@ -148,3 +151,35 @@ async def test_latest_release_empty_tag_name_falls_back_to_empty_string():
     session = _FakeSession(_release(_ASSETS))
     _, tag_name = await latest_release(session, "arm64-v8a")
     assert tag_name == ""
+
+
+@pytest.mark.asyncio
+async def test_latest_release_info_returns_first_usable_release_metadata():
+    """[KSM-TEST-129] The update check reports the release install would pick,
+    skipping a prerelease and a release without an .apk asset."""
+    session = _FakeSession(
+        [
+            _release(_ASSETS, prerelease=True, tag_name="2026.9.80"),
+            _release([], tag_name="2026.9.79"),
+            _release(
+                _ASSETS,
+                tag_name="2026.9.78",
+                html_url="https://example.invalid/releases/2026.9.78",
+                body="- fixed things",
+            ),
+        ]
+    )
+    info = await latest_release_info(session)
+    assert info.version == "2026.9.78"
+    assert info.url == "https://example.invalid/releases/2026.9.78"
+    assert info.notes == "- fixed things"
+    assert session.calls[0][0] == _RELEASES_URL
+
+
+@pytest.mark.asyncio
+async def test_latest_release_info_raises_without_a_usable_release():
+    """[KSM-TEST-129] negative case: nothing publishable is an error, not a
+    blank version the update entity would treat as current."""
+    session = _FakeSession([_release([], tag_name="2026.9.79")])
+    with pytest.raises(ApkAssetNotFound):
+        await latest_release_info(session)

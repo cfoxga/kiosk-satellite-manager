@@ -9,12 +9,23 @@ falling back to the universal build for anything unmatched.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import aiohttp
 
 from .const import KS_GITHUB_REPO
 
 _RELEASES_URL = f"https://api.github.com/repos/{KS_GITHUB_REPO}/releases?per_page=10"
 _ABI_TOKENS = ("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+
+
+@dataclass(frozen=True)
+class ReleaseInfo:
+    """KSM-BEHAVE-071: what the update entity shows for the latest release."""
+
+    version: str
+    url: str | None
+    notes: str | None
 
 
 class ApkAssetNotFound(Exception):
@@ -36,7 +47,10 @@ def select_apk_asset(assets: list[tuple[str, str]], abi: str) -> str:
     raise ApkAssetNotFound("no .apk asset on the latest release")
 
 
-async def _latest_release_and_asset(session: aiohttp.ClientSession, abi: str) -> tuple[dict, str]:
+async def _latest_usable_release(session: aiohttp.ClientSession) -> tuple[dict, list[tuple[str, str]]]:
+    """The first non-draft, non-prerelease release with an .apk asset, and
+    those assets. Install and the update check (KSM-BEHAVE-071) both pick
+    through here, so the entity never advertises a release install would skip."""
     async with session.get(
         _RELEASES_URL,
         headers={"Accept": "application/vnd.github+json"},
@@ -54,8 +68,13 @@ async def _latest_release_and_asset(session: aiohttp.ClientSession, abi: str) ->
             if asset.get("name", "").endswith(".apk")
         ]
         if assets:
-            return release, select_apk_asset(assets, abi)
+            return release, assets
     raise ApkAssetNotFound(f"no .apk asset found in releases of {KS_GITHUB_REPO}")
+
+
+async def _latest_release_and_asset(session: aiohttp.ClientSession, abi: str) -> tuple[dict, str]:
+    release, assets = await _latest_usable_release(session)
+    return release, select_apk_asset(assets, abi)
 
 
 async def latest_apk_url(session: aiohttp.ClientSession, abi: str) -> str:
@@ -77,3 +96,14 @@ async def latest_release(session: aiohttp.ClientSession, abi: str) -> tuple[str,
     """
     release, url = await _latest_release_and_asset(session, abi)
     return url, release.get("tag_name") or ""
+
+
+async def latest_release_info(session: aiohttp.ClientSession) -> ReleaseInfo:
+    """KSM-BEHAVE-071: version, page URL and notes of the latest usable
+    release. ABI-independent -- one lookup serves every managed device."""
+    release, _ = await _latest_usable_release(session)
+    return ReleaseInfo(
+        version=release.get("tag_name") or "",
+        url=release.get("html_url"),
+        notes=release.get("body"),
+    )
