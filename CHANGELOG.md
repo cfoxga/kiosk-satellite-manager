@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add one Configure KSM entry for future-device defaults, a shared latest-release sensor,
+  and an Update all button. Review mode preselects global settings; automatic mode waits
+  for an ADB address, on-device authorization, and an action confirmation. Global edits
+  leave existing devices unchanged. Update all checks reachability and Home Assistant's
+  skipped-version choice, uses each device's verified install path, and reports outcomes.
+
 - Add a Kiosk Satellite `update` entity per device. It checks GitHub releases hourly, shares one
   check across all devices, and installs through the Install button's verified path, with
   progress and release notes. Add an opt-in per-device auto-update switch. Installs on one

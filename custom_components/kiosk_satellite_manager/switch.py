@@ -16,13 +16,15 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_AREA_ID, CONF_AUTO_UPDATE, DOMAIN
+from .const import CONF_AREA_ID, CONF_AUTO_UPDATE, CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_MANAGER
 from .helpers import resolve_area_name
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
+    if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
+        return
     async_add_entities([KioskSatelliteAutoUpdateSwitch(hass, entry)])
 
 

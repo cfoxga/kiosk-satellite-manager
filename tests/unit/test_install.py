@@ -663,7 +663,7 @@ async def test_portal_go_shell_sequence_excludes_verifier_disable():
 
 
 async def test_install_and_launch_reuses_provided_token_and_respects_launcher_flag():
-    """[KSM-TEST-096] Token reuse cannot bypass certificate validation."""
+    """[KSM-TEST-096/142] Reused token and selected HA URL reach the device."""
     hass = _FakeHass()
     client = _fake_client()
     session = _fake_session()
@@ -693,15 +693,16 @@ async def test_install_and_launch_reuses_provided_token_and_respects_launcher_fl
             password="hunter22",
             device_model="portal_go",
             ha_token="pre-existing-token",
+            ha_url="https://ha.example.test",
             home_launcher=False,
         )
 
     assert res == TokenCredential("pre-existing-token", None, owned=False)
     hass.auth.async_get_owner.assert_not_called()
     assert mock_api.patch_settings.await_args_list[0].args[3] == {
-        "ha.url": "http://192.168.1.2:8123",
+        "ha.url": "https://ha.example.test",
         "ha.token": "pre-existing-token",
-        "browser.start_url": "http://192.168.1.2:8123/portal",
+        "browser.start_url": "https://ha.example.test/portal",
         "browser.ignore_ssl_errors": False,
     }
 

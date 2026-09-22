@@ -30,7 +30,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .button import async_install_entry
-from .const import CONF_AREA_ID, CONF_AUTO_UPDATE, DOMAIN, RELEASE_COORDINATOR_KEY
+from .const import CONF_AREA_ID, CONF_AUTO_UPDATE, CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_MANAGER, RELEASE_COORDINATOR_KEY
 from .helpers import resolve_area_name
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,6 +39,8 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
+    if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
+        return
     async_add_entities(
         [
             KioskSatelliteUpdateEntity(

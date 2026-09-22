@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any
+from urllib.parse import urlsplit
 
 import voluptuous as vol
 from homeassistant import config_entries
@@ -41,12 +42,16 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
+from homeassistant.helpers.network import get_url
 
 from .adb_client import AdbAuthPending, AdbClient, AdbConnectFailed, ensure_adb_key
 from .const import (
     CONF_AREA_ID,
+    CONF_AUTO_UPDATE,
     CONF_DEVICE_PROFILE,
+    CONF_ENTRY_TYPE,
     CONF_EXISTING_INSTALL_ACTION,
+    CONF_HA_URL,
     CONF_HA_TOKEN,
     CONF_HOME_LAUNCHER,
     CONF_HOST,
@@ -54,11 +59,16 @@ from .const import (
     CONF_NAME,
     CONF_PASSWORD,
     CONF_PORT,
+    CONF_ONBOARDING_MODE,
     CONF_TOKEN_MODE,
     CONNECT_RETRY_ATTEMPTS,
     CONNECT_RETRY_DELAY_S,
     DEFAULT_ADB_PORT,
     DOMAIN,
+    ENTRY_TYPE_MANAGER,
+    MANAGER_UNIQUE_ID,
+    ONBOARDING_AUTOMATIC,
+    ONBOARDING_REVIEW,
     EXISTING_INSTALL_REINSTALL,
     EXISTING_INSTALL_REUSE,
     TOKEN_MODE_AUTO,
@@ -109,10 +119,90 @@ async def _collect_identity_facts(client) -> DeviceFacts:
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_HOST): str,
+        vol.Optional(CONF_ENTRY_TYPE, default="device"): selector.SelectSelector(
+            selector.SelectSelectorConfig(options=[
+                selector.SelectOptionDict(value="device", label="Add a device"),
+                selector.SelectOptionDict(value=ENTRY_TYPE_MANAGER, label="Configure KSM"),
+            ])
+        ),
+        vol.Optional(CONF_HOST): str,
         vol.Optional(CONF_PORT, default=DEFAULT_ADB_PORT): int,
     }
 )
+
+
+def _valid_ha_url(value: str) -> bool:
+    parsed = urlsplit(value)
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc) and not parsed.username
+
+
+def _manager_options(hass) -> dict:
+    """Snapshot manager defaults without coupling an existing device to it."""
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
+            return dict(entry.options)
+    return {}
+
+
+def _token_options(hass) -> list[selector.SelectOptionDict]:
+    options = [selector.SelectOptionDict(value=TOKEN_MODE_AUTO, label="<Auto-create new token>")]
+    for token in hass.auth._store.async_get_refresh_tokens():  # noqa: SLF001
+        if token.token_type == TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN:
+            options.append(selector.SelectOptionDict(
+                value=token.id, label=token.client_name or "Unnamed long-lived token"
+            ))
+    return options
+
+
+class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
+    """Global defaults for devices configured after this edit."""
+
+    def __init__(self, entry: config_entries.ConfigEntry) -> None:
+        self._entry = entry
+
+    async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
+        if self._entry.data.get(CONF_ENTRY_TYPE) != ENTRY_TYPE_MANAGER:
+            return self.async_abort(reason="not_manager")
+        saved = self._entry.options
+        errors = {}
+        if user_input is not None:
+            token_id = user_input.get(CONF_TOKEN_MODE, TOKEN_MODE_AUTO)
+            if token_id != TOKEN_MODE_AUTO:
+                token = self.hass.auth.async_get_refresh_token(token_id)
+                if token is None or token.token_type != TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN:
+                    errors[CONF_TOKEN_MODE] = "token_not_found"
+            if not _valid_ha_url(user_input[CONF_HA_URL]):
+                errors[CONF_HA_URL] = "invalid_ha_url"
+            if not errors:
+                options = {**saved, **user_input}
+                if not user_input.get(CONF_PASSWORD):
+                    options[CONF_PASSWORD] = saved.get(CONF_PASSWORD, "")
+                return self.async_create_entry(title="", data=options)
+        try:
+            default_url = get_url(self.hass, prefer_external=False)
+        except Exception:
+            default_url = ""
+        fields = {
+            vol.Required(CONF_EXISTING_INSTALL_ACTION, default=saved.get(
+                CONF_EXISTING_INSTALL_ACTION, EXISTING_INSTALL_REUSE
+            )): vol.In([EXISTING_INSTALL_REUSE, EXISTING_INSTALL_REINSTALL]),
+            vol.Required(CONF_HOME_LAUNCHER, default=saved.get(CONF_HOME_LAUNCHER, True)): bool,
+            vol.Required(CONF_AUTO_UPDATE, default=saved.get(CONF_AUTO_UPDATE, False)): bool,
+            vol.Optional(CONF_PASSWORD): selector.TextSelector(
+                selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+            ),
+            vol.Required(CONF_HA_URL, default=saved.get(CONF_HA_URL, default_url)): str,
+            vol.Required(CONF_TOKEN_MODE, default=saved.get(
+                CONF_TOKEN_MODE, TOKEN_MODE_AUTO
+            )): selector.SelectSelector(selector.SelectSelectorConfig(
+                options=_token_options(self.hass), custom_value=True,
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )),
+            vol.Required(CONF_ONBOARDING_MODE, default=saved.get(
+                CONF_ONBOARDING_MODE, ONBOARDING_REVIEW
+            )): vol.In([ONBOARDING_REVIEW, ONBOARDING_AUTOMATIC]),
+        }
+        return self.async_show_form(step_id="init", data_schema=vol.Schema(fields), errors=errors)
 
 
 class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -139,13 +229,33 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._ks_installed: bool = False
         self._existing_install_action: str | None = None
         self._install_task: asyncio.Task | None = None
+        self._global: dict | None = None
+        self._ha_url: str | None = None
+        self._auto_update: bool = False
+
+    @staticmethod
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry):
+        return KioskSatelliteManagerOptionsFlow(config_entry)
 
     async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
         """Collect host/port, connect over ADB, and detect the device."""
         errors: dict[str, str] = {}
+        if self._global is None:
+            self._global = _manager_options(self.hass)
         if user_input is not None:
+            if user_input.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
+                await self.async_set_unique_id(MANAGER_UNIQUE_ID)
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(
+                    title="Kiosk Satellite Manager", data={CONF_ENTRY_TYPE: ENTRY_TYPE_MANAGER}
+                )
+            if not user_input.get(CONF_HOST):
+                errors[CONF_HOST] = "host_required"
+                return self.async_show_form(
+                    step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+                )
             host = user_input[CONF_HOST]
-            port = user_input[CONF_PORT]
+            port = user_input.get(CONF_PORT, DEFAULT_ADB_PORT)
             await self.async_set_unique_id(host)
             self._abort_if_unique_id_configured()
 
@@ -222,7 +332,11 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 discovered_name if discovered_name and discovered_name != "null" else host
             )
             if self._ks_installed:
+                if self._global.get(CONF_ONBOARDING_MODE) == ONBOARDING_AUTOMATIC:
+                    return await self.async_step_confirm()
                 return await self.async_step_existing_install()
+            if self._global.get(CONF_ONBOARDING_MODE) == ONBOARDING_AUTOMATIC:
+                return await self.async_step_confirm()
             return await self.async_step_device_info()
 
 
@@ -230,36 +344,73 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
 
+    async def async_step_confirm(self, user_input: dict | None = None) -> FlowResult:
+        """Confirm the snapshot before automatic onboarding mutates a device."""
+        action = (
+            self._global.get(CONF_EXISTING_INSTALL_ACTION, EXISTING_INSTALL_REUSE)
+            if self._ks_installed else "install"
+        )
+        errors = {}
+        if user_input is not None:
+            if not self._global.get(CONF_PASSWORD):
+                errors["base"] = "password_required"
+            token_mode = self._global.get(CONF_TOKEN_MODE, TOKEN_MODE_AUTO)
+            credential = None
+            if token_mode != TOKEN_MODE_AUTO:
+                token = self.hass.auth.async_get_refresh_token(token_mode)
+                if token is None or token.token_type != TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN:
+                    errors["base"] = "token_not_found"
+                else:
+                    credential = TokenCredential(
+                        self.hass.auth.async_create_access_token(token), token.id, owned=False
+                    )
+            try:
+                require_recipe(self._profile_key)
+            except Exception:
+                errors["base"] = "unsupported_device"
+            ha_url = self._global.get(CONF_HA_URL)
+            if ha_url and not _valid_ha_url(ha_url):
+                errors["base"] = "invalid_ha_url"
+            if not errors:
+                self._name = self._discovered_name
+                self._password = self._global[CONF_PASSWORD]
+                self._home_launcher = bool(
+                    self._home_launcher_supported and self._global.get(CONF_HOME_LAUNCHER, True)
+                )
+                self._existing_install_action = action if self._ks_installed else None
+                self._token_mode = token_mode
+                self._credential = credential
+                self._ha_url = ha_url
+                self._auto_update = self._global.get(CONF_AUTO_UPDATE, False)
+                return await self.async_step_install()
+        return self.async_show_form(
+            step_id="confirm", data_schema=vol.Schema({}), errors=errors,
+            description_placeholders={
+                "device": self._discovered_name, "action": action,
+                "launcher": "yes" if self._home_launcher_supported and
+                    self._global.get(CONF_HOME_LAUNCHER, True) else "no",
+                "ha_url": self._global.get(CONF_HA_URL, "Home Assistant default"),
+            },
+        )
+
     async def async_step_device_info(self, user_input: dict | None = None) -> FlowResult:
         """Collect KSM settings after detection, excluding HA-owned naming."""
         errors: dict[str, str] = {}
-        token_mode_options = [
-            selector.SelectOptionDict(value=TOKEN_MODE_AUTO, label="<Auto-create new token>"),
-        ]
-        # HA does not expose a public listing API for long-lived access tokens.
-        # The auth store is the same source used by HA's profile token UI; only
-        # identifiers and labels are placed in the form, never token secrets.
-        long_lived_tokens = [
-            token
-            for token in self.hass.auth._store.async_get_refresh_tokens()  # noqa: SLF001
-            if token.token_type == TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
-        ]
-        for token in long_lived_tokens:
-            token_mode_options.append(
-                selector.SelectOptionDict(
-                    value=token.id,
-                    label=token.client_name or "Unnamed long-lived token",
-                )
-            )
+        token_mode_options = _token_options(self.hass)
 
         if user_input is not None:
-            password = user_input[CONF_PASSWORD]
+            password = user_input.get(CONF_PASSWORD) or self._global.get(CONF_PASSWORD, "")
             home_launcher = (
-                user_input.get(CONF_HOME_LAUNCHER, True)
+                user_input.get(CONF_HOME_LAUNCHER, self._global.get(CONF_HOME_LAUNCHER, True))
                 if self._home_launcher_supported
                 else False
             )
-            token_mode = user_input.get(CONF_TOKEN_MODE, TOKEN_MODE_AUTO)
+            token_mode = user_input.get(
+                CONF_TOKEN_MODE, self._global.get(CONF_TOKEN_MODE, TOKEN_MODE_AUTO)
+            )
+            ha_url = user_input.get(CONF_HA_URL) or self._global.get(CONF_HA_URL)
+            if ha_url and not _valid_ha_url(ha_url):
+                errors[CONF_HA_URL] = "invalid_ha_url"
             credential = None
 
             if token_mode != TOKEN_MODE_AUTO:
@@ -277,14 +428,18 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._home_launcher = home_launcher
                 self._token_mode = token_mode
                 self._credential = credential
+                self._ha_url = ha_url
+                self._auto_update = user_input.get(
+                    CONF_AUTO_UPDATE, self._global.get(CONF_AUTO_UPDATE, False)
+                )
                 return await self.async_step_install()
 
         fields: dict[vol.Marker, Any] = {
-            vol.Required(CONF_PASSWORD): selector.TextSelector(
+            vol.Required(CONF_PASSWORD, default=self._global.get(CONF_PASSWORD, vol.UNDEFINED)): selector.TextSelector(
                 selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
             ),
             vol.Required(
-                CONF_TOKEN_MODE, default=TOKEN_MODE_AUTO
+                CONF_TOKEN_MODE, default=self._global.get(CONF_TOKEN_MODE, TOKEN_MODE_AUTO)
             ): selector.SelectSelector(
                 selector.SelectSelectorConfig(
                     options=token_mode_options,
@@ -298,9 +453,12 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
         }
         if self._home_launcher_supported:
-            fields[vol.Required(CONF_HOME_LAUNCHER, default=True)] = (
+            fields[vol.Required(CONF_HOME_LAUNCHER, default=self._global.get(CONF_HOME_LAUNCHER, True))] = (
                 selector.BooleanSelector()
             )
+        if self._global:
+            fields[vol.Optional(CONF_HA_URL, default=self._global.get(CONF_HA_URL, ""))] = str
+            fields[vol.Required(CONF_AUTO_UPDATE, default=self._global.get(CONF_AUTO_UPDATE, False))] = bool
 
         return self.async_show_form(
             step_id="device_info",
@@ -328,7 +486,9 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(
                 {
                     vol.Required(
-                        CONF_EXISTING_INSTALL_ACTION, default=EXISTING_INSTALL_REUSE
+                        CONF_EXISTING_INSTALL_ACTION, default=self._global.get(
+                            CONF_EXISTING_INSTALL_ACTION, EXISTING_INSTALL_REUSE
+                        )
                     ): selector.SelectSelector(
                         selector.SelectSelectorConfig(
                             options=[
@@ -353,21 +513,56 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """KSM-BEHAVE-029: collect only KSM's connection details when the
         user keeps the installed application's own settings intact."""
+        errors = {}
         if user_input is not None:
+            token_mode = user_input.get(
+                CONF_TOKEN_MODE, self._global.get(CONF_TOKEN_MODE, TOKEN_MODE_AUTO)
+            )
+            credential = None
+            if token_mode != TOKEN_MODE_AUTO:
+                token = self.hass.auth.async_get_refresh_token(token_mode)
+                if token is None or token.token_type != TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN:
+                    errors[CONF_TOKEN_MODE] = "token_not_found"
+                else:
+                    credential = TokenCredential(
+                        self.hass.auth.async_create_access_token(token), token.id, owned=False
+                    )
+            if user_input.get(CONF_HA_URL) and not _valid_ha_url(user_input[CONF_HA_URL]):
+                errors[CONF_HA_URL] = "invalid_ha_url"
+        if user_input is not None and not errors:
             self._name = self._discovered_name
             self._area_id = None
-            self._password = user_input[CONF_PASSWORD]
+            self._password = user_input.get(CONF_PASSWORD) or self._global.get(CONF_PASSWORD, "")
+            self._ha_url = user_input.get(CONF_HA_URL) or self._global.get(CONF_HA_URL)
+            self._auto_update = user_input.get(
+                CONF_AUTO_UPDATE, self._global.get(CONF_AUTO_UPDATE, False)
+            )
+            self._token_mode = token_mode
+            self._credential = credential
+            self._home_launcher = bool(
+                self._home_launcher_supported and self._global.get(CONF_HOME_LAUNCHER, True)
+            )
             return await self.async_step_install()
 
+        fields = {
+            vol.Required(CONF_PASSWORD, default=self._global.get(CONF_PASSWORD, vol.UNDEFINED)):
+                selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                ),
+        }
+        if self._global:
+            fields[vol.Optional(CONF_HA_URL, default=self._global.get(CONF_HA_URL, ""))] = str
+            fields[vol.Required(CONF_AUTO_UPDATE, default=self._global.get(CONF_AUTO_UPDATE, False))] = bool
+            fields[vol.Required(CONF_TOKEN_MODE, default=self._global.get(CONF_TOKEN_MODE, TOKEN_MODE_AUTO))] = (
+                selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=_token_options(self.hass), custom_value=True,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                ))
+            )
         return self.async_show_form(
             step_id="existing_device_info",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_PASSWORD): selector.TextSelector(
-                        selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
-                    ),
-                }
-            ),
+            data_schema=vol.Schema(fields),
+            errors=errors,
             description_placeholders={"device_model": self._profile_name or "Android Device"},
         )
 
@@ -421,6 +616,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     token_credential=self._credential,
                     home_launcher=self._home_launcher,
                     device_model=self._profile_key,
+                    ha_url=self._ha_url,
                 )
                 if used_token:
                     self._credential = used_token
@@ -452,8 +648,9 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_NAME: self._name,
             CONF_AREA_ID: self._area_id,
             CONF_PASSWORD: self._password,
+            CONF_HA_URL: self._ha_url,
         }
-        if self._existing_install_action != EXISTING_INSTALL_REUSE:
+        if self._existing_install_action != EXISTING_INSTALL_REUSE or self._global:
             data.update(
                 {
                     CONF_HOME_LAUNCHER: self._home_launcher,
@@ -464,6 +661,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(
             title=self._name,
             data=data,
+            options={CONF_AUTO_UPDATE: self._auto_update},
         )
 
     def async_abort(self, *, reason: str, description_placeholders=None, next_flow=None) -> FlowResult:

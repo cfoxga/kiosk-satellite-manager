@@ -32,6 +32,18 @@ remotely — do them once per device, in order:
   button. Updates show up in Home Assistant's Settings → Updates without ESPHome. A per-device
   `Auto-update Kiosk Satellite` switch (off by default) installs new releases automatically. It
   never installs a version you skipped, and it tries each version only once.
+- **Global controls** — choose Configure KSM in the integration's Add flow to create one
+  manager entry. Its Configure form sets defaults for future devices: reuse or reinstall
+  an existing app, home launcher, auto-update, Kiosk Satellite password, Home Assistant
+  URL, and a dedicated device token or an existing token ID. The manager stores no token
+  value. Review mode lets you override defaults per device. Automatic mode still requires
+  an ADB address, on-device authorization, and a confirmation of the selected actions.
+  Changing manager settings does not rewrite existing device entries.
+- **Fleet release and updates** — the manager device exposes the latest usable Kiosk
+  Satellite release and check status, plus Update all. The button visits managed,
+  reachable devices with an unskipped newer version through the same verified install
+  path as each device's Install button. A notification names updated, skipped, and failed
+  devices. Current devices are skipped.
 - **Provision** — the `kiosk_satellite_manager.provision` service applies a settings payload (device
   name, Home Assistant URL, dashboard, kiosk lockdown, etc.) in a single ADB intent and reads back
   `/api/health` to confirm the change actually took, rather than trusting `adb shell`'s exit code.
@@ -57,8 +69,9 @@ only adds repositories hosted on GitHub. Install manually: copy
 `custom_components/kiosk_satellite_manager/` into your Home Assistant config's
 `custom_components/` directory, then restart Home Assistant.
 
-Then add the integration (Settings → Devices & Services → Add Integration → Kiosk Satellite Manager)
-per device, and complete the three manual steps above on each device before the config flow can
+Then add the integration (Settings → Devices & Services → Add Integration → Kiosk Satellite Manager).
+Choose Configure KSM once for global defaults and release controls, then add each device through
+the same Add Integration path. Complete the manual steps above on each device before its flow can
 connect.
 
 ## Development

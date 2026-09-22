@@ -26,7 +26,9 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_AREA_ID, DOMAIN
+from .const import (
+    CONF_AREA_ID, CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_MANAGER, RELEASE_COORDINATOR_KEY,
+)
 from .helpers import resolve_area_name
 
 _LOGGER = logging.getLogger(__name__)
@@ -35,6 +37,9 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
+    if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
+        async_add_entities([KioskSatelliteLatestReleaseSensor(hass, entry)])
+        return
     coordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities([KioskSatelliteVersionSensor(hass, coordinator, entry)])
 
@@ -66,3 +71,41 @@ class KioskSatelliteVersionSensor(CoordinatorEntity, SensorEntity):
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.get("appVersion")
+
+
+class KioskSatelliteLatestReleaseSensor(CoordinatorEntity, SensorEntity):
+    """KSM-wide release status, independent of any device's health."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Latest Kiosk Satellite release"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        super().__init__(hass.data[RELEASE_COORDINATOR_KEY])
+        self._attr_unique_id = f"{entry.entry_id}_latest_release"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)}, name=entry.title
+        )
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.data is not None
+
+    @property
+    def native_value(self) -> str | None:
+        return self.coordinator.data.version if self.coordinator.data else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        release = self.coordinator.data
+        return {
+            "release_url": release.url if release else None,
+            "notes": release.notes if release else None,
+            "last_successful_check": (
+                self.coordinator.ksm_last_success.isoformat()
+                if getattr(self.coordinator, "ksm_last_success", None) else None
+            ),
+            "check_status": "current" if self.coordinator.last_update_success else "stale",
+        }
+
+    async def async_update(self) -> None:
+        await self.coordinator.async_request_refresh()

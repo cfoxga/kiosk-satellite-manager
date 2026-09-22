@@ -27,7 +27,7 @@ duration of an install so the version sensor can show a transitional
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
@@ -44,6 +44,8 @@ from .device_catalog import validate_catalog
 from .onboarding_plan import build_onboarding_plan
 from .const import (
     CONF_HOST,
+    CONF_ENTRY_TYPE,
+    ENTRY_TYPE_MANAGER,
     CONF_KEY_PATH,
     CONF_PORT,
     DOMAIN,
@@ -51,6 +53,7 @@ from .const import (
     PLATFORMS,
     RELEASE_CHECK_INTERVAL_MIN,
     RELEASE_COORDINATOR_KEY,
+    MANAGER_ENTRY_KEY,
 )
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .ks_api import latest_release_info
@@ -157,7 +160,9 @@ async def _async_ensure_release_coordinator(hass: HomeAssistant) -> None:
 
     async def _update():
         try:
-            return await latest_release_info(session)
+            release = await latest_release_info(session)
+            coordinator.ksm_last_success = datetime.now(timezone.utc)
+            return release
         except Exception as err:  # network, HTTP status, no usable release
             raise UpdateFailed(f"Kiosk Satellite release check failed: {err}") from err
 
@@ -176,6 +181,12 @@ async def _async_ensure_release_coordinator(hass: HomeAssistant) -> None:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up a config entry: start the health-poll coordinator, then the
     button/sensor/switch/update platforms."""
+    if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
+        hass.data[MANAGER_ENTRY_KEY] = entry.entry_id
+        await _async_ensure_release_coordinator(hass)
+        await hass.config_entries.async_forward_entry_setups(entry, ["button", "sensor"])
+        return True
+
     session = async_get_clientsession(hass)
     host = entry.data[CONF_HOST]
 
@@ -268,14 +279,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    manager = entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER
+    unloaded = await hass.config_entries.async_unload_platforms(
+        entry, ["button", "sensor"] if manager else PLATFORMS
+    )
     if unloaded:
-        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-        if not hass.data.get(DOMAIN):
+        if manager:
+            hass.data.pop(MANAGER_ENTRY_KEY, None)
+        else:
+            hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+        if not hass.data.get(DOMAIN) and MANAGER_ENTRY_KEY not in hass.data:
             hass.data.pop(RELEASE_COORDINATOR_KEY, None)
-            hass.services.async_remove(DOMAIN, SERVICE_PROVISION)
-            hass.services.async_remove(DOMAIN, SERVICE_CAPABILITY_REPORT)
-            hass.services.async_remove(DOMAIN, SERVICE_ONBOARDING_PLAN)
+        if not hass.data.get(DOMAIN):
+            for service in (SERVICE_PROVISION, SERVICE_CAPABILITY_REPORT, SERVICE_ONBOARDING_PLAN):
+                if hass.services.has_service(DOMAIN, service):
+                    hass.services.async_remove(DOMAIN, service)
     return unloaded
 
 

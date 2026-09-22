@@ -29,6 +29,15 @@ CONF_REUSE_ENTRY_ID: Final = "reuse_entry_id"
 CONF_HOME_LAUNCHER: Final = "home_launcher"
 # KSM-BEHAVE-073: per-entry opt-in, stored in entry.options, default off.
 CONF_AUTO_UPDATE: Final = "auto_update"
+CONF_ENTRY_TYPE: Final = "entry_type"
+ENTRY_TYPE_MANAGER: Final = "manager"
+MANAGER_UNIQUE_ID: Final = "ksm_manager"
+CONF_HA_URL: Final = "ha_url"
+CONF_ONBOARDING_MODE: Final = "onboarding_mode"
+ONBOARDING_REVIEW: Final = "review"
+ONBOARDING_AUTOMATIC: Final = "automatic"
+MANAGER_UPDATE_RUNNING_KEY: Final = f"{DOMAIN}_update_all_running"
+MANAGER_ENTRY_KEY: Final = f"{DOMAIN}_manager_entry"
 
 # KSM-BEHAVE-021: an already-installed device is detected during the flow and
 # the user chooses whether to keep the existing install or replace it.

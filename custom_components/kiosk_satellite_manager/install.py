@@ -313,6 +313,7 @@ async def install_and_launch(
     token_credential: TokenCredential | None = None,
     home_launcher: bool = True,
     device_model: str | None = None,
+    ha_url: str | None = None,
 ) -> TokenCredential | None:
     """Fetch the latest KS APK matching the device's ABI, install it, launch
     it, and grant full permissions. If a password is configured on the entry,
@@ -414,6 +415,7 @@ async def install_and_launch(
             token_credential=token_credential,
             home_launcher=home_launcher,
             recipe=recipe,
+            ha_url=ha_url,
         )
     except (KsApiError, aiohttp.ClientError, asyncio.TimeoutError) as err:
         _LOGGER.warning("device-name/HA auto-connect sync failed for %s: %s", host, err)
@@ -496,6 +498,7 @@ async def _sync_device_and_connect_ha(
     ha_token: str | None = None,
     token_credential: TokenCredential | None = None,
     home_launcher: bool = True,
+    ha_url: str | None = None,
 ) -> TokenCredential:
     status = await _wait_for_setup_status(session, host)
     if status.get("passwordNeeded", True):
@@ -518,7 +521,7 @@ async def _sync_device_and_connect_ha(
         credential = await _mint_ha_token(hass, client_name)
         created_credential = True
     try:
-        ha_url = get_url(hass, prefer_external=False).rstrip("/")
+        ha_url = (ha_url or get_url(hass, prefer_external=False)).rstrip("/")
         # KSM-BEHAVE-049: the start path is recipe data, with no "/portal if we
         # can't tell" default -- an unidentified device never reaches this call.
         start_path = recipe.start_url_path
