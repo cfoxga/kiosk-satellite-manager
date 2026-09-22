@@ -24,14 +24,15 @@ remotely — do them once per device, in order:
 - **Install** — connects over ADB, detects the device type (Meta Portal vs. Android TV stick, etc.),
   fetches the matching Kiosk Satellite APK for the device's ABI from the project's GitHub releases,
   and installs it. A `button` entity (Install/Reinstall) and a `sensor` entity (installed KS version)
-  are provided per device.
+  are provided per device. On launcher-capable devices, the same ADB-only path enables Kiosk
+  Satellite's fixed Home alias and verifies Android's HOME resolver selected it.
 - **Provision** — the `kiosk_satellite_manager.provision` service applies a settings payload (device
   name, Home Assistant URL, dashboard, kiosk lockdown, etc.) in a single ADB intent and reads back
   `/api/health` to confirm the change actually took, rather than trusting `adb shell`'s exit code.
 - **Credential safety** — KSM will not send Kiosk Satellite's admin password, a device bearer token,
   or a Home Assistant credential to the app's HTTP-only management service. Until Kiosk Satellite
   offers verified HTTPS, automatic device-name and Home Assistant credential sync is intentionally
-  unavailable; installation and unauthenticated health checks still work.
+  unavailable; installation, launcher selection, and unauthenticated health checks still work.
 - **Capability report** — the `kiosk_satellite_manager.capability_report` response service gathers a
   versioned, read-only evidence bundle for an unfamiliar Android device. It returns parsed platform,
   management, and Kiosk Satellite facts plus explicit probe status; it never returns raw shell output,

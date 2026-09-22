@@ -41,6 +41,7 @@ HEALTH_SCAN_INTERVAL_MIN: Final = 5
 
 KS_PACKAGE: Final = "me.jxl.kiosk_satellite"
 KS_MAIN_ACTIVITY: Final = f"{KS_PACKAGE}/.MainActivity"
+KS_HOME_ACTIVITY: Final = f"{KS_PACKAGE}/.HomeAlias"
 KS_APK_REMOTE_PATH: Final = "/data/local/tmp/kiosk-satellite.apk"
 KS_GITHUB_REPO: Final = "jxlarrea/kiosk-satellite"
 

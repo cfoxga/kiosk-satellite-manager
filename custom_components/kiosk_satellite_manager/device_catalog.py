@@ -230,13 +230,15 @@ RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
     RecipeAssignment(
         model_key="portal_go",
         recipe_key="meta_portal_standard",
-        recipe_version="v2",
+        recipe_version="v3",
         state=ASSIGNMENT_APPROVED,
-        effective_date="2026-09-20",
+        effective_date="2026-09-22",
         rationale=(
-            "Behavior migrated verbatim from the portal_go DeviceProfile; the "
-            "Test Portal is a PortalGo and is the dev device this recipe was "
-            "developed against."
+            "Portal Go's observed Android 10 build keeps Meta DeviceSetupActivity "
+            "as HOME even after KS enables HomeAlias and package manager reports "
+            "set-home-activity Success. v3 removes launcher takeover from this "
+            "exact model's required behavior; sibling Portal models retain v2 "
+            "until their own live evidence says otherwise (issue #41)."
         ),
     ),
     RecipeAssignment(
@@ -296,17 +298,18 @@ RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
     ),
 )
 
-# Exact-device negative qualification from issue #40. This is an installed-app
-# limitation observed on this build, not a claim that Portal hardware can never
-# grant the permission. New app/recipe evidence requires explicit revalidation.
+# Exact-device negative qualification from issues #40/#41. This is installed-app
+# and OEM-build evidence, not a claim about sibling Portal hardware. The issue
+# #41 live run re-exercised the unchanged permission policy on v3 while proving
+# the OEM HOME resolver cannot safely be replaced on this build.
 QUALIFICATIONS: tuple[QualificationRecord, ...] = (
     QualificationRecord(
         model_key="portal_go",
         recipe_key="meta_portal_standard",
-        recipe_version="v2",
+        recipe_version="v3",
         scenario=SCENARIO_PERMISSION_CONVERGENCE,
         result=RESULT_FAIL,
-        verified_on="2026-09-21",
+        verified_on="2026-09-22",
         min_sdk=29,
         max_sdk=29,
         fingerprint_prefixes=(
@@ -315,6 +318,7 @@ QUALIFICATIONS: tuple[QualificationRecord, ...] = (
         evidence=(
             "KS 2026.9.70 (versionCode 269) does not request WRITE_SECURE_SETTINGS; "
             "Android rejects pm grant with 'has not requested permission'. "
+            "Issue #41's live v3 candidate reproduced the same sole denied grant. "
             "See docs/developer/android-support/portal-go-permission-qualification.md "
             "in ham-harness/kiosk-satellite-manager and KSM issue #40."
         ),

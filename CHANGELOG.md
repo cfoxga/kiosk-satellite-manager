@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Decouple default-launcher selection from Kiosk Satellite's HTTP management API. Launcher-capable
+  installs now enable the fixed Home alias over ADB, select it through Android's package manager,
+  and fail unless the HOME resolver reads back Kiosk Satellite; no password or token is sent. Portal
+  Go's observed Android 10 build keeps Meta's higher-priority resolver despite a successful selection
+  command, so its v3 recipe and onboarding form explicitly omit launcher takeover while sibling
+  models retain their independent launcher-capable assignment.
+
 - Record Portal Go's exact-build secure-settings qualification failure: KS
   2026.9.70 does not declare the required permission. Scope failed qualification
   records by firmware/SDK before deriving support, keeping other builds and

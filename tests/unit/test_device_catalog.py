@@ -38,7 +38,10 @@ _PORTAL_MINI = DeviceFacts(manufacturer="Facebook", model="PortalMini", sdk=29)
 _PORTAL_TV = DeviceFacts(manufacturer="Facebook", model="PortalTV", characteristics="tv", sdk=29)
 
 
-def _qualifications(model_key: str, recipe_version: str = "v2", *, result: str = "pass"):
+def _qualifications(
+    model_key: str, recipe_version: str | None = None, *, result: str = "pass"
+):
+    recipe_version = recipe_version or ("v3" if model_key == "portal_go" else "v2")
     recipe = get_recipe("meta_portal_standard", recipe_version) or get_recipe(
         "meta_portal_standard", "v2"
     )
@@ -220,15 +223,17 @@ def test_catalog_modules_use_no_sql_or_home_assistant_storage():
 # --- KSM-TEST-057/058: resolution -------------------------------------------
 
 
-def test_portal_go_and_mini_are_distinct_models_sharing_one_recipe_version():
-    """KSM-TEST-057."""
+def test_portal_go_and_mini_are_distinct_models_with_build_evidence_scoped_recipes():
+    """KSM-TEST-057/125: Portal Go's no-HOME decision never leaks to Mini."""
     go = resolve_catalog_entry(_PORTAL_GO)
     mini = resolve_catalog_entry(_PORTAL_MINI)
 
     assert go.model_key == "portal_go"
     assert mini.model_key == "portal_mini"
-    assert go.recipe_identity == mini.recipe_identity == "meta_portal_standard:v2"
-    assert go.recipe is mini.recipe
+    assert go.recipe_identity == "meta_portal_standard:v3"
+    assert mini.recipe_identity == "meta_portal_standard:v2"
+    assert go.recipe.home_launcher_supported is False
+    assert mini.recipe.home_launcher_supported is True
     assert go.executable is True
 
 
@@ -342,26 +347,26 @@ def test_a_failed_scenario_blocks_the_model():
 
 
 def test_evidence_for_an_earlier_recipe_version_goes_stale_on_a_new_version():
-    """KSM-TEST-062: a behavior-changing v2 makes prior qualification stale
+    """KSM-TEST-062: a behavior-changing v4 makes prior qualification stale
     rather than letting it carry over on key-only matching."""
-    v2 = dataclasses.replace(
-        get_recipe("meta_portal_standard", "v2"),
-        version="v2",
-        start_url_path="/portal-v2",
+    v4 = dataclasses.replace(
+        get_recipe("meta_portal_standard", "v3"),
+        version="v4",
+        start_url_path="/portal-v4",
     )
     assignments = tuple(
-        dataclasses.replace(a, recipe_version="v2") if a.model_key == "portal_go" else a
+        dataclasses.replace(a, recipe_version="v4") if a.model_key == "portal_go" else a
         for a in CATALOG.assignments
     )
     catalog = _catalog(
-        recipes=CATALOG.recipes + (v2,),
+        recipes=CATALOG.recipes + (v4,),
         assignments=assignments,
-        qualifications=_qualifications("portal_go", "v1"),
+        qualifications=_qualifications("portal_go", "v3"),
     )
     entry = resolve_catalog_entry(_PORTAL_GO, catalog=catalog, sdk=29)
-    assert entry.recipe_identity == "meta_portal_standard:v2"
+    assert entry.recipe_identity == "meta_portal_standard:v4"
     assert entry.support_state == SUPPORT_REVALIDATION_REQUIRED
-    assert "v1" in entry.reason
+    assert "v3" in entry.reason
 
 
 def test_evidence_outside_the_observed_build_scope_requires_revalidation():
@@ -379,10 +384,14 @@ def test_evidence_outside_the_observed_build_scope_requires_revalidation():
 
 def test_required_scenarios_drop_launcher_selection_for_a_launcher_incapable_recipe():
     standard = required_scenarios(get_recipe("meta_portal_standard", "v2"))
+    portal_go = required_scenarios(get_recipe("meta_portal_standard", "v3"))
     tv = required_scenarios(get_recipe("meta_portal_tv", "v2"))
     assert "launcher_selection" in standard
+    assert "launcher_selection" not in portal_go
     assert "launcher_selection" not in tv
-    assert {"clean_install", "existing_reuse", "update", "reinstall", "uninstall"} <= tv
+    required_without_home = {"clean_install", "existing_reuse", "update", "reinstall", "uninstall"}
+    assert required_without_home <= portal_go
+    assert required_without_home <= tv
 
 
 def test_shipped_catalog_claims_no_unearned_support():
@@ -470,9 +479,9 @@ def test_portal_go_secure_settings_limitation_is_exact_build_evidence():
     ):
         assert resolve_catalog_entry(facts).support_state == SUPPORT_REVALIDATION_REQUIRED
     assert resolve_catalog_entry(_PORTAL_MINI).support_state == SUPPORT_RECIPE_ASSIGNED
-    new_recipe = dataclasses.replace(entry.recipe, version="v3")
+    new_recipe = dataclasses.replace(entry.recipe, version="v4")
     assignments = tuple(
-        dataclasses.replace(a, recipe_version="v3")
+        dataclasses.replace(a, recipe_version="v4")
         if a.model_key == "portal_go" and a.state == ASSIGNMENT_APPROVED else a
         for a in CATALOG.assignments
     )

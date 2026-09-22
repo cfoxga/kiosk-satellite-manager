@@ -123,6 +123,19 @@ def test_portal_tv_recipe_is_not_launcher_capable():
     assert tv.start_url_path == "/portal"
 
 
+def test_portal_go_v3_removes_only_unachievable_launcher_takeover():
+    """[KSM-TEST-125] Portal Go retains Portal behavior except HOME takeover."""
+    v2 = get_recipe("meta_portal_standard", "v2")
+    v3 = get_recipe("meta_portal_standard", "v3")
+
+    assert v2.home_launcher_supported is True
+    assert v3.home_launcher_supported is False
+    assert dict(v3.parameters) == {"browser.ignore_ssl_errors": True}
+    assert v3.permissions_for_sdk(29) == v2.permissions_for_sdk(29)
+    assert v3.appops_for_sdk(29) == v2.appops_for_sdk(29)
+    assert v3.start_url_path == v2.start_url_path == "/portal"
+
+
 def test_android_tv_recipe_exists_but_is_not_portal_shaped():
     """The `android_tv:v1` recipe is declared for future exact onn/Chromecast
     model rows; it must not carry the Portal device-admin/start-URL behavior."""

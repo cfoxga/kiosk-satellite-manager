@@ -178,6 +178,9 @@ async def test_user_flow_identifies_portal_models_and_defaults_password(hass):
     assert result["type"] == data_entry_flow.FlowResultType.FORM
     assert result["step_id"] == "device_info"
     assert result["description_placeholders"]["device_model"] == "Meta Portal Go"
+    assert CONF_HOME_LAUNCHER not in {
+        field.schema for field in result["data_schema"].schema
+    }
     schema_pass = next(k for k in result["data_schema"].schema if k == CONF_PASSWORD)
     assert schema_pass.default is vol.UNDEFINED
     assert result["description_placeholders"]["android_version"] == "SDK 29"
@@ -550,7 +553,6 @@ async def test_user_flow_uses_selected_long_lived_token(hass):
             {
                 CONF_PASSWORD: "admin",
                 CONF_TOKEN_MODE: "existing-token-id",
-                CONF_HOME_LAUNCHER: True,
             },
         )
         assert result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS
@@ -561,7 +563,7 @@ async def test_user_flow_uses_selected_long_lived_token(hass):
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_TOKEN_MODE] == "existing-token-id"
     assert result["data"][CONF_HA_TOKEN] == "selected-access-token"
-    assert result["data"][CONF_HOME_LAUNCHER] is True
+    assert result["data"][CONF_HOME_LAUNCHER] is False
     assert not persistent_notification._async_get_or_create_notifications(hass)  # noqa: SLF001
 
 
@@ -677,7 +679,8 @@ async def test_user_flow_reinstall_uninstalls_before_install(hass):
         assert result["type"] == data_entry_flow.FlowResultType.FORM
         assert result["step_id"] == "device_info"
         schema_fields = {field.schema for field in result["data_schema"].schema}
-        assert {CONF_HOME_LAUNCHER, CONF_TOKEN_MODE} <= schema_fields
+        assert CONF_HOME_LAUNCHER not in schema_fields
+        assert CONF_TOKEN_MODE in schema_fields
         assert CONF_HA_TOKEN not in schema_fields
 
         result = await hass.config_entries.flow.async_configure(

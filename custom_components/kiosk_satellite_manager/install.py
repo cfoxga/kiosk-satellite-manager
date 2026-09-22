@@ -54,6 +54,7 @@ from .apk_signing import verify_ks_apk_signer
 from .const import (
     HA_TOKEN_LIFESPAN_DAYS,
     KS_APK_REMOTE_PATH,
+    KS_HOME_ACTIVITY,
     KS_MAIN_ACTIVITY,
     KS_PACKAGE,
     SYNC_STATUS_POLL_ATTEMPTS,
@@ -64,7 +65,7 @@ from .credentials import TokenCredential, async_revoke_owned_credential
 from .install_recipes import InstallRecipe
 from .ks_api import latest_release
 from .ks_api_client import KsApiError
-from .provisioning import fetch_health
+from .provisioning import build_provision_command, fetch_health
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -75,6 +76,24 @@ class KsInstallVerificationFailed(Exception):
     never matched what was expected. Raised instead of trusting a zero ADB
     shell exit or a "Success" pm-install string alone once a version target
     is known (KSM-BEHAVE-040)."""
+
+
+async def _select_home_launcher(client: AdbClient) -> None:
+    """Enable KS's HOME alias over ADB, select it, and verify the resolver."""
+    await client.shell(build_provision_command({"home.enabled": True}))
+    last_resolver = ""
+    for attempt in range(SYNC_STATUS_POLL_ATTEMPTS):
+        await client.select_ks_home()
+        last_resolver = await client.resolved_home_activity()
+        resolved_lines = {line.strip() for line in last_resolver.splitlines()}
+        if KS_HOME_ACTIVITY in resolved_lines:
+            return
+        if attempt < SYNC_STATUS_POLL_ATTEMPTS - 1:
+            await asyncio.sleep(SYNC_STATUS_POLL_DELAY_S)
+    raise KsInstallVerificationFailed(
+        "Android HOME resolver did not select Kiosk Satellite after launcher enable; "
+        f"resolver={last_resolver!r}"
+    )
 
 
 # KSM-BEHAVE-048 (issue #20): the module-level PORTAL_PERMISSIONS/PORTAL_APPOPS
@@ -370,6 +389,14 @@ async def install_and_launch(
         # not only right after a fresh install.
         await _verify_health(session, host, target_version)
 
+    # KSM-BEHAVE-069: launcher selection has no reason to share the device's
+    # credential-bearing HTTP settings path. Enable only this boolean through
+    # the authenticated ADB intent, select the fixed alias, then trust only
+    # Android's resolver readback. Caller preference cannot override recipe
+    # capability.
+    if home_launcher and recipe.home_launcher_supported:
+        await _select_home_launcher(client)
+
     if password is None or host is None:
         _LOGGER.debug(
             "no admin password configured for %s; skipping device-name/HA auto-connect sync",
@@ -504,10 +531,6 @@ async def _sync_device_and_connect_ha(
             "browser.ignore_ssl_errors": False,
         }
 
-        # KSM-TEST-058: the entry's preference cannot turn on a launcher the
-        # recipe (and therefore the hardware) does not support.
-        if home_launcher and recipe.home_launcher_supported:
-            settings_payload["home.enabled"] = True
         await ks_api_client.patch_settings(session, host, token, settings_payload)
         if not await ks_api_client.check_ha_connection(session, host, token):
             _LOGGER.warning("Kiosk Satellite reported the HA connection check failed for %s", host)

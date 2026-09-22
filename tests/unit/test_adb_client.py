@@ -261,6 +261,27 @@ async def test_getprop_strips_trailing_newline(tmp_path):
         assert await client.getprop("ro.build.characteristics") == "tv,nosdcard"
 
 
+async def test_home_helpers_use_only_fixed_component_and_authoritative_resolver(tmp_path):
+    """[KSM-TEST-125] HOME mutation is fixed and resolver output is returned."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    shell = AsyncMock(
+        side_effect=[
+            "Success\n",
+            "me.jxl.kiosk_satellite/.HomeAlias\n",
+        ]
+    )
+    with patch.object(client._device, "shell", new=shell):
+        await client.select_ks_home()
+        assert await client.resolved_home_activity() == "me.jxl.kiosk_satellite/.HomeAlias"
+
+    assert [call.args[0] for call in shell.await_args_list] == [
+        "cmd package set-home-activity me.jxl.kiosk_satellite/.HomeAlias",
+        "cmd package resolve-activity --brief -a android.intent.action.MAIN "
+        "-c android.intent.category.HOME",
+    ]
+
+
 async def test_is_ks_installed_true_when_pm_path_returns_a_path(tmp_path):
     """KSM-TEST-008: `pm path` output is the installation check."""
     key_path = ensure_adb_key(str(tmp_path / "keys"))

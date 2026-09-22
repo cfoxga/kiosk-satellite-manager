@@ -25,7 +25,9 @@ def _catalog_block(
         "model_name": "Meta Portal Go",
         "classification": None if model_key else "unknown",
         "recipe_key": "meta_portal_standard" if executable else None,
-        "recipe_version": "v2" if executable else None,
+        "recipe_version": (
+            "v3" if model_key == "portal_go" else "v2"
+        ) if executable else None,
         "assignment_state": "approved" if executable else None,
         "support_state": "recipe_assigned" if executable else "unknown",
         "reason": (
@@ -237,7 +239,7 @@ async def test_report_is_sanitized_and_marks_unsupported_probes():
         "model_name": "Meta Portal Go",
         "classification": None,
         "recipe_key": "meta_portal_standard",
-        "recipe_version": "v2",
+        "recipe_version": "v3",
         "assignment_state": "approved",
         "support_state": "revalidation_required",
         "reason": report["catalog"]["reason"],
@@ -435,15 +437,15 @@ def test_onboarding_plan_fails_closed_when_no_recipe_is_executable():
     assert plan["catalog"]["executable_recipe"] is False
 
 
-def test_onboarding_plan_recovery_evidence_does_not_follow_a_shared_recipe():
-    """KSM-TEST-066: Portal Mini and Portal Go run the same install recipe
-    version. Both have independently confirmed Test Harness recovery; sharing
-    the recipe cannot be the source of either confirmation. Neither ends up
-    in automatic_actions."""
+def test_onboarding_plan_recovery_evidence_does_not_follow_recipe_assignment():
+    """KSM-TEST-066: Portal Mini and Portal Go retain independent recovery
+    evidence even though their current recipe assignments differ. Neither ends
+    up in automatic_actions."""
     mini = build_onboarding_plan(_observed_report(device_model_key="portal_mini"))
     go = build_onboarding_plan(_observed_report(device_model_key="portal_go"))
 
-    assert mini["catalog"]["recipe_version"] == go["catalog"]["recipe_version"]
+    assert mini["catalog"]["recipe_version"] == "v2"
+    assert go["catalog"]["recipe_version"] == "v3"
     mini_reset = next(o for o in mini["destructive_options"] if o["id"] == "test_harness_reset")
     go_reset = next(o for o in go["destructive_options"] if o["id"] == "test_harness_reset")
     assert mini_reset["eligible_now"] is True

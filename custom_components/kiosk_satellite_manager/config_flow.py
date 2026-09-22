@@ -132,6 +132,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._area_id: str | None = None
         self._password: str | None = None
         self._home_launcher: bool = True
+        self._home_launcher_supported: bool = False
         self._token_mode: str = TOKEN_MODE_AUTO
         self._credential: TokenCredential | None = None
         self._reuse_entry_id: str | None = None
@@ -208,6 +209,9 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._key_path = key_path
             self._profile_key = entry.model_key
             self._profile_name = entry.model_name or entry.classification_name
+            self._home_launcher_supported = bool(
+                entry.recipe and entry.recipe.home_launcher_supported
+            )
             self._android_version = (
                 f"Android {android_release} (SDK {sdk})"
                 if android_release
@@ -250,7 +254,11 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             password = user_input[CONF_PASSWORD]
-            home_launcher = user_input.get(CONF_HOME_LAUNCHER, True)
+            home_launcher = (
+                user_input.get(CONF_HOME_LAUNCHER, True)
+                if self._home_launcher_supported
+                else False
+            )
             token_mode = user_input.get(CONF_TOKEN_MODE, TOKEN_MODE_AUTO)
             credential = None
 
@@ -275,7 +283,6 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(CONF_PASSWORD): selector.TextSelector(
                 selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
             ),
-            vol.Required(CONF_HOME_LAUNCHER, default=True): selector.BooleanSelector(),
             vol.Required(
                 CONF_TOKEN_MODE, default=TOKEN_MODE_AUTO
             ): selector.SelectSelector(
@@ -290,6 +297,10 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
             ),
         }
+        if self._home_launcher_supported:
+            fields[vol.Required(CONF_HOME_LAUNCHER, default=True)] = (
+                selector.BooleanSelector()
+            )
 
         return self.async_show_form(
             step_id="device_info",

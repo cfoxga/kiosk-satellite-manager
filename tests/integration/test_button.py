@@ -63,7 +63,9 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
         # The entry stores the exact device model the config flow matched
         # (issue #20); the button passes it straight to install_and_launch,
         # which resolves the approved recipe from it.
-        ctx = await init_integration(hass, data={CONF_DEVICE_PROFILE: "portal_go"})
+        # Portal Mini retains the launcher-capable v2 recipe. Portal Go's
+        # observed OEM resolver is deliberately assigned launcher-free v3.
+        ctx = await init_integration(hass, data={CONF_DEVICE_PROFILE: "portal_mini"})
 
         ent_reg = er.async_get(hass)
         entries = er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)
@@ -124,6 +126,10 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
             mock_client.get_secure_setting = AsyncMock(return_value="")
             mock_client.put_secure_setting = AsyncMock()
             mock_client.bluetooth_enabled = AsyncMock(return_value=True)
+            mock_client.select_ks_home = AsyncMock()
+            mock_client.resolved_home_activity = AsyncMock(
+                return_value="me.jxl.kiosk_satellite/.HomeAlias"
+            )
 
             await hass.services.async_call(
                 "button", "press", {"entity_id": button_entry.entity_id}, blocking=True
@@ -135,6 +141,9 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
     assert shell_calls[1] == "am start -n me.jxl.kiosk_satellite/.MainActivity"
     assert "dumpsys deviceidle whitelist +me.jxl.kiosk_satellite" in shell_calls
     assert "appops set me.jxl.kiosk_satellite SYSTEM_ALERT_WINDOW allow" in shell_calls
+    assert any('ks.provision \'{"home.enabled": true}\'' in call for call in shell_calls)
+    mock_client.select_ks_home.assert_awaited_once_with()
+    mock_client.resolved_home_activity.assert_awaited_once_with()
     assert seen_installing_during_press is True
     assert coordinator.ksm_installing is False
     assert hass.states.get(sensor_entry.entity_id).state == "new"
