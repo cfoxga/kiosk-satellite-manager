@@ -54,6 +54,38 @@ async def test_manager_entry_has_no_adb_and_coexists_with_device(hass, release_c
         assert device.entry.entry_id in hass.data[DOMAIN]
 
 
+async def test_manager_entry_auto_created_when_missing(hass, release_check):
+    """[KSM-TEST-147] KSM-BEHAVE-078: a device entry setup with no manager
+    entry present creates one automatically, and a second device setup does
+    not create a second one."""
+    with patch("custom_components.kiosk_satellite_manager.AdbClient"), patch(
+        "custom_components.kiosk_satellite_manager.fetch_health",
+        new=AsyncMock(return_value={"appVersion": "2026.9.0"}),
+    ):
+        assert not any(
+            e.data.get(CONF_ENTRY_TYPE) == "manager"
+            for e in hass.config_entries.async_entries(DOMAIN)
+        )
+        await init_integration(hass)
+
+        managers = [
+            e for e in hass.config_entries.async_entries(DOMAIN)
+            if e.data.get(CONF_ENTRY_TYPE) == "manager"
+        ]
+        assert len(managers) == 1
+        manager_entities = er.async_entries_for_config_entry(
+            er.async_get(hass), managers[0].entry_id
+        )
+        assert {e.domain for e in manager_entities} == {"sensor", "button"}
+
+        await init_integration(hass, data={CONF_HOST: "192.168.99.100"})
+        managers = [
+            e for e in hass.config_entries.async_entries(DOMAIN)
+            if e.data.get(CONF_ENTRY_TYPE) == "manager"
+        ]
+        assert len(managers) == 1
+
+
 async def test_manager_flow_is_unique_and_device_flow_stays_available(hass):
     """[KSM-TEST-137] Explicit manager choice is unique."""
     result = await hass.config_entries.flow.async_init(

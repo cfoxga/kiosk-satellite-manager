@@ -30,12 +30,13 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .adb_client import AdbClient
@@ -176,6 +177,31 @@ async def _async_ensure_release_coordinator(hass: HomeAssistant) -> None:
     )
     hass.data[RELEASE_COORDINATOR_KEY] = coordinator
     await coordinator.async_refresh()
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """KSM-BEHAVE-078: ensure the manager entry exists before any entry setup.
+
+    The manager entry owns the only KSM-wide surfaces (release status, Update
+    all) -- it is not an optional preference, so an install that only ever
+    added device entries through the config flow must still get one. Runs
+    once per HA start, via the same unique-ID-guarded creation path the
+    explicit "Configure KSM" choice uses, so the two can never race into two
+    manager entries.
+
+    Scheduled as a background task rather than awaited here: finishing the
+    flow calls back into config-entry setup for this same domain, which would
+    deadlock waiting on the setup lock this function's own caller
+    (async_setup_component) is still holding open.
+    """
+    if not any(
+        entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER
+        for entry in hass.config_entries.async_entries(DOMAIN)
+    ):
+        hass.async_create_task(
+            hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_IMPORT})
+        )
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

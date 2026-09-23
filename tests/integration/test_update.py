@@ -19,8 +19,10 @@ from homeassistant.helpers import entity_registry as er
 from custom_components.kiosk_satellite_manager.button import async_install_entry
 from custom_components.kiosk_satellite_manager.const import (
     CONF_AUTO_UPDATE,
+    CONF_ENTRY_TYPE,
     CONF_HOST,
     DOMAIN,
+    ENTRY_TYPE_MANAGER,
     RELEASE_COORDINATOR_KEY,
 )
 from custom_components.kiosk_satellite_manager.install import KsInstallVerificationFailed
@@ -60,7 +62,12 @@ def _entity_id(hass, entry, suffix: str) -> str:
 
 async def test_entries_share_one_hourly_release_check(hass, release_check):
     """[KSM-TEST-130] One release coordinator for all entries, one GitHub
-    request between them, removed only when the last entry unloads."""
+    request between them, removed only when the last entry unloads.
+
+    KSM-BEHAVE-078: the first entry's setup also auto-creates the manager
+    entry, which is itself a release-coordinator consumer -- so the
+    coordinator only actually goes away once that entry unloads too.
+    """
     with patch(_HEALTH, new=_health("2026.9.1")):
         first = await init_integration(hass)
         second = await init_integration(hass, data={CONF_HOST: "192.168.99.98"})
@@ -69,10 +76,18 @@ async def test_entries_share_one_hourly_release_check(hass, release_check):
         assert coordinator.update_interval == timedelta(hours=1)
         assert release_check.await_count == 1
 
+        manager = next(
+            e for e in hass.config_entries.async_entries(DOMAIN)
+            if e.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER
+        )
+
         assert await hass.config_entries.async_unload(first.entry.entry_id)
         assert hass.data[RELEASE_COORDINATOR_KEY] is coordinator
 
         assert await hass.config_entries.async_unload(second.entry.entry_id)
+        assert hass.data[RELEASE_COORDINATOR_KEY] is coordinator
+
+        assert await hass.config_entries.async_unload(manager.entry_id)
         assert RELEASE_COORDINATOR_KEY not in hass.data
 
 

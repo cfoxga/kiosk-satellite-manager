@@ -237,6 +237,19 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
         return KioskSatelliteManagerOptionsFlow(config_entry)
 
+    async def async_step_import(self, user_input: dict | None = None) -> FlowResult:
+        """KSM-BEHAVE-078: auto-create the manager entry from `async_setup`.
+
+        Shares the same unique ID guard as the explicit "Configure KSM"
+        choice in `async_step_user`, so this can never create a second
+        manager entry alongside one a user already created by hand.
+        """
+        await self.async_set_unique_id(MANAGER_UNIQUE_ID)
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(
+            title="Kiosk Satellite Manager", data={CONF_ENTRY_TYPE: ENTRY_TYPE_MANAGER}
+        )
+
     async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
         """Collect host/port, connect over ADB, and detect the device."""
         errors: dict[str, str] = {}
