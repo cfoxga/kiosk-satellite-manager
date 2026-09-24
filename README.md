@@ -55,6 +55,12 @@ remotely — do them once per device, in order:
   versioned, read-only evidence bundle for an unfamiliar Android device. It returns parsed platform,
   management, and Kiosk Satellite facts plus explicit probe status; it never returns raw shell output,
   account identifiers, credentials, or ADB keys.
+- **Rename device** — the `kiosk_satellite_manager.rename_device` service renames a device's Kiosk
+  Satellite identity (name, hostname, ESPHome node name) over the authenticated `:2324` settings
+  API, then updates the KSM entry's title/name and migrates its DNS host once the new hostname is
+  verified to resolve to the same device. Returns a per-layer result instead of raising on a
+  device-side failure; Android's own system device name has no verified non-ADB write path yet and
+  is reported as `unsupported`.
 
 Voice Satellite binding was explored and dropped (not worth the hassle yet) — see the design doc's
 Non-goals if you're wondering why it isn't here.

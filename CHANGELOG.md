@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add a `rename_device` service that renames a device's Kiosk Satellite identity (name,
+  hostname, ESPHome node name) via the authenticated `:2324` settings API, then updates the KSM
+  entry's title/name and migrates its DNS host once the new hostname is verified to resolve to
+  the same device. Returns a per-layer result rather than raising on a device-side failure;
+  Android's own system device name has no verified non-ADB write path yet and is reported as
+  `unsupported`.
+
 - App updates and the `provision` service no longer use ADB after initial onboarding: updates
   and Update all now run over Kiosk Satellite's own authenticated `:2324` API, and `provision`
   applies settings with a `PATCH /api/settings` call instead of the `ks.provision` ADB intent.

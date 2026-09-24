@@ -46,6 +46,7 @@ from .onboarding_plan import build_onboarding_plan
 from .const import (
     CONF_HOST,
     CONF_ENTRY_TYPE,
+    CONF_NAME,
     ENTRY_TYPE_MANAGER,
     CONF_KEY_PATH,
     CONF_PASSWORD,
@@ -63,6 +64,13 @@ from .ks_api import latest_release_info
 from .ks_api_client import KsApiError
 from .ks_api_client import login as ks_api_login
 from .provisioning import ProvisioningMismatch, apply_provisioning, fetch_health
+from .rename import (
+    apply_rename_ks_settings,
+    derive_dns_host,
+    derive_rename_names,
+    resolve_and_verify_dns_host,
+    set_android_device_name,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,6 +86,7 @@ __all__ = ["DOMAIN", "async_remove_entry", "async_setup_entry", "async_unload_en
 SERVICE_PROVISION = "provision"
 SERVICE_CAPABILITY_REPORT = "capability_report"
 SERVICE_ONBOARDING_PLAN = "onboarding_plan"
+SERVICE_RENAME_DEVICE = "rename_device"
 
 # KSM-BEHAVE-068: the device accepts arbitrary settings through its intent,
 # but the public HA service does not. Keep this small enough that every key has
@@ -114,6 +123,12 @@ PROVISION_SCHEMA = vol.Schema(
 
 CAPABILITY_REPORT_SCHEMA = vol.Schema({vol.Required("config_entry_id"): str})
 ONBOARDING_PLAN_SCHEMA = vol.Schema({vol.Required("config_entry_id"): str})
+RENAME_DEVICE_SCHEMA = vol.Schema(
+    {
+        vol.Required("config_entry_id"): str,
+        vol.Required("name"): vol.All(str, vol.Length(min=1)),
+    }
+)
 
 
 def _active_target(hass: HomeAssistant, config_entry_id: str) -> tuple[ConfigEntry, DataUpdateCoordinator]:
@@ -306,6 +321,70 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             schema=ONBOARDING_PLAN_SCHEMA, supports_response=SupportsResponse.ONLY,
         )
 
+    if not hass.services.has_service(DOMAIN, SERVICE_RENAME_DEVICE):
+
+        async def _handle_rename_device(call: ServiceCall) -> dict:
+            """KSM-BEHAVE-084/085: rename a device's KS identity, Android
+            system name (when a supported method exists), and KSM entry/DNS
+            host. Returns a per-layer result rather than raising once device
+            I/O has started, so a partial failure is legible instead of an
+            opaque exception."""
+            target_entry, target_coordinator = _active_target(hass, call.data["config_entry_id"])
+            await _authorize_target(call, hass, target_entry)
+            try:
+                names = derive_rename_names(call.data["name"])
+            except ValueError as err:
+                raise ServiceValidationError(str(err)) from err
+            password = target_entry.data.get(CONF_PASSWORD)
+            if not password:
+                raise ServiceValidationError(
+                    f"no Kiosk Satellite password stored for {target_entry.title}"
+                )
+
+            session = async_get_clientsession(hass)
+            host = target_entry.data[CONF_HOST]
+            result: dict = {"ks": "failed", "android": "unsupported", "entry": "failed", "host": "unchanged"}
+            try:
+                token = await ks_api_login(session, host, password)
+                result["ks"] = await apply_rename_ks_settings(session, host, token, names)
+            except ProvisioningMismatch as err:
+                result["error"] = str(err)
+                return result
+            except KsApiError as err:
+                result["error"] = f"Kiosk Satellite API error on {target_entry.title}: {err}"
+                return result
+
+            result["android"] = await set_android_device_name(names)
+
+            if target_entry.title == names.device_name and target_entry.data.get(CONF_NAME) == names.device_name:
+                result["entry"] = "unchanged"
+            else:
+                hass.config_entries.async_update_entry(
+                    target_entry,
+                    title=names.device_name,
+                    data={**target_entry.data, CONF_NAME: names.device_name},
+                )
+                result["entry"] = "applied"
+
+            candidate_host = derive_dns_host(host, names.hostname)
+            if candidate_host is None or candidate_host == host:
+                result["host"] = "unchanged"
+            elif await resolve_and_verify_dns_host(hass, session, host, candidate_host):
+                hass.config_entries.async_update_entry(
+                    target_entry, data={**target_entry.data, CONF_HOST: candidate_host}
+                )
+                result["host"] = "applied"
+            else:
+                result["host"] = "pending"
+
+            await target_coordinator.async_request_refresh()
+            return result
+
+        hass.services.async_register(
+            DOMAIN, SERVICE_RENAME_DEVICE, _handle_rename_device,
+            schema=RENAME_DEVICE_SCHEMA, supports_response=SupportsResponse.ONLY,
+        )
+
     return True
 
 
@@ -323,7 +402,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if not hass.data.get(DOMAIN) and MANAGER_ENTRY_KEY not in hass.data:
             hass.data.pop(RELEASE_COORDINATOR_KEY, None)
         if not hass.data.get(DOMAIN):
-            for service in (SERVICE_PROVISION, SERVICE_CAPABILITY_REPORT, SERVICE_ONBOARDING_PLAN):
+            for service in (
+                SERVICE_PROVISION,
+                SERVICE_CAPABILITY_REPORT,
+                SERVICE_ONBOARDING_PLAN,
+                SERVICE_RENAME_DEVICE,
+            ):
                 if hass.services.has_service(DOMAIN, service):
                     hass.services.async_remove(DOMAIN, service)
     return unloaded

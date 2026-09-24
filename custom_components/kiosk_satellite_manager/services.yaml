@@ -48,3 +48,25 @@ onboarding_plan:
       selector:
         config_entry:
           integration: kiosk_satellite_manager
+rename_device:
+  name: Rename device
+  description: >-
+    Rename a managed device's Kiosk Satellite identity, Android system name
+    (when a supported method exists), and KSM entry/DNS host from one
+    display name. Returns a per-layer result -- a partial completion (e.g.
+    host: pending) is not a failure.
+  fields:
+    config_entry_id:
+      name: Device
+      description: The Kiosk Satellite Manager config entry to rename.
+      required: true
+      selector:
+        config_entry:
+          integration: kiosk_satellite_manager
+    name:
+      name: Name
+      description: The new display name, e.g. "Great Room Portal".
+      required: true
+      example: "Great Room Portal"
+      selector:
+        text:

@@ -14,6 +14,7 @@ from custom_components.kiosk_satellite_manager import (
     SERVICE_CAPABILITY_REPORT,
     SERVICE_ONBOARDING_PLAN,
     SERVICE_PROVISION,
+    SERVICE_RENAME_DEVICE,
 )
 from custom_components.kiosk_satellite_manager.const import DOMAIN
 
@@ -26,6 +27,7 @@ from .conftest import init_integration
         (SERVICE_PROVISION, {"settings": {"device.name": "Kitchen"}}, False),
         (SERVICE_CAPABILITY_REPORT, {}, True),
         (SERVICE_ONBOARDING_PLAN, {}, True),
+        (SERVICE_RENAME_DEVICE, {"name": "Great Room Device"}, True),
     ],
 )
 @pytest.mark.parametrize("caller", ["read_only", "ordinary_user", "automation", "unknown_user"])
