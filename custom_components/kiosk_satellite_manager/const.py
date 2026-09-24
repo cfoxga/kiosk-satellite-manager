@@ -29,6 +29,9 @@ CONF_REUSE_ENTRY_ID: Final = "reuse_entry_id"
 CONF_HOME_LAUNCHER: Final = "home_launcher"
 # KSM-BEHAVE-073: per-entry opt-in, stored in entry.options, default off.
 CONF_AUTO_UPDATE: Final = "auto_update"
+# KSM-BEHAVE-080: manager-entry option, default off; while on, every device's
+# update entity auto-updates as if its own CONF_AUTO_UPDATE were on.
+CONF_AUTO_UPDATE_ALL: Final = "auto_update_all"
 CONF_ENTRY_TYPE: Final = "entry_type"
 ENTRY_TYPE_MANAGER: Final = "manager"
 MANAGER_UNIQUE_ID: Final = "ksm_manager"
@@ -56,7 +59,11 @@ KS_HOME_ACTIVITY: Final = f"{KS_PACKAGE}/.HomeAlias"
 KS_APK_REMOTE_PATH: Final = "/data/local/tmp/kiosk-satellite.apk"
 KS_GITHUB_REPO: Final = "jxlarrea/kiosk-satellite"
 
-PLATFORMS: Final = ["button", "sensor", "switch", "update"]
+PLATFORMS: Final = ["binary_sensor", "button", "sensor", "switch", "update"]
+MANAGER_PLATFORMS: Final = ["button", "sensor", "switch"]
+# KSM-BEHAVE-080: sent when the manager's Auto-update all switch changes so
+# every device's update entity re-evaluates its auto-update rules.
+SIGNAL_AUTO_UPDATE_ALL: Final = f"{DOMAIN}_auto_update_all_changed"
 
 # KSM-BEHAVE-071: one release check per HA instance, kept beside (not inside)
 # hass.data[DOMAIN], which maps entry_id -> health coordinator and is emptied
@@ -70,6 +77,9 @@ CONNECT_RETRY_ATTEMPTS: Final = 24
 CONNECT_RETRY_DELAY_S: Final = 5
 ADB_AUTH_TIMEOUT_S: Final = 5
 ADB_CONNECT_TIMEOUT_S: Final = 10
+# KSM-BEHAVE-079: ADB-enabled binary sensor -- bare TCP probe, own poll.
+ADB_PROBE_TIMEOUT_S: Final = 3
+ADB_PROBE_INTERVAL_MIN: Final = 5
 
 
 # KSM-BEHAVE-007: after install+launch, poll the coordinator a few times

@@ -21,14 +21,18 @@ import logging
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    CONF_AREA_ID, CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_MANAGER, RELEASE_COORDINATOR_KEY,
+    CONF_AREA_ID, CONF_DEVICE_PROFILE, CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_MANAGER,
+    RELEASE_COORDINATOR_KEY,
 )
+from .device_catalog import NoApprovedRecipe, require_recipe
+from .device_models import get_device_model
 from .helpers import resolve_area_name
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,7 +45,22 @@ async def async_setup_entry(
         async_add_entities([KioskSatelliteLatestReleaseSensor(hass, entry)])
         return
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([KioskSatelliteVersionSensor(hass, coordinator, entry)])
+    async_add_entities(
+        [
+            KioskSatelliteVersionSensor(hass, coordinator, entry),
+            KioskSatelliteIpAddressSensor(hass, coordinator, entry),
+            KioskSatelliteDeviceTypeSensor(hass, entry),
+            KioskSatelliteRecipeSensor(hass, entry),
+        ]
+    )
+
+
+def _device_info(hass: HomeAssistant, entry: ConfigEntry) -> DeviceInfo:
+    return DeviceInfo(
+        identifiers={(DOMAIN, entry.entry_id)},
+        name=entry.title,
+        suggested_area=resolve_area_name(hass, entry.data.get(CONF_AREA_ID)),
+    )
 
 
 class KioskSatelliteVersionSensor(CoordinatorEntity, SensorEntity):
@@ -71,6 +90,69 @@ class KioskSatelliteVersionSensor(CoordinatorEntity, SensorEntity):
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.get("appVersion")
+
+
+class KioskSatelliteIpAddressSensor(CoordinatorEntity, SensorEntity):
+    """KSM-BEHAVE-079: the device's own reported IP, from /api/health only."""
+
+    _attr_has_entity_name = True
+    _attr_name = "IP address"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, hass: HomeAssistant, coordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_ip_address"
+        self._attr_device_info = _device_info(hass, entry)
+
+    @property
+    def native_value(self) -> str | None:
+        return self.coordinator.data.get("ip") if self.coordinator.data else None
+
+
+class KioskSatelliteDeviceTypeSensor(SensorEntity):
+    """KSM-BEHAVE-079: the exact catalog model stored at setup, never re-detected."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Device type"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_should_poll = False
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        model_key = entry.data.get(CONF_DEVICE_PROFILE)
+        model = get_device_model(model_key)
+        self._attr_unique_id = f"{entry.entry_id}_device_type"
+        self._attr_device_info = _device_info(hass, entry)
+        self._attr_native_value = model.name if model else model_key
+        self._attr_extra_state_attributes = {"model_key": model_key}
+
+
+class KioskSatelliteRecipeSensor(SensorEntity):
+    """KSM-BEHAVE-079: the recipe the install executor will run for this model.
+
+    Resolved through require_recipe, the executor's own entry point, so the
+    sensor can never name a recipe an install would refuse.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Install recipe"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_should_poll = False
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        self._attr_unique_id = f"{entry.entry_id}_recipe"
+        self._attr_device_info = _device_info(hass, entry)
+        try:
+            recipe = require_recipe(entry.data.get(CONF_DEVICE_PROFILE))
+        except NoApprovedRecipe as err:
+            self._attr_native_value = "none"
+            self._attr_extra_state_attributes = {"reason": str(err)}
+            return
+        self._attr_native_value = f"{recipe.recipe_key} {recipe.version}"
+        self._attr_extra_state_attributes = {
+            "recipe_key": recipe.recipe_key,
+            "recipe_version": recipe.version,
+            "recipe_name": recipe.name,
+        }
 
 
 class KioskSatelliteLatestReleaseSensor(CoordinatorEntity, SensorEntity):

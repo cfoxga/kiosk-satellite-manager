@@ -9,7 +9,8 @@ Install/Reinstall button -- so an upgrade is pinned, read back and
 credential-handled exactly like a manual reinstall.
 
 Auto-update is evaluated on every update from either coordinator and when
-the entry's options change (the auto-update switch). It fires only for a
+the entry's options change (the auto-update switch) or the manager's
+Auto-update all switch changes (KSM-BEHAVE-080). It fires only for a
 version HA itself reports as an available, unskipped update, only on a
 reachable device with no install running, and at most once per version per
 load of the entry, so a release that fails to install is not retried on
@@ -26,12 +27,16 @@ from homeassistant.const import STATE_ON
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .button import async_install_entry
-from .const import CONF_AREA_ID, CONF_AUTO_UPDATE, CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_MANAGER, RELEASE_COORDINATOR_KEY
-from .helpers import resolve_area_name
+from .const import (
+    CONF_AREA_ID, CONF_AUTO_UPDATE, CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_MANAGER,
+    RELEASE_COORDINATOR_KEY, SIGNAL_AUTO_UPDATE_ALL,
+)
+from .helpers import auto_update_all_enabled, resolve_area_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,6 +86,9 @@ class KioskSatelliteUpdateEntity(CoordinatorEntity, UpdateEntity):
         await super().async_added_to_hass()
         self.async_on_remove(self._health.async_add_listener(self._handle_coordinator_update))
         self.async_on_remove(self._entry.add_update_listener(self._async_entry_updated))
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, SIGNAL_AUTO_UPDATE_ALL, self._maybe_auto_update)
+        )
         self._maybe_auto_update()
 
     @property
@@ -130,8 +138,12 @@ class KioskSatelliteUpdateEntity(CoordinatorEntity, UpdateEntity):
 
     @callback
     def _maybe_auto_update(self) -> None:
-        """KSM-BEHAVE-073 trigger rules 1-4."""
-        if not self._entry.options.get(CONF_AUTO_UPDATE, False):
+        """KSM-BEHAVE-073 trigger rules 1-4; KSM-BEHAVE-080 lets the
+        manager's Auto-update all stand in for this entry's own opt-in."""
+        if not (
+            self._entry.options.get(CONF_AUTO_UPDATE, False)
+            or auto_update_all_enabled(self.hass)
+        ):
             return
         if self.state != STATE_ON:
             return

@@ -726,3 +726,21 @@ async def test_put_secure_setting_sends_value(tmp_path):
     mock_shell.assert_awaited_once_with(
         "settings put secure enabled_accessibility_services com.a/.Svc:com.b/.Svc"
     )
+
+
+async def test_probe_adb_port_reports_a_listening_port_and_a_closed_one():
+    """[KSM-TEST-150] KSM-BEHAVE-079: the ADB-enabled probe is a bare TCP
+    connect -- true against a real listener, false once nothing listens."""
+    import asyncio
+
+    from custom_components.kiosk_satellite_manager.adb_client import async_probe_adb_port
+
+    server = await asyncio.start_server(lambda r, w: w.close(), "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        assert await async_probe_adb_port("127.0.0.1", port, timeout=2) is True
+    finally:
+        server.close()
+        await server.wait_closed()
+    assert await async_probe_adb_port("127.0.0.1", port, timeout=2) is False
+    assert await async_probe_adb_port("host.invalid", port, timeout=2) is False

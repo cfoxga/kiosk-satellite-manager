@@ -51,6 +51,7 @@ from .const import (
     CONF_PORT,
     DOMAIN,
     HEALTH_SCAN_INTERVAL_MIN,
+    MANAGER_PLATFORMS,
     PLATFORMS,
     RELEASE_CHECK_INTERVAL_MIN,
     RELEASE_COORDINATOR_KEY,
@@ -210,7 +211,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
         hass.data[MANAGER_ENTRY_KEY] = entry.entry_id
         await _async_ensure_release_coordinator(hass)
-        await hass.config_entries.async_forward_entry_setups(entry, ["button", "sensor"])
+        await hass.config_entries.async_forward_entry_setups(entry, MANAGER_PLATFORMS)
         return True
 
     session = async_get_clientsession(hass)
@@ -307,7 +308,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     manager = entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER
     unloaded = await hass.config_entries.async_unload_platforms(
-        entry, ["button", "sensor"] if manager else PLATFORMS
+        entry, MANAGER_PLATFORMS if manager else PLATFORMS
     )
     if unloaded:
         if manager:

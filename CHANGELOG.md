@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add per-device diagnostics: detected device type, the install recipe the next install will
+  run (or `none` with a reason), IP address from the device's health report, and an ADB
+  enabled sensor that probes the ADB port every 5 minutes. Add an Auto-update all switch to
+  the Configure KSM entry: while on, every device auto-updates as if its own switch were on.
+
 - Add one Configure KSM entry for future-device defaults, a shared latest-release sensor,
   and an Update all button. Review mode preselects global settings; automatic mode waits
   for an ADB address, on-device authorization, and an action confirmation. Global edits

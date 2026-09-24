@@ -12,7 +12,7 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.kiosk_satellite_manager.const import (
-    CONF_AUTO_UPDATE, CONF_ENTRY_TYPE, CONF_HA_URL, CONF_HOST,
+    CONF_AUTO_UPDATE, CONF_AUTO_UPDATE_ALL, CONF_ENTRY_TYPE, CONF_HA_URL, CONF_HOST,
     CONF_ONBOARDING_MODE, CONF_PASSWORD, CONF_TOKEN_MODE, DOMAIN,
     MANAGER_UPDATE_RUNNING_KEY, ONBOARDING_AUTOMATIC, RELEASE_COORDINATOR_KEY,
     TOKEN_MODE_AUTO,
@@ -48,7 +48,7 @@ async def test_manager_entry_has_no_adb_and_coexists_with_device(hass, release_c
         assert hass.data[RELEASE_COORDINATOR_KEY] is release
         assert release_check.await_count == 1
         manager_entities = er.async_entries_for_config_entry(er.async_get(hass), manager.entry_id)
-        assert {e.domain for e in manager_entities} == {"sensor", "button"}
+        assert {e.domain for e in manager_entities} == {"sensor", "button", "switch"}
         assert await hass.config_entries.async_unload(manager.entry_id)
         assert hass.data[RELEASE_COORDINATOR_KEY] is release
         assert device.entry.entry_id in hass.data[DOMAIN]
@@ -76,7 +76,7 @@ async def test_manager_entry_auto_created_when_missing(hass, release_check):
         manager_entities = er.async_entries_for_config_entry(
             er.async_get(hass), managers[0].entry_id
         )
-        assert {e.domain for e in manager_entities} == {"sensor", "button"}
+        assert {e.domain for e in manager_entities} == {"sensor", "button", "switch"}
 
         await init_integration(hass, data={CONF_HOST: "192.168.99.100"})
         managers = [
@@ -465,3 +465,114 @@ async def test_release_sensor_unavailable_before_first_success(hass, release_che
         if e.domain == "sensor"
     )
     assert hass.states.get(entity.entity_id).state == "unavailable"
+
+
+_AUTO_INSTALL = "custom_components.kiosk_satellite_manager.update.async_install_entry"
+
+
+def _health_version(version):
+    return AsyncMock(return_value={"appVersion": version})
+
+
+def _entity(hass, entry, suffix):
+    return next(
+        e.entity_id
+        for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
+        if e.unique_id == f"{entry.entry_id}_{suffix}"
+    )
+
+
+async def _publish(hass, release_check, version):
+    release_check.return_value = ReleaseInfo(version, f"https://example.invalid/{version}", "notes")
+    await hass.data[RELEASE_COORDINATOR_KEY].async_refresh()
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+
+async def test_auto_update_all_switch_defaults_off_and_touches_only_manager(hass):
+    """[KSM-TEST-151] Fleet switch persists a manager option only, survives options edits."""
+    manager = await _manager(hass, options={CONF_PASSWORD: "saved-secret"})
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", new=_health_version("2026.9.1")):
+        device = await init_integration(hass)
+    switch_id = _entity(hass, manager, "auto_update_all")
+    assert hass.states.get(switch_id).state == "off"
+
+    await hass.services.async_call("switch", "turn_on", {"entity_id": switch_id}, blocking=True)
+    assert hass.states.get(switch_id).state == "on"
+    assert manager.options[CONF_AUTO_UPDATE_ALL] is True
+    assert CONF_AUTO_UPDATE not in device.entry.options
+    assert hass.states.get(_entity(hass, device.entry, "auto_update")).state == "off"
+
+    result = await hass.config_entries.options.async_init(manager.entry_id)
+    data = result["data_schema"]({})
+    data.update({CONF_HA_URL: "https://ha.example.test", CONF_TOKEN_MODE: TOKEN_MODE_AUTO})
+    result = await hass.config_entries.options.async_configure(result["flow_id"], data)
+    assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert manager.options[CONF_AUTO_UPDATE_ALL] is True
+    assert hass.states.get(switch_id).state == "on"
+
+    await hass.services.async_call("switch", "turn_off", {"entity_id": switch_id}, blocking=True)
+    assert manager.options[CONF_AUTO_UPDATE_ALL] is False
+
+
+async def test_auto_update_all_installs_new_release_on_opted_out_device(hass, release_check):
+    """[KSM-TEST-152] Fleet on + device switch off -> one install per new release."""
+    release_check.return_value = ReleaseInfo("2026.9.76", "https://example.invalid/76", "notes")
+    await _manager(hass, options={CONF_AUTO_UPDATE_ALL: True})
+    with patch(
+        "custom_components.kiosk_satellite_manager.fetch_health", new=_health_version("2026.9.76")
+    ), patch(_AUTO_INSTALL, new=AsyncMock()) as install:
+        device = await init_integration(hass)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        install.assert_not_awaited()
+        await _publish(hass, release_check, "2026.9.77")
+        await _publish(hass, release_check, "2026.9.77")
+    install.assert_awaited_once()
+    assert install.await_args.args[1] is device.entry
+
+
+async def test_auto_update_all_off_leaves_opted_out_device_alone(hass, release_check):
+    """[KSM-TEST-152] negative case: fleet off and device off -> no install."""
+    release_check.return_value = ReleaseInfo("2026.9.76", "https://example.invalid/76", "notes")
+    await _manager(hass)
+    with patch(
+        "custom_components.kiosk_satellite_manager.fetch_health", new=_health_version("2026.9.76")
+    ), patch(_AUTO_INSTALL, new=AsyncMock()) as install:
+        await init_integration(hass)
+        await _publish(hass, release_check, "2026.9.77")
+    install.assert_not_awaited()
+
+
+async def test_turning_auto_update_all_on_installs_an_available_update(hass, release_check):
+    """[KSM-TEST-152] Switching the fleet option on re-evaluates loaded devices."""
+    release_check.return_value = ReleaseInfo("2026.9.77", "https://example.invalid/77", "notes")
+    manager = await _manager(hass)
+    with patch(
+        "custom_components.kiosk_satellite_manager.fetch_health", new=_health_version("2026.9.76")
+    ), patch(_AUTO_INSTALL, new=AsyncMock()) as install:
+        device = await init_integration(hass)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        install.assert_not_awaited()
+        await hass.services.async_call(
+            "switch", "turn_on", {"entity_id": _entity(hass, manager, "auto_update_all")}, blocking=True
+        )
+        await hass.async_block_till_done(wait_background_tasks=True)
+    install.assert_awaited_once()
+    assert install.await_args.args[1] is device.entry
+
+
+async def test_auto_update_all_respects_a_skipped_version(hass, release_check):
+    """[KSM-TEST-152] negative case: HA's skip wins over the fleet switch."""
+    release_check.return_value = ReleaseInfo("2026.9.77", "https://example.invalid/77", "notes")
+    manager = await _manager(hass)
+    with patch(
+        "custom_components.kiosk_satellite_manager.fetch_health", new=_health_version("2026.9.76")
+    ), patch(_AUTO_INSTALL, new=AsyncMock()) as install:
+        device = await init_integration(hass)
+        await hass.services.async_call(
+            "update", "skip", {"entity_id": _entity(hass, device.entry, "update")}, blocking=True
+        )
+        await hass.services.async_call(
+            "switch", "turn_on", {"entity_id": _entity(hass, manager, "auto_update_all")}, blocking=True
+        )
+        await _publish(hass, release_check, "2026.9.77")
+    install.assert_not_awaited()

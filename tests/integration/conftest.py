@@ -49,6 +49,19 @@ def release_check():
         yield mock
 
 
+@pytest.fixture(autouse=True)
+def adb_probe():
+    """KSM-BEHAVE-079: the ADB-enabled binary sensor polls a TCP connect to
+    the entry's host. Keep it off the network; tests that care patch the
+    same target themselves."""
+    with patch(
+        "custom_components.kiosk_satellite_manager.binary_sensor.async_probe_adb_port",
+        new=AsyncMock(return_value=False),
+        create=True,
+    ) as mock:
+        yield mock
+
+
 @dataclass
 class KSMContext:
     entry: MockConfigEntry

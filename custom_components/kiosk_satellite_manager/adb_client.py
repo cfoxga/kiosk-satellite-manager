@@ -38,7 +38,7 @@ from adb_shell.exceptions import (
     TcpTimeoutException,
 )
 
-from .const import KS_HOME_ACTIVITY, KS_PACKAGE
+from .const import ADB_PROBE_TIMEOUT_S, KS_HOME_ACTIVITY, KS_PACKAGE
 
 _VERSION_NAME_RE = re.compile(r"\bversionName=([^\s]+)")
 _RUNTIME_PERMISSION_RE = re.compile(r"^\s*(android\.permission\.\S+): granted=(true|false)", re.MULTILINE)
@@ -279,6 +279,26 @@ def ensure_adb_key(key_dir: str) -> str:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
             os.close(lock_fd)
         os.close(dir_fd)
+
+
+async def async_probe_adb_port(host: str, port: int, timeout: float = ADB_PROBE_TIMEOUT_S) -> bool:
+    """KSM-BEHAVE-079: whether host:port accepts a TCP connection.
+
+    A bare connect, deliberately not an ADB handshake: it opens no ADB
+    session, so polling it can never raise the on-device "Allow USB
+    debugging?" prompt. It proves adbd is listening, not that our key is
+    authorized.
+    """
+    try:
+        _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
+    except (OSError, asyncio.TimeoutError):
+        return False
+    writer.close()
+    try:
+        await writer.wait_closed()
+    except OSError:
+        pass
+    return True
 
 
 class AdbClient:
