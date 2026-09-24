@@ -307,6 +307,24 @@ async def test_check_ha_connection_returns_ok_flag():
     assert session.post.call_args.args[0] == "http://192.168.1.50:2324/api/commands/haCheckConnection"
 
 
+async def test_run_command_posts_bearer_token_to_the_command_url():
+    """[KSM-BEHAVE-082] checkUpdateNow/getUpdateStatus/getUpdateInstallerStatus/
+    installUpdate all ride this same POST /api/commands/<command> shape."""
+    session = _fake_session(post=_fake_response({"availableVersion": "2026.9.77"}))
+    result = await ks_api_client.run_command(session, "192.168.1.50", "tok-789", "getUpdateStatus")
+    assert result == {"availableVersion": "2026.9.77"}
+    _, kwargs = session.post.call_args
+    assert kwargs["headers"]["Authorization"] == "Bearer tok-789"
+    assert kwargs["allow_redirects"] is False
+    assert session.post.call_args.args[0] == "http://192.168.1.50:2324/api/commands/getUpdateStatus"
+
+
+async def test_run_command_raises_ksapierror_on_rejection():
+    session = _fake_session(post=_fake_response({"error": "not authenticated"}, ok=False, status=401))
+    with pytest.raises(KsApiError, match="not authenticated"):
+        await ks_api_client.run_command(session, "192.168.1.50", "tok-789", "installUpdate")
+
+
 async def test_check_ha_connection_false_on_failure():
     session = _fake_session(post=_fake_response({"ok": False, "error": "unreachable"}))
     assert await ks_api_client.check_ha_connection(session, "192.168.1.50", "tok-789") is False

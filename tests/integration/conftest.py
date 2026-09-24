@@ -21,6 +21,7 @@ if _ROOT_DIR not in sys.path:
 from custom_components.kiosk_satellite_manager.const import (  # noqa: E402
     CONF_HOST,
     CONF_KEY_PATH,
+    CONF_PASSWORD,
     CONF_PORT,
     DOMAIN,
 )
@@ -74,6 +75,7 @@ async def init_integration(
         CONF_HOST: "192.168.99.99",
         CONF_PORT: 5555,
         CONF_KEY_PATH: "/tmp/ksm-test-key/adbkey",
+        CONF_PASSWORD: "synthetic-test-password",
     }
     entry_data.update(data or {})
     entry = MockConfigEntry(domain=DOMAIN, data=entry_data, options=options or {})

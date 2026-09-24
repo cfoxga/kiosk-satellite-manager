@@ -3,10 +3,11 @@
 
 Installed version is the device's own /api/health appVersion (the entry's
 health coordinator); latest version, release page and notes come from the
-single shared release check (KSM-BEHAVE-071). Install is
-button.async_install_entry -- the same verified sequence as the
-Install/Reinstall button -- so an upgrade is pinned, read back and
-credential-handled exactly like a manual reinstall.
+single shared release check (KSM-BEHAVE-071). Install runs Kiosk
+Satellite's own self-update over its `:2324` API (KSM-BEHAVE-082,
+ks_update.async_self_update_entry) -- *superseded 2026-09-24 (#47)*: it
+previously ran the Install/Reinstall button's ADB sequence, which failed
+once a device's ADB was off after onboarding (KSM-BEHAVE-081).
 
 Auto-update is evaluated on every update from either coordinator and when
 the entry's options change (the auto-update switch) or the manager's
@@ -31,12 +32,12 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .button import async_install_entry
 from .const import (
     CONF_AREA_ID, CONF_AUTO_UPDATE, CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_MANAGER,
     RELEASE_COORDINATOR_KEY, SIGNAL_AUTO_UPDATE_ALL,
 )
 from .helpers import auto_update_all_enabled, resolve_area_name
+from .ks_update import OUTCOME_AWAITING_CONFIRMATION, async_self_update_entry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -75,6 +76,10 @@ class KioskSatelliteUpdateEntity(CoordinatorEntity, UpdateEntity):
         self._health = health
         self._entry = entry
         self._auto_attempted: set[str] = set()
+        # KSM-BEHAVE-082: the version currently awaiting the on-device
+        # install confirmation, or None. Cleared once health reaches it or
+        # the release check moves the target past it.
+        self._awaiting_confirmation_version: str | None = None
         self._attr_unique_id = f"{entry.entry_id}_update"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
@@ -118,18 +123,36 @@ class KioskSatelliteUpdateEntity(CoordinatorEntity, UpdateEntity):
     async def async_release_notes(self) -> str | None:
         return self.coordinator.data.notes if self.coordinator.data else None
 
+    @property
+    def extra_state_attributes(self) -> dict[str, str] | None:
+        if self._awaiting_confirmation_version is not None:
+            return {"ksm_update_state": "awaiting_confirmation"}
+        return None
+
     async def async_install(self, version: str | None, backup: bool, **kwargs: Any) -> None:
         try:
-            await async_install_entry(self.hass, self._entry)
+            outcome = await async_self_update_entry(self.hass, self._entry)
         except HomeAssistantError:
             raise
         except Exception as err:
             raise HomeAssistantError(
                 f"Kiosk Satellite install failed on {self._entry.title}: {err}"
             ) from err
+        self._awaiting_confirmation_version = (
+            self.latest_version if outcome == OUTCOME_AWAITING_CONFIRMATION else None
+        )
 
     @callback
     def _handle_coordinator_update(self) -> None:
+        # Clear before the base class writes HA state -- writing first and
+        # clearing after would publish the stale "awaiting_confirmation"
+        # attribute for this update, leaving it visible until some later,
+        # unrelated trigger happened to fire a second write.
+        if self._awaiting_confirmation_version is not None and (
+            self.installed_version == self._awaiting_confirmation_version
+            or self.latest_version != self._awaiting_confirmation_version
+        ):
+            self._awaiting_confirmation_version = None
         super()._handle_coordinator_update()
         self._maybe_auto_update()
 
@@ -167,7 +190,7 @@ class KioskSatelliteUpdateEntity(CoordinatorEntity, UpdateEntity):
 
     async def _async_auto_install(self, version: str) -> None:
         try:
-            await async_install_entry(self.hass, self._entry)
+            outcome = await async_self_update_entry(self.hass, self._entry)
         except Exception as err:  # logged, never retried for this version
             _LOGGER.warning(
                 "automatic Kiosk Satellite update to %s failed on %s: %s",
@@ -175,3 +198,9 @@ class KioskSatelliteUpdateEntity(CoordinatorEntity, UpdateEntity):
                 self._entry.title,
                 err,
             )
+            return
+        # KSM-BEHAVE-073 rule 4: awaiting confirmation still counts as this
+        # version's one attempt -- no second on-screen prompt for it.
+        self._awaiting_confirmation_version = (
+            version if outcome == OUTCOME_AWAITING_CONFIRMATION else None
+        )

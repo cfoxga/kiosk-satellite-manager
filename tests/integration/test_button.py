@@ -11,22 +11,55 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
+from custom_components.kiosk_satellite_manager.adb_client import AdbConnectFailed
 from custom_components.kiosk_satellite_manager.const import (
     CONF_DEVICE_PROFILE,
+    CONF_ENTRY_TYPE,
     CONF_HA_TOKEN,
     CONF_HA_REFRESH_TOKEN_ID,
     CONF_HA_TOKEN_OWNED,
+    CONF_HOST,
+    CONF_PASSWORD,
     CONF_TOKEN_MODE,
     DOMAIN,
+    ENTRY_TYPE_MANAGER,
     INSTALL_LAUNCH_POLL_ATTEMPTS,
     TOKEN_MODE_AUTO,
 )
 from custom_components.kiosk_satellite_manager.credentials import TokenCredential
 from custom_components.kiosk_satellite_manager.device_catalog import NoApprovedRecipe
+from custom_components.kiosk_satellite_manager.ks_api import ReleaseInfo
 
 from .conftest import init_integration
+
+_LOGIN = "custom_components.kiosk_satellite_manager.ks_update.ks_api_client.login"
+_RUN_COMMAND = "custom_components.kiosk_satellite_manager.ks_update.ks_api_client.run_command"
+_POLL_HEALTH = "custom_components.kiosk_satellite_manager.ks_update.fetch_health"
+
+
+def _refuses_adb():
+    """An AdbClient patch that fails loudly on construction -- proves the
+    self-update path never even tries to build one."""
+    return patch(
+        "custom_components.kiosk_satellite_manager.button.AdbClient",
+        side_effect=AssertionError("AdbClient must not be constructed"),
+    )
+
+
+def _release(version: str) -> ReleaseInfo:
+    return ReleaseInfo(version, f"https://example.invalid/releases/{version}", f"notes for {version}")
+
+
+def _entity_id(hass, entry_id: str, domain: str, suffix: str) -> str:
+    ent_reg = er.async_get(hass)
+    return next(
+        e.entity_id
+        for e in er.async_entries_for_config_entry(ent_reg, entry_id)
+        if e.domain == domain and e.unique_id == f"{entry_id}_{suffix}"
+    )
 
 
 def _fake_apk_response():
@@ -65,7 +98,13 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
         # which resolves the approved recipe from it.
         # Portal Mini retains the launcher-capable v2 recipe. Portal Go's
         # observed OEM resolver is deliberately assigned launcher-free v3.
-        ctx = await init_integration(hass, data={CONF_DEVICE_PROFILE: "portal_mini"})
+        # CONF_PASSWORD: None keeps this test on the ADB install path only --
+        # install_and_launch's device-name/HA auto-connect sync (a stored
+        # password) is covered separately and would need this fake_session to
+        # also answer /api/setup/status, /api/login and PATCH /api/settings.
+        ctx = await init_integration(
+            hass, data={CONF_DEVICE_PROFILE: "portal_mini", CONF_PASSWORD: None}
+        )
 
         ent_reg = er.async_get(hass)
         entries = er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)
@@ -518,3 +557,111 @@ async def test_press_refuses_to_provision_a_device_with_no_approved_recipe(hass)
     # The ADB session is still closed cleanly -- failing closed is not
     # failing messily.
     mock_client.close.assert_awaited_once()
+
+
+async def test_install_press_names_adb_and_host_port_on_connect_refusal(hass):
+    """[KSM-TEST-158] negative case: the Install/Reinstall button with ADB
+    refused raises an error naming ADB and host:port, not a bare
+    AdbConnectFailed (KSM-BEHAVE-081)."""
+    async def fake_fetch_health(session, host):
+        return {"appVersion": "old"}
+
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
+        ctx = await init_integration(hass)
+        install_entity_id = _entity_id(hass, ctx.entry.entry_id, "button", "install")
+
+        with patch(
+            "custom_components.kiosk_satellite_manager.button.AdbClient"
+        ) as mock_client_cls:
+            mock_client_cls.return_value.connect = AsyncMock(
+                side_effect=AdbConnectFailed("connection refused")
+            )
+            with pytest.raises(HomeAssistantError, match=r"ADB is unreachable at .+:\d+"):
+                await hass.services.async_call(
+                    "button", "press", {"entity_id": install_entity_id}, blocking=True
+                )
+
+
+async def test_uninstall_press_names_adb_and_host_port_on_connect_refusal(hass):
+    """[KSM-TEST-158] negative case: the Uninstall button with ADB refused
+    raises an error naming ADB and host:port, not a bare AdbConnectFailed."""
+    async def fake_fetch_health(session, host):
+        return {"appVersion": "old"}
+
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
+        ctx = await init_integration(hass)
+        uninstall_entity_id = _entity_id(hass, ctx.entry.entry_id, "button", "uninstall")
+
+        with patch(
+            "custom_components.kiosk_satellite_manager.button.AdbClient"
+        ) as mock_client_cls:
+            mock_client_cls.return_value.connect = AsyncMock(
+                side_effect=AdbConnectFailed("connection refused")
+            )
+            with pytest.raises(HomeAssistantError, match=r"ADB is unreachable at .+:\d+"):
+                await hass.services.async_call(
+                    "button", "press", {"entity_id": uninstall_entity_id}, blocking=True
+                )
+
+
+async def test_update_all_updates_two_devices_over_the_ks_api(hass, release_check):
+    """[KSM-TEST-158] two outdated devices -- one that confirms the new
+    version immediately, one that still needs the on-device confirmation tap
+    -- both update through the KS API, regardless of ADB stub state. The
+    notification reports all four buckets; no AdbClient is constructed."""
+    release_check.return_value = _release("2026.9.77")
+
+    async def fake_fetch_health(session, host):
+        return {"appVersion": "2026.9.76"}
+
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
+        first = await init_integration(hass)
+        second = await init_integration(hass, data={CONF_HOST: "192.168.99.98"})
+        manager = next(
+            e for e in hass.config_entries.async_entries(DOMAIN)
+            if e.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER
+        )
+        update_all_entity_id = _entity_id(hass, manager.entry_id, "button", "update_all")
+
+        async def fake_poll_health(session, host):
+            # The first device's poll sees the new version land immediately;
+            # the second's never does, so its outcome resolves from
+            # getUpdateStatus's lastOutcome instead (KSM-TEST-155/158).
+            if host == "192.168.99.98":
+                return {"appVersion": "2026.9.76"}
+            return {"appVersion": "2026.9.77"}
+
+        def fake_run_command(session, host, token, command):
+            responses = {
+                "checkUpdateNow": {},
+                "getUpdateStatus": (
+                    {"availableVersion": "2026.9.77", "lastOutcome": "confirm"}
+                    if host == "192.168.99.98"
+                    else {"availableVersion": "2026.9.77"}
+                ),
+                "getUpdateInstallerStatus": {},
+                "installUpdate": {"ok": True},
+            }
+            return responses[command]
+
+        with _refuses_adb() as mock_client_cls, patch(
+            "custom_components.kiosk_satellite_manager.ks_update.SELF_UPDATE_POLL_ATTEMPTS", 1
+        ), patch(_POLL_HEALTH, new=fake_poll_health), patch(
+            _LOGIN, new=AsyncMock(return_value="device-token")
+        ), patch(
+            _RUN_COMMAND, new=AsyncMock(side_effect=fake_run_command)
+        ), patch(
+            "custom_components.kiosk_satellite_manager.button.persistent_notification.async_create"
+        ) as notify:
+            await hass.services.async_call(
+                "button", "press", {"entity_id": update_all_entity_id}, blocking=True
+            )
+
+    mock_client_cls.assert_not_called()
+    message = notify.call_args.kwargs["message"]
+    assert first.entry.title in message
+    assert second.entry.title in message
+    assert f"Updated: {first.entry.title}" in message
+    assert f"Awaiting confirmation on device: {second.entry.title}" in message
+    assert "Skipped:" in message
+    assert "Failed: none" in message

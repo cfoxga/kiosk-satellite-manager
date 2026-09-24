@@ -1,17 +1,17 @@
-"""Kiosk Satellite provisioning payload: build, apply, and verify.
+"""Kiosk Satellite provisioning payload: build, apply and verify.
 
-Design driven directly by docs/SPEC/provisioning.md Verified Findings 1-3:
-the whole payload rides one `ks.provision` ADB intent (Finding 1), the
-device's own /api/health is the unauthenticated read-back channel
-(Finding 2), and `am start` exit 0 proves nothing -- a malformed (e.g.
-unescaped) payload is silently dropped while the shell still reports
-success, so every apply is read back and compared (Finding 3).
-
-The quoting in build_provision_command and the apply-then-readback sequence
-in apply_provisioning were both live-verified this session against a
-production device (docs/SPEC/provisioning.md): setting device.name via this
-exact command, confirming the change via /api/health, then reverting it the
-same way.
+*Superseded 2026-09-24 (`#47`, KSM-BEHAVE-083)*: the `provision` **service**
+now rides one `PATCH /api/settings` over Kiosk Satellite's own `:2324` API
+(via `ks_api_client.patch_settings`, which already raises on a per-key
+rejection) instead of the `ks.provision` ADB intent -- KSM-BEHAVE-081 keeps
+ADB only for onboarding, Install/Reinstall and Uninstall. `build_provision_command`
+is still used directly by install.py's onboarding sequence (setting
+`home.enabled` during the Install/Reinstall button's own ADB session, which
+KSM-BEHAVE-081 permits), so it stays here rather than being deleted. The
+device's own /api/health remains the unauthenticated read-back channel for
+the keys it echoes (originally Verified Finding 2, docs/SPEC/provisioning.md);
+reading it back after a PATCH costs nothing and catches a device-side
+application bug that a 200 alone would not.
 """
 from __future__ import annotations
 
@@ -20,10 +20,26 @@ import logging
 
 import aiohttp
 
-from .adb_client import AdbClient
+from . import ks_api_client
 from .const import HEALTH_PORT, HEALTH_TIMEOUT_S, KS_MAIN_ACTIVITY
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _quote_for_device_shell(payload_json: str) -> str:
+    """Single-quote payload_json for the device's shell, escaping embedded
+    single quotes -- an unquoted/word-split payload is silently dropped by
+    Kiosk Satellite, not rejected, so getting this wrong fails silent, not
+    loud."""
+    return "'" + payload_json.replace("'", "'\\''") + "'"
+
+
+def build_provision_command(payload: dict) -> str:
+    """Build the `am start ... --es ks.provision '<json>'` shell command
+    still used by install.py's onboarding sequence."""
+    payload_json = json.dumps(payload)
+    quoted = _quote_for_device_shell(payload_json)
+    return f"am start -a android.intent.action.MAIN -n {KS_MAIN_ACTIVITY} --es ks.provision {quoted}"
 
 # Keys whose applied value can be verified directly against a same-named
 # /api/health field. Anything outside this set (e.g. remote.password, which
@@ -37,23 +53,8 @@ class ProvisioningMismatch(Exception):
     """The device's /api/health readback didn't match what we tried to set."""
 
 
-def _quote_for_device_shell(payload_json: str) -> str:
-    """Single-quote payload_json for the device's shell, escaping embedded
-    single quotes -- Finding 3: an unquoted/word-split payload is silently
-    dropped by Kiosk Satellite, not rejected, so getting this wrong fails
-    silent, not loud."""
-    return "'" + payload_json.replace("'", "'\\''") + "'"
-
-
-def build_provision_command(payload: dict) -> str:
-    """Build the `am start ... --es ks.provision '<json>'` shell command."""
-    payload_json = json.dumps(payload)
-    quoted = _quote_for_device_shell(payload_json)
-    return f"am start -a android.intent.action.MAIN -n {KS_MAIN_ACTIVITY} --es ks.provision {quoted}"
-
-
 async def fetch_health(session: aiohttp.ClientSession, host: str) -> dict:
-    """GET /api/health -- unauthenticated per Finding 2."""
+    """GET /api/health -- unauthenticated."""
     async with session.get(
         f"http://{host}:{HEALTH_PORT}/api/health",
         timeout=aiohttp.ClientTimeout(total=HEALTH_TIMEOUT_S),
@@ -63,12 +64,13 @@ async def fetch_health(session: aiohttp.ClientSession, host: str) -> dict:
 
 
 async def apply_provisioning(
-    client: AdbClient, session: aiohttp.ClientSession, host: str, payload: dict
+    session: aiohttp.ClientSession, host: str, token: str, payload: dict
 ) -> dict:
-    """Apply payload via one ks.provision intent, then verify what we can via
-    /api/health. Raises ProvisioningMismatch if a verifiable key didn't take."""
-    command = build_provision_command(payload)
-    await client.shell(command)
+    """Apply payload via one PATCH /api/settings (KSM-BEHAVE-083), then
+    verify what we can via /api/health. `ks_api_client.patch_settings`
+    already raises KsApiError naming any per-key rejection.
+    Raises ProvisioningMismatch if a verifiable key didn't take."""
+    await ks_api_client.patch_settings(session, host, token, payload)
     health = await fetch_health(session, host)
     mismatches = {}
     for key, value in payload.items():
@@ -78,7 +80,5 @@ async def apply_provisioning(
         if health.get(health_field) != value:
             mismatches[key] = (value, health.get(health_field))
     if mismatches:
-        raise ProvisioningMismatch(
-            f"payload not applied for: {mismatches!r} -- device may have word-split the intent"
-        )
+        raise ProvisioningMismatch(f"payload not applied for: {mismatches!r}")
     return health

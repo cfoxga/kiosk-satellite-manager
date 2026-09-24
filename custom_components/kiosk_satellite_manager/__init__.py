@@ -48,6 +48,7 @@ from .const import (
     CONF_ENTRY_TYPE,
     ENTRY_TYPE_MANAGER,
     CONF_KEY_PATH,
+    CONF_PASSWORD,
     CONF_PORT,
     DOMAIN,
     HEALTH_SCAN_INTERVAL_MIN,
@@ -59,6 +60,8 @@ from .const import (
 )
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .ks_api import latest_release_info
+from .ks_api_client import KsApiError
+from .ks_api_client import login as ks_api_login
 from .provisioning import ProvisioningMismatch, apply_provisioning, fetch_health
 
 _LOGGER = logging.getLogger(__name__)
@@ -237,25 +240,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not hass.services.has_service(DOMAIN, SERVICE_PROVISION):
 
         async def _handle_provision(call: ServiceCall) -> None:
+            """KSM-BEHAVE-083: apply settings over the Kiosk Satellite API
+            (`PATCH /api/settings`), never ADB -- superseded 2026-09-24
+            (`#47`) from the `ks.provision` ADB intent."""
             target_entry, target_coordinator = _active_target(hass, call.data["config_entry_id"])
             await _authorize_target(call, hass, target_entry)
-            client = AdbClient(
-                target_entry.data[CONF_HOST],
-                target_entry.data[CONF_PORT],
-                target_entry.data[CONF_KEY_PATH],
-            )
-            await client.connect()
-            try:
-                await apply_provisioning(
-                    client,
-                    async_get_clientsession(hass),
-                    target_entry.data[CONF_HOST],
-                    call.data["settings"],
+            password = target_entry.data.get(CONF_PASSWORD)
+            if not password:
+                raise ServiceValidationError(
+                    f"no Kiosk Satellite password stored for {target_entry.title}"
                 )
+            session = async_get_clientsession(hass)
+            host = target_entry.data[CONF_HOST]
+            try:
+                token = await ks_api_login(session, host, password)
+                await apply_provisioning(session, host, token, call.data["settings"])
             except ProvisioningMismatch as err:
                 raise ServiceValidationError(str(err)) from err
-            finally:
-                await client.close()
+            except KsApiError as err:
+                raise ServiceValidationError(
+                    f"Kiosk Satellite API error on {target_entry.title}: {err}"
+                ) from err
             await target_coordinator.async_request_refresh()
 
         hass.services.async_register(

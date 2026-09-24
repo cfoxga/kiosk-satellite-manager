@@ -23,7 +23,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import entity_registry as er
 
-from .adb_client import AdbClient
+from .adb_client import AdbClient, AdbConnectFailed
 from .const import (
     CONF_AREA_ID,
     CONF_ENTRY_TYPE,
@@ -49,8 +49,21 @@ from .credentials import TokenCredential, async_replace_entry_credential
 
 from .helpers import resolve_area_name
 from .install import install_and_launch
+from .ks_update import OUTCOME_AWAITING_CONFIRMATION, async_self_update_entry
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _adb_unreachable_error(entry: ConfigEntry) -> HomeAssistantError:
+    """KSM-BEHAVE-081: an ADB connection failure names ADB and the
+    configured host:port, and says what ADB is still needed for -- never a
+    bare AdbConnectFailed."""
+    host = entry.data[CONF_HOST]
+    port = entry.data[CONF_PORT]
+    return HomeAssistantError(
+        f"Kiosk Satellite ADB is unreachable at {host}:{port} -- ADB is needed only for "
+        "onboarding, and for an explicit Install/Reinstall or Uninstall"
+    )
 
 
 async def async_setup_entry(
@@ -68,15 +81,17 @@ async def async_setup_entry(
 
 
 async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Install/upgrade Kiosk Satellite on one entry's device.
+    """Install/upgrade Kiosk Satellite over ADB on one entry's device.
 
-    The single entry-level install sequence: the Install button, the update
-    entity's Install, and opt-in auto-update (KSM-BEHAVE-072/073) all run
-    this, so an upgrade has exactly the button's postconditions.
+    The Install/Reinstall button's own sequence -- *superseded 2026-09-24
+    (`#47`, KSM-BEHAVE-081/082)*: the update entity's Install and opt-in
+    auto-update now run `ks_update.async_self_update_entry` instead (Kiosk
+    Satellite's own `:2324` API), since ADB is refused after onboarding.
+    This function remains the ADB path used only by the Install/Reinstall
+    button and initial onboarding.
 
-    KSM-BEHAVE-072: refuses while this entry already has an install running
-    -- two concurrent ADB installs on one device is never intended, and
-    auto-update makes an overlap with a manual press plausible.
+    Refuses while this entry already has an install running -- two
+    concurrent ADB installs on one device is never intended.
     """
     coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if coordinator is not None and coordinator.ksm_installing:
@@ -93,7 +108,10 @@ async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         coordinator.ksm_installing = True
         coordinator.async_update_listeners()
     try:
-        await client.connect()
+        try:
+            await client.connect()
+        except AdbConnectFailed as err:
+            raise _adb_unreachable_error(entry) from err
         try:
             credential = TokenCredential.from_entry_data(entry.data)
             rotate_managed_credential = entry.data.get(CONF_TOKEN_MODE) == TOKEN_MODE_AUTO
@@ -183,6 +201,9 @@ class KioskSatelliteUninstallButton(ButtonEntity):
         )
         try:
             await client.connect()
+        except AdbConnectFailed as err:
+            raise _adb_unreachable_error(self._entry) from err
+        try:
             await client.uninstall_ks()
         finally:
             await client.close()
@@ -231,7 +252,7 @@ class KioskSatelliteUpdateAllButton(ButtonEntity):
             self._notify("No usable Kiosk Satellite release is known.")
             return
         self.hass.data[MANAGER_UPDATE_RUNNING_KEY] = True
-        updated, skipped, failed = [], [], []
+        updated, awaiting, skipped, failed = [], [], [], []
         version = release.data.version
         try:
             entries = [
@@ -245,16 +266,22 @@ class KioskSatelliteUpdateAllButton(ButtonEntity):
                     skipped.append(f"{entry.title}: {reason}")
                     continue
                 # Rechecked for each entry after all earlier installs complete.
-                # async_install_entry marks this device installing before
+                # async_self_update_entry marks this device installing before
                 # yielding, closing the same-device race with other actions.
+                # KSM-BEHAVE-081: over the Kiosk Satellite API -- never ADB.
                 try:
-                    await async_install_entry(self.hass, entry)
-                    updated.append(entry.title)
+                    outcome = await async_self_update_entry(self.hass, entry)
                 except Exception as err:  # continue with the next device
-                    failed.append(f"{entry.title}: {type(err).__name__}")
+                    failed.append(f"{entry.title}: {err}")
+                    continue
+                if outcome == OUTCOME_AWAITING_CONFIRMATION:
+                    awaiting.append(entry.title)
+                else:
+                    updated.append(entry.title)
             self._notify(
                 f"Release: {version}\n"
                 f"Updated: {', '.join(updated) or 'none'}\n"
+                f"Awaiting confirmation on device: {', '.join(awaiting) or 'none'}\n"
                 f"Skipped: {', '.join(skipped) or 'none'}\n"
                 f"Failed: {', '.join(failed) or 'none'}"
             )

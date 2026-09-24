@@ -118,6 +118,26 @@ async def patch_settings(
         return data
 
 
+async def run_command(
+    session: aiohttp.ClientSession, host: str, token: str, command: str
+) -> dict:
+    """POST /api/commands/<command> with an empty body and a Bearer token
+    (KSM-BEHAVE-082) -- checkUpdateNow, getUpdateStatus,
+    getUpdateInstallerStatus and installUpdate all ride this same shape."""
+    async with session.post(
+        _credential_url(host, f"/api/commands/{command}"),
+        data="{}",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        allow_redirects=False,
+        ssl=True,
+        timeout=aiohttp.ClientTimeout(total=HEALTH_TIMEOUT_S),
+    ) as resp:
+        data = await resp.json()
+        if not resp.ok:
+            raise KsApiError(data.get("error") or f"HTTP {resp.status}")
+        return data
+
+
 async def check_ha_connection(session: aiohttp.ClientSession, host: str, token: str) -> bool:
     async with session.post(
         _credential_url(host, "/api/commands/haCheckConnection"),

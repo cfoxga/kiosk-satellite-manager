@@ -74,6 +74,9 @@ async def test_provision_allows_admin_or_explicit_target_control(hass, is_admin,
     with patch.object(hass.auth, "async_get_user", new=AsyncMock(return_value=user)), patch(
         "custom_components.kiosk_satellite_manager.AdbClient"
     ) as client_cls, patch(
+        "custom_components.kiosk_satellite_manager.ks_api_login",
+        new=AsyncMock(return_value="device-token"),
+    ), patch(
         "custom_components.kiosk_satellite_manager.apply_provisioning", new=AsyncMock(return_value={})
     ) as apply:
         client_cls.return_value.connect = AsyncMock()

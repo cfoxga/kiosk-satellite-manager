@@ -137,7 +137,7 @@ async def test_update_all_skips_current_and_continues_after_failure(hass, releas
             if e.domain == "button"
         )
         with patch(
-            "custom_components.kiosk_satellite_manager.button.async_install_entry",
+            "custom_components.kiosk_satellite_manager.button.async_self_update_entry",
             new=AsyncMock(side_effect=[RuntimeError("failed"), None]),
         ) as install, patch(
             "custom_components.kiosk_satellite_manager.button.persistent_notification.async_create"
@@ -158,7 +158,7 @@ async def test_update_all_refuses_overlap_and_unknown_release(hass, release_chec
         e for e in er.async_entries_for_config_entry(er.async_get(hass), manager.entry_id)
         if e.domain == "button"
     )
-    with patch("custom_components.kiosk_satellite_manager.button.async_install_entry") as install, patch(
+    with patch("custom_components.kiosk_satellite_manager.button.async_self_update_entry") as install, patch(
         "custom_components.kiosk_satellite_manager.button.persistent_notification.async_create"
     ) as notify:
         hass.data[MANAGER_UPDATE_RUNNING_KEY] = True
@@ -198,7 +198,7 @@ async def test_update_all_skips_unreachable_installing_and_ha_skipped(hass, rele
             if e.domain == "button"
         )
         with patch(
-            "custom_components.kiosk_satellite_manager.button.async_install_entry"
+            "custom_components.kiosk_satellite_manager.button.async_self_update_entry"
         ) as install, patch(
             "custom_components.kiosk_satellite_manager.button.persistent_notification.async_create"
         ) as notify:
@@ -467,7 +467,7 @@ async def test_release_sensor_unavailable_before_first_success(hass, release_che
     assert hass.states.get(entity.entity_id).state == "unavailable"
 
 
-_AUTO_INSTALL = "custom_components.kiosk_satellite_manager.update.async_install_entry"
+_AUTO_INSTALL = "custom_components.kiosk_satellite_manager.update.async_self_update_entry"
 
 
 def _health_version(version):

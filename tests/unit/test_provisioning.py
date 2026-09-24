@@ -1,34 +1,25 @@
-"""Unit tests for the provisioning payload builder/applier (KSM-BEHAVE-002).
+"""Unit tests for the provisioning payload applier (KSM-BEHAVE-083, #47).
 
-build_provision_command's quoting and the apply-then-readback sequence were
-both live-verified this session against a production Kiosk Satellite device
-(docs/SPEC/provisioning.md) -- these tests pin that exact shape so a future
-edit can't regress it silently.
+*Superseded 2026-09-24*: provisioning now applies over one
+`PATCH /api/settings` (`ks_api_client.patch_settings`) instead of the
+`ks.provision` ADB intent -- see provisioning.py's module docstring. These
+tests pin the apply-then-readback shape: patch_settings runs first (and
+already raises on a per-key rejection), then /api/health is read back for
+whatever keys it echoes.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
 from custom_components.kiosk_satellite_manager.provisioning import (
     ProvisioningMismatch,
     apply_provisioning,
-    build_provision_command,
 )
 
-
-def test_build_provision_command_shape():
-    cmd = build_provision_command({"device.name": "Kitchen Portal"})
-    assert cmd == (
-        "am start -a android.intent.action.MAIN -n me.jxl.kiosk_satellite/.MainActivity "
-        "--es ks.provision '{\"device.name\": \"Kitchen Portal\"}'"
-    )
-
-
-def test_build_provision_command_escapes_embedded_single_quotes():
-    cmd = build_provision_command({"device.name": "Chris's Portal"})
-    assert "'\\''" in cmd
+_PATCH_SETTINGS = "custom_components.kiosk_satellite_manager.provisioning.ks_api_client.patch_settings"
 
 
 def _fake_session(health: dict):
@@ -44,25 +35,38 @@ def _fake_session(health: dict):
 
 
 async def test_apply_provisioning_succeeds_when_readback_matches():
-    client = MagicMock()
-    client.shell = AsyncMock(return_value="")
     session = _fake_session({"name": "Kitchen Portal"})
-    result = await apply_provisioning(client, session, "1.2.3.4", {"device.name": "Kitchen Portal"})
+    with patch(_PATCH_SETTINGS, new=AsyncMock(return_value={"rejected": []})) as patch_settings:
+        result = await apply_provisioning(
+            session, "1.2.3.4", "tok-789", {"device.name": "Kitchen Portal"}
+        )
     assert result == {"name": "Kitchen Portal"}
-    client.shell.assert_awaited_once()
+    patch_settings.assert_awaited_once_with(
+        session, "1.2.3.4", "tok-789", {"device.name": "Kitchen Portal"}
+    )
 
 
 async def test_apply_provisioning_raises_on_readback_mismatch():
-    client = MagicMock()
-    client.shell = AsyncMock(return_value="")
     session = _fake_session({"name": "Theater Google TV"})
-    with pytest.raises(ProvisioningMismatch):
-        await apply_provisioning(client, session, "1.2.3.4", {"device.name": "Kitchen Portal"})
+    with patch(_PATCH_SETTINGS, new=AsyncMock(return_value={"rejected": []})):
+        with pytest.raises(ProvisioningMismatch):
+            await apply_provisioning(session, "1.2.3.4", "tok-789", {"device.name": "Kitchen Portal"})
 
 
 async def test_apply_provisioning_ignores_non_verifiable_keys():
-    client = MagicMock()
-    client.shell = AsyncMock(return_value="")
     session = _fake_session({"name": "unchanged"})
-    result = await apply_provisioning(client, session, "1.2.3.4", {"remote.password": "x"})
+    with patch(_PATCH_SETTINGS, new=AsyncMock(return_value={"rejected": []})):
+        result = await apply_provisioning(session, "1.2.3.4", "tok-789", {"remote.password": "x"})
     assert result == {"name": "unchanged"}
+
+
+async def test_apply_provisioning_never_reads_back_on_a_rejected_key():
+    """[KSM-TEST-159] negative case: a rejected key raises before any
+    /api/health readback, since patch_settings itself already raises."""
+    session = _fake_session({"name": "unchanged"})
+    with patch(
+        _PATCH_SETTINGS, new=AsyncMock(side_effect=KsApiError("device rejected settings: ['device.name']"))
+    ):
+        with pytest.raises(KsApiError, match="device.name"):
+            await apply_provisioning(session, "1.2.3.4", "tok-789", {"device.name": "Kitchen Portal"})
+    session.get.assert_not_called()

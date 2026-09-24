@@ -1,9 +1,13 @@
 """Kiosk Satellite update entity, shared release check, and opt-in
-auto-update (KSM-BEHAVE-071/072/073, issue #43). The GitHub release check
-and the device's /api/health are mocked at the boundary (see conftest's
-`release_check`); install goes through the real entry-level install sequence
-in button.py with AdbClient/install_and_launch mocked, so these tests prove
-the update entity reuses the button's verified path rather than a copy.
+auto-update (KSM-BEHAVE-071/072/073/082, issues #43, #47). The GitHub
+release check and the device's /api/health are mocked at the boundary (see
+conftest's `release_check`).
+
+*Superseded 2026-09-24 (#47)*: Install/auto-update/Update all no longer go
+through the button's ADB install sequence -- they run Kiosk Satellite's own
+self-update over its `:2324` API (`ks_update.async_self_update_entry`).
+`AdbClient` is patched to fail on construction in every install test below
+and asserted never constructed.
 """
 from __future__ import annotations
 
@@ -16,7 +20,6 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
-from custom_components.kiosk_satellite_manager.button import async_install_entry
 from custom_components.kiosk_satellite_manager.const import (
     CONF_AUTO_UPDATE,
     CONF_ENTRY_TYPE,
@@ -25,13 +28,41 @@ from custom_components.kiosk_satellite_manager.const import (
     ENTRY_TYPE_MANAGER,
     RELEASE_COORDINATOR_KEY,
 )
-from custom_components.kiosk_satellite_manager.install import KsInstallVerificationFailed
 from custom_components.kiosk_satellite_manager.ks_api import ReleaseInfo
+from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
 
 from .conftest import init_integration
 
 _HEALTH = "custom_components.kiosk_satellite_manager.fetch_health"
-_AUTO_INSTALL = "custom_components.kiosk_satellite_manager.update.async_install_entry"
+_AUTO_INSTALL = "custom_components.kiosk_satellite_manager.update.async_self_update_entry"
+_ADB_CLIENT = "custom_components.kiosk_satellite_manager.button.AdbClient"
+_LOGIN = "custom_components.kiosk_satellite_manager.ks_update.ks_api_client.login"
+_RUN_COMMAND = "custom_components.kiosk_satellite_manager.ks_update.ks_api_client.run_command"
+# ks_update.py binds its own `fetch_health` name (`from .provisioning import
+# fetch_health`) for the self-update poll's direct device check -- separate
+# from `_HEALTH` above, which is __init__.py's own bound name used by the
+# entry's health coordinator. Patching one does not affect the other.
+_POLL_HEALTH = "custom_components.kiosk_satellite_manager.ks_update.fetch_health"
+
+
+def _refuses_adb():
+    """An AdbClient patch that fails loudly on construction -- proves the
+    self-update path never even tries to build one."""
+    return patch(_ADB_CLIENT, side_effect=AssertionError("AdbClient must not be constructed"))
+
+
+def _commands(**by_command):
+    """run_command stand-in keyed by command name; missing keys are errors."""
+
+    async def fake_run_command(session, host, token, command):
+        if command not in by_command:
+            raise AssertionError(f"unexpected command: {command}")
+        result = by_command[command]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    return fake_run_command
 
 
 def _release(version: str) -> ReleaseInfo:
@@ -121,75 +152,248 @@ async def test_update_entity_is_off_when_current(hass, release_check):
         assert hass.states.get(_entity_id(hass, ctx.entry, "update")).state == "off"
 
 
-async def test_update_install_runs_the_button_install_sequence(hass, release_check):
-    """[KSM-TEST-132] update.install goes through button.async_install_entry
-    and the post-install refresh reports the new version."""
+async def test_update_install_runs_the_ks_api_self_update_sequence(hass, release_check):
+    """[KSM-TEST-153] update.install goes through
+    ks_update.async_self_update_entry over the KS API; AdbClient is never
+    constructed, and the post-install refresh reports the new version."""
     release_check.return_value = _release("2026.9.77")
     with patch(_HEALTH, new=_health("2026.9.76", "2026.9.77")):
         ctx = await init_integration(hass)
         entity_id = _entity_id(hass, ctx.entry, "update")
 
-        seen_in_progress = []
-
-        async def fake_install(*args, **kwargs):
-            seen_in_progress.append(hass.states.get(entity_id).attributes["in_progress"])
-
-        with patch(
-            "custom_components.kiosk_satellite_manager.button.AdbClient"
-        ) as mock_client_cls, patch(
-            "custom_components.kiosk_satellite_manager.button.install_and_launch",
-            new=AsyncMock(side_effect=fake_install),
-        ) as install:
-            mock_client_cls.return_value.connect = AsyncMock()
-            mock_client_cls.return_value.close = AsyncMock()
+        with _refuses_adb() as mock_client_cls, patch(
+            _POLL_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.77"})
+        ), patch(
+            _LOGIN, new=AsyncMock(return_value="device-token")
+        ), patch(
+            _RUN_COMMAND,
+            new=_commands(
+                checkUpdateNow={},
+                getUpdateStatus={"availableVersion": "2026.9.77"},
+                getUpdateInstallerStatus={},
+                installUpdate={"ok": True},
+            ),
+        ):
             await hass.services.async_call(
                 "update", "install", {"entity_id": entity_id}, blocking=True
             )
 
-    install.assert_awaited_once()
-    assert seen_in_progress == [True]
+    mock_client_cls.assert_not_called()
     state = hass.states.get(entity_id)
     assert state.attributes["installed_version"] == "2026.9.77"
     assert state.state == "off"
     assert state.attributes["in_progress"] is False
 
 
-async def test_update_install_failure_surfaces_as_service_error(hass, release_check):
-    """[KSM-TEST-132] negative case: a failed install is an error to the
-    caller, and the in-progress flag is cleared."""
+async def test_update_install_not_offered_raises_naming_the_version(hass, release_check):
+    """[KSM-TEST-154] getUpdateStatus.availableVersion != V after
+    checkUpdateNow -> installUpdate is never called, HomeAssistantError
+    names V."""
     release_check.return_value = _release("2026.9.77")
     with patch(_HEALTH, new=_health("2026.9.76")):
         ctx = await init_integration(hass)
         entity_id = _entity_id(hass, ctx.entry, "update")
 
-        with patch(
-            "custom_components.kiosk_satellite_manager.button.AdbClient"
-        ) as mock_client_cls, patch(
-            "custom_components.kiosk_satellite_manager.button.install_and_launch",
-            new=AsyncMock(side_effect=KsInstallVerificationFailed("versionName mismatch")),
+        with _refuses_adb() as mock_client_cls, patch(
+            _LOGIN, new=AsyncMock(return_value="device-token")
+        ), patch(
+            _RUN_COMMAND,
+            new=_commands(checkUpdateNow={}, getUpdateStatus={"availableVersion": "2026.9.76"}),
         ):
-            mock_client_cls.return_value.connect = AsyncMock()
-            mock_client_cls.return_value.close = AsyncMock()
-            with pytest.raises(HomeAssistantError, match="versionName mismatch"):
+            with pytest.raises(HomeAssistantError, match="2026.9.77"):
                 await hass.services.async_call(
                     "update", "install", {"entity_id": entity_id}, blocking=True
                 )
 
+    mock_client_cls.assert_not_called()
     assert hass.data[DOMAIN][ctx.entry.entry_id].ksm_installing is False
-    assert hass.states.get(entity_id).attributes["in_progress"] is False
+
+
+async def test_update_install_awaiting_confirmation_sets_the_attribute(hass, release_check):
+    """[KSM-TEST-155] lastOutcome: "confirm" with appVersion unchanged at
+    the end of the poll window is awaiting confirmation, not an error; the
+    attribute clears once health later reports V."""
+    release_check.return_value = _release("2026.9.77")
+    with patch(_HEALTH, new=_health("2026.9.76")):
+        ctx = await init_integration(hass)
+        entity_id = _entity_id(hass, ctx.entry, "update")
+
+        with _refuses_adb() as mock_client_cls, patch(
+            "custom_components.kiosk_satellite_manager.ks_update.SELF_UPDATE_POLL_ATTEMPTS", 1
+        ), patch(
+            _POLL_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.76"})
+        ), patch(
+            _LOGIN, new=AsyncMock(return_value="device-token")
+        ), patch(
+            _RUN_COMMAND,
+            new=_commands(
+                checkUpdateNow={},
+                getUpdateStatus={"availableVersion": "2026.9.77", "lastOutcome": "confirm"},
+                getUpdateInstallerStatus={},
+                installUpdate={"ok": True},
+            ),
+        ):
+            await hass.services.async_call(
+                "update", "install", {"entity_id": entity_id}, blocking=True
+            )
+
+    mock_client_cls.assert_not_called()
+    state = hass.states.get(entity_id)
+    assert state.attributes["ksm_update_state"] == "awaiting_confirmation"
+    assert state.attributes["in_progress"] is False
+
+    with patch(_HEALTH, new=_health("2026.9.77")):
+        await hass.data[DOMAIN][ctx.entry.entry_id].async_refresh()
+    assert hass.states.get(entity_id).attributes.get("ksm_update_state") is None
+
+
+async def test_update_install_silent_outcome_is_failed_not_awaiting(hass, release_check):
+    """[KSM-TEST-155] negative case: lastOutcome: "silent" with appVersion
+    unchanged is failed, not awaiting confirmation."""
+    release_check.return_value = _release("2026.9.77")
+    with patch(_HEALTH, new=_health("2026.9.76")):
+        ctx = await init_integration(hass)
+        entity_id = _entity_id(hass, ctx.entry, "update")
+
+        with _refuses_adb() as mock_client_cls, patch(
+            "custom_components.kiosk_satellite_manager.ks_update.SELF_UPDATE_POLL_ATTEMPTS", 1
+        ), patch(
+            _POLL_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.76"})
+        ), patch(
+            _LOGIN, new=AsyncMock(return_value="device-token")
+        ), patch(
+            _RUN_COMMAND,
+            new=_commands(
+                checkUpdateNow={},
+                getUpdateStatus={"availableVersion": "2026.9.77", "lastOutcome": "silent"},
+                getUpdateInstallerStatus={},
+                installUpdate={"ok": True},
+            ),
+        ):
+            with pytest.raises(HomeAssistantError, match="did not complete"):
+                await hass.services.async_call(
+                    "update", "install", {"entity_id": entity_id}, blocking=True
+                )
+
+    mock_client_cls.assert_not_called()
+    assert hass.data[DOMAIN][ctx.entry.entry_id].ksm_installing is False
+
+
+async def test_update_install_reject_response_is_failed(hass, release_check):
+    """[KSM-TEST-156] installUpdate {ok:false} yields failed with the
+    device's own error text; no AdbClient."""
+    release_check.return_value = _release("2026.9.77")
+    with patch(_HEALTH, new=_health("2026.9.76")):
+        ctx = await init_integration(hass)
+        entity_id = _entity_id(hass, ctx.entry, "update")
+
+        with _refuses_adb() as mock_client_cls, patch(
+            _LOGIN, new=AsyncMock(return_value="device-token")
+        ), patch(
+            _RUN_COMMAND,
+            new=_commands(
+                checkUpdateNow={},
+                getUpdateStatus={"availableVersion": "2026.9.77"},
+                getUpdateInstallerStatus={},
+                installUpdate={"ok": False, "error": "no space"},
+            ),
+        ):
+            with pytest.raises(HomeAssistantError, match="no space"):
+                await hass.services.async_call(
+                    "update", "install", {"entity_id": entity_id}, blocking=True
+                )
+
+    mock_client_cls.assert_not_called()
+
+
+async def test_update_install_poll_last_error_is_failed(hass, release_check):
+    """[KSM-TEST-156] a non-null lastError surfacing from the poll's own
+    getUpdateStatus (after a successful installUpdate) yields failed; no
+    AdbClient."""
+    release_check.return_value = _release("2026.9.77")
+    with patch(_HEALTH, new=_health("2026.9.76")):
+        ctx = await init_integration(hass)
+        entity_id = _entity_id(hass, ctx.entry, "update")
+
+        status_calls = {"n": 0}
+
+        async def fake_run_command(session, host, token, command):
+            if command == "checkUpdateNow":
+                return {}
+            if command == "getUpdateStatus":
+                status_calls["n"] += 1
+                if status_calls["n"] == 1:
+                    return {"availableVersion": "2026.9.77"}
+                return {"availableVersion": "2026.9.77", "lastError": "boom"}
+            if command == "getUpdateInstallerStatus":
+                return {}
+            if command == "installUpdate":
+                return {"ok": True}
+            raise AssertionError(f"unexpected command: {command}")
+
+        with _refuses_adb() as mock_client_cls, patch(
+            _POLL_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.76"})
+        ), patch(
+            _LOGIN, new=AsyncMock(return_value="device-token")
+        ), patch(_RUN_COMMAND, new=fake_run_command):
+            with pytest.raises(HomeAssistantError, match="boom"):
+                await hass.services.async_call(
+                    "update", "install", {"entity_id": entity_id}, blocking=True
+                )
+
+    mock_client_cls.assert_not_called()
+
+
+async def test_update_install_login_failure_is_failed(hass, release_check):
+    """[KSM-TEST-156] a 401 on login yields failed; no AdbClient."""
+    release_check.return_value = _release("2026.9.77")
+    with patch(_HEALTH, new=_health("2026.9.76")):
+        ctx = await init_integration(hass)
+        entity_id = _entity_id(hass, ctx.entry, "update")
+
+        with _refuses_adb() as mock_client_cls, patch(
+            _LOGIN, new=AsyncMock(side_effect=KsApiError("401 Unauthorized"))
+        ):
+            with pytest.raises(HomeAssistantError, match="401"):
+                await hass.services.async_call(
+                    "update", "install", {"entity_id": entity_id}, blocking=True
+                )
+
+    mock_client_cls.assert_not_called()
+
+
+async def test_update_install_no_stored_password_is_failed(hass, release_check):
+    """[KSM-TEST-156] an entry with no stored password is failed before any
+    KS API call or AdbClient."""
+    from custom_components.kiosk_satellite_manager.const import CONF_PASSWORD
+
+    release_check.return_value = _release("2026.9.77")
+    with patch(_HEALTH, new=_health("2026.9.76")):
+        ctx = await init_integration(hass, data={CONF_PASSWORD: None})
+        entity_id = _entity_id(hass, ctx.entry, "update")
+
+        with _refuses_adb() as mock_client_cls:
+            with pytest.raises(HomeAssistantError, match="no Kiosk Satellite password"):
+                await hass.services.async_call(
+                    "update", "install", {"entity_id": entity_id}, blocking=True
+                )
+
+    mock_client_cls.assert_not_called()
 
 
 async def test_install_refuses_while_another_install_runs(hass):
     """[KSM-TEST-133] a second install on the same entry is refused before
-    any ADB connection is opened."""
+    any KS API call or ADB connection is opened."""
+    from custom_components.kiosk_satellite_manager.ks_update import async_self_update_entry
+
     with patch(_HEALTH, new=_health("2026.9.76")):
         ctx = await init_integration(hass)
     coordinator = hass.data[DOMAIN][ctx.entry.entry_id]
     coordinator.ksm_installing = True
 
-    with patch("custom_components.kiosk_satellite_manager.button.AdbClient") as mock_client_cls:
+    with _refuses_adb() as mock_client_cls:
         with pytest.raises(HomeAssistantError, match="already"):
-            await async_install_entry(hass, ctx.entry)
+            await async_self_update_entry(hass, ctx.entry)
 
     mock_client_cls.assert_not_called()
     assert coordinator.ksm_installing is True
@@ -286,6 +490,28 @@ async def test_auto_update_tries_each_version_once(hass, release_check):
     release_check.return_value = _release("2026.9.76")
     with patch(_HEALTH, new=_health("2026.9.76")), patch(
         _AUTO_INSTALL, new=AsyncMock(side_effect=HomeAssistantError("boom"))
+    ) as install:
+        await init_integration(hass, options={CONF_AUTO_UPDATE: True})
+
+        await _publish(hass, release_check, "2026.9.77")
+        assert install.await_count == 1
+
+        await _publish(hass, release_check, "2026.9.77")
+        assert install.await_count == 1
+
+        await _publish(hass, release_check, "2026.9.78")
+        assert install.await_count == 2
+
+
+async def test_auto_update_awaiting_confirmation_counts_as_the_one_attempt(hass, release_check):
+    """[KSM-TEST-157] an auto-update attempt at X that ends in awaiting
+    confirmation (not an exception) still counts as X's one attempt -- no
+    second on-screen prompt for it -- while a newer Y is still attempted."""
+    from custom_components.kiosk_satellite_manager.ks_update import OUTCOME_AWAITING_CONFIRMATION
+
+    release_check.return_value = _release("2026.9.76")
+    with patch(_HEALTH, new=_health("2026.9.76")), patch(
+        _AUTO_INSTALL, new=AsyncMock(return_value=OUTCOME_AWAITING_CONFIRMATION)
     ) as install:
         await init_integration(hass, options={CONF_AUTO_UPDATE: True})
 

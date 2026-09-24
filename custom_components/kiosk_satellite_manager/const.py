@@ -98,3 +98,10 @@ SYNC_STATUS_POLL_DELAY_S: Final = 2
 # and expire in 90 days if a kiosk is retired or lost before that lifecycle
 # action can run. Operator-supplied credentials remain untouched.
 HA_TOKEN_LIFESPAN_DAYS: Final = 90
+
+# KSM-BEHAVE-082: bounded poll window after installUpdate for Kiosk
+# Satellite's own self-update to either land (/api/health appVersion == V)
+# or resolve to "awaiting confirmation" (Android's on-screen install
+# prompt) -- 120 * 5s = 10 minutes, matching the design doc's default.
+SELF_UPDATE_POLL_ATTEMPTS: Final = 120
+SELF_UPDATE_POLL_DELAY_S: Final = 5

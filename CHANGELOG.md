@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- App updates and the `provision` service no longer use ADB after initial onboarding: updates
+  and Update all now run over Kiosk Satellite's own authenticated `:2324` API, and `provision`
+  applies settings with a `PATCH /api/settings` call instead of the `ks.provision` ADB intent.
+  ADB is now used only for onboarding and the Install/Reinstall and Uninstall buttons.
+
 - Add per-device diagnostics: detected device type, the install recipe the next install will
   run (or `none` with a reason), IP address from the device's health report, and an ADB
   enabled sensor that probes the ADB port every 5 minutes. Add an Auto-update all switch to
