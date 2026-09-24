@@ -78,6 +78,7 @@ from .device_catalog import require_recipe, resolve_catalog_entry
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .device_models import DeviceFacts
 from .install import install_and_launch
+from .ks_api_client import login
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -155,14 +156,14 @@ def _token_options(hass) -> list[selector.SelectOptionDict]:
 
 
 class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
-    """Global defaults for devices configured after this edit."""
+    """Manager defaults or one device's stored Kiosk Satellite password."""
 
     def __init__(self, entry: config_entries.ConfigEntry) -> None:
         self._entry = entry
 
     async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
         if self._entry.data.get(CONF_ENTRY_TYPE) != ENTRY_TYPE_MANAGER:
-            return self.async_abort(reason="not_manager")
+            return await self.async_step_device_password(user_input)
         saved = self._entry.options
         errors = {}
         if user_input is not None:
@@ -203,6 +204,39 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             )): vol.In([ONBOARDING_REVIEW, ONBOARDING_AUTOMATIC]),
         }
         return self.async_show_form(step_id="init", data_schema=vol.Schema(fields), errors=errors)
+
+    async def async_step_device_password(self, user_input: dict | None = None) -> FlowResult:
+        """Verify a replacement secret before saving it on this device entry."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            candidate = user_input.get(CONF_PASSWORD, "")
+            if not candidate:
+                errors[CONF_PASSWORD] = "password_required"
+            else:
+                try:
+                    await login(
+                        async_get_clientsession(self.hass),
+                        self._entry.data[CONF_HOST],
+                        candidate,
+                    )
+                except Exception:  # noqa: BLE001 -- never expose a device response or secret
+                    errors[CONF_PASSWORD] = "password_verification_failed"
+                else:
+                    self.hass.config_entries.async_update_entry(
+                        self._entry,
+                        data={**self._entry.data, CONF_PASSWORD: candidate},
+                    )
+                    return self.async_create_entry(title="", data=dict(self._entry.options))
+
+        return self.async_show_form(
+            step_id="device_password",
+            data_schema=vol.Schema({
+                vol.Required(CONF_PASSWORD): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                ),
+            }),
+            errors=errors,
+        )
 
 
 class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):

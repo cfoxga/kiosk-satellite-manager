@@ -234,7 +234,7 @@ async def test_manager_options_mask_password_preserve_blank_and_reject_bad_url(h
 
 
 async def test_options_reject_revoked_token_and_device_entry(hass):
-    """[KSM-TEST-138/142] Device entries cannot store global options; stale token fails."""
+    """[KSM-TEST-138/142/165] Device entry sees only its own credential form."""
     manager = await _manager(hass)
     result = await hass.config_entries.options.async_init(manager.entry_id)
     data = result["data_schema"]({})
@@ -247,7 +247,8 @@ async def test_options_reject_revoked_token_and_device_entry(hass):
     ):
         device = await init_integration(hass)
     result = await hass.config_entries.options.async_init(device.entry.entry_id)
-    assert result["type"] == data_entry_flow.FlowResultType.ABORT
+    assert result["type"] == data_entry_flow.FlowResultType.FORM
+    assert {key.schema for key in result["data_schema"].schema} == {CONF_PASSWORD}
 
 
 async def test_options_accept_selected_token_id_and_new_password(hass):

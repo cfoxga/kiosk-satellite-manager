@@ -70,6 +70,13 @@
   },
   "options": {
     "step": {
+      "device_password": {
+        "title": "Update Kiosk Satellite password",
+        "description": "Enter this device's current Kiosk Satellite Web UI password. The stored password changes only after Kiosk Satellite accepts it.",
+        "data": {
+          "password": "Current Kiosk Satellite password"
+        }
+      },
       "init": {
         "title": "Configure Kiosk Satellite Manager",
         "description": "These settings apply to future devices only. Leave the password empty to retain it.",
@@ -85,6 +92,8 @@
       }
     },
     "error": {
+      "password_required": "Enter the device password",
+      "password_verification_failed": "The device did not accept the password or could not be reached",
       "token_not_found": "Selected token is unavailable",
       "invalid_ha_url": "Enter an absolute HTTP or HTTPS URL"
     }

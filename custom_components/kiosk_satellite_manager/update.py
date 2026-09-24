@@ -76,6 +76,7 @@ class KioskSatelliteUpdateEntity(CoordinatorEntity, UpdateEntity):
         self._health = health
         self._entry = entry
         self._auto_attempted: set[str] = set()
+        self._auto_update_option_enabled = bool(entry.options.get(CONF_AUTO_UPDATE, False))
         # KSM-BEHAVE-082: the version currently awaiting the on-device
         # install confirmation, or None. Cleared once health reaches it or
         # the release check moves the target past it.
@@ -157,6 +158,10 @@ class KioskSatelliteUpdateEntity(CoordinatorEntity, UpdateEntity):
         self._maybe_auto_update()
 
     async def _async_entry_updated(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        enabled = bool(entry.options.get(CONF_AUTO_UPDATE, False))
+        if enabled == self._auto_update_option_enabled:
+            return
+        self._auto_update_option_enabled = enabled
         self._maybe_auto_update()
 
     @callback

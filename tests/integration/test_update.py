@@ -24,6 +24,7 @@ from custom_components.kiosk_satellite_manager.const import (
     CONF_AUTO_UPDATE,
     CONF_ENTRY_TYPE,
     CONF_HOST,
+    CONF_PASSWORD,
     DOMAIN,
     ENTRY_TYPE_MANAGER,
     RELEASE_COORDINATOR_KEY,
@@ -440,6 +441,22 @@ async def test_auto_update_installs_a_newly_seen_release_once(hass, release_chec
 
     install.assert_awaited_once()
     assert install.await_args.args[1] is ctx.entry
+
+
+async def test_credential_edit_does_not_trigger_auto_update(hass, release_check):
+    """[KSM-TEST-166] Updating entry data does not initiate an app install."""
+    release_check.return_value = _release("2026.9.76")
+    with patch(_HEALTH, new=_health("2026.9.76")), patch(
+        _AUTO_INSTALL, new=AsyncMock()
+    ) as install:
+        ctx = await init_integration(hass, options={CONF_AUTO_UPDATE: True})
+        await hass.async_block_till_done(wait_background_tasks=True)
+        hass.data[RELEASE_COORDINATOR_KEY].data = _release("2026.9.77")
+        hass.config_entries.async_update_entry(
+            ctx.entry, data={**ctx.entry.data, CONF_PASSWORD: "verified-secret"}
+        )
+        await hass.async_block_till_done(wait_background_tasks=True)
+    install.assert_not_awaited()
 
 
 async def test_auto_update_does_nothing_when_switch_off(hass, release_check):

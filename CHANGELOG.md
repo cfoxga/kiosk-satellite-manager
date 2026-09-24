@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add a per-device Configure form to correct a stored Kiosk Satellite password.
+  The form verifies the replacement with the device before saving and keeps
+  other device settings intact when authentication fails.
+
 - Add a `rename_device` service that renames a device's Kiosk Satellite identity (name,
   hostname, ESPHome node name) via the authenticated `:2324` settings API, then updates the KSM
   entry's title/name and migrates its DNS host once the new hostname is verified to resolve to
