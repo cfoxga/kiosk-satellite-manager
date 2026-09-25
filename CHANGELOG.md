@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Add **Enable Device Owner** to a device's Configure menu. It explains what
+  Device Owner gives Kiosk Satellite (silent self-updates, true kiosk lock, home
+  app without a prompt, remote reboot, real Wi-Fi MAC) and its side effects (only
+  a factory reset undoes it; the device's accounts are signed out), lists the
+  account types found, and changes nothing until you tick the confirmation. On
+  models with verified support (Portal Mini today) the blocking account app is
+  removed for a moment and then reinstalled, so no factory reset is needed.
+  Device Configure now opens a menu; the password form is one of its entries.
+  Dialog text now ships in `translations/en.json`, so KSM dialogs show their
+  descriptions.
+
 - Fix self-update status parsing for Kiosk Satellite's `{ok, data}` command
   response. An offered release can now reach the install step; failed or
   malformed status responses stop before installation.

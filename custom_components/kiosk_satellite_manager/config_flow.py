@@ -44,6 +44,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.helpers.network import get_url
 
+from . import device_owner
 from .adb_client import AdbAuthPending, AdbClient, AdbConnectFailed, ensure_adb_key
 from .const import (
     CONF_AREA_ID,
@@ -163,7 +164,7 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
         if self._entry.data.get(CONF_ENTRY_TYPE) != ENTRY_TYPE_MANAGER:
-            return await self.async_step_device_password(user_input)
+            return await self.async_step_device_menu()
         saved = self._entry.options
         errors = {}
         if user_input is not None:
@@ -205,6 +206,12 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
         }
         return self.async_show_form(step_id="init", data_schema=vol.Schema(fields), errors=errors)
 
+    async def async_step_device_menu(self, user_input: dict | None = None) -> FlowResult:
+        """KSM-BEHAVE-088: a device entry's Configure is a menu."""
+        return self.async_show_menu(
+            step_id="device_menu", menu_options=["device_password", "device_owner"]
+        )
+
     async def async_step_device_password(self, user_input: dict | None = None) -> FlowResult:
         """Verify a replacement secret before saving it on this device entry."""
         errors: dict[str, str] = {}
@@ -237,6 +244,133 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             }),
             errors=errors,
         )
+
+    def _owner_client(self) -> AdbClient:
+        data = self._entry.data
+        return AdbClient(data[CONF_HOST], data[CONF_PORT], data[CONF_KEY_PATH])
+
+    async def async_step_device_owner(self, user_input: dict | None = None) -> FlowResult:
+        """KSM-BEHAVE-088..090: explain Device Owner, confirm, then enroll.
+
+        Preflight is read-only; nothing on the device changes until the user
+        ticks the confirmation and submits."""
+        coordinator = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
+        if coordinator is not None and getattr(coordinator, "ksm_installing", False):
+            return self.async_abort(reason="install_in_progress")
+        model_key = self._entry.data.get(CONF_DEVICE_PROFILE)
+        address = f"{self._entry.data[CONF_HOST]}:{self._entry.data[CONF_PORT]}"
+        errors: dict[str, str] = {}
+
+        if user_input is not None and user_input.get("confirm"):
+            client = self._owner_client()
+            # Hold the entry's install lock so no install/update runs ADB
+            # against this device mid-enrollment (button.async_install_entry).
+            if coordinator is not None:
+                coordinator.ksm_installing = True
+                coordinator.async_update_listeners()
+            try:
+                await client.connect()
+                await device_owner.enable_device_owner(client, model_key)
+            except (AdbAuthPending, AdbConnectFailed):
+                return self.async_abort(
+                    reason="adb_unavailable", description_placeholders={"address": address}
+                )
+            except device_owner.DeviceOwnerError as err:
+                _LOGGER.warning("Device Owner enrollment failed on %s: %s", address, err)
+                return self.async_abort(
+                    reason="device_owner_failed",
+                    description_placeholders={"reason": _owner_failure_text(err)},
+                )
+            except Exception as err:  # noqa: BLE001 -- ADB transport drop mid-run
+                _LOGGER.warning("Device Owner enrollment error on %s: %s", address, err)
+                return self.async_abort(
+                    reason="device_owner_failed",
+                    description_placeholders={"reason": "The ADB connection failed mid-run."},
+                )
+            finally:
+                await client.close()
+                if coordinator is not None:
+                    coordinator.ksm_installing = False
+                    coordinator.async_update_listeners()
+            return self.async_abort(reason="device_owner_enabled")
+        if user_input is not None:
+            errors["confirm"] = "confirm_required"
+
+        client = self._owner_client()
+        try:
+            await client.connect()
+            pre = await device_owner.run_preflight(client, model_key)
+        except (AdbAuthPending, AdbConnectFailed, OSError):
+            return self.async_abort(
+                reason="adb_unavailable", description_placeholders={"address": address}
+            )
+        finally:
+            await client.close()
+
+        if device_owner.BLOCKER_ALREADY_OWNER in pre.blockers:
+            return self.async_abort(reason="device_owner_already")
+        if pre.blockers:
+            return self.async_abort(
+                reason="device_owner_blocked",
+                description_placeholders={"reason": _owner_blocker_text(pre)},
+            )
+        return self.async_show_form(
+            step_id="device_owner",
+            data_schema=vol.Schema({vol.Required("confirm", default=False): bool}),
+            errors=errors,
+            description_placeholders={"accounts": _owner_accounts_text(pre)},
+        )
+
+
+_OWNER_BLOCKERS = {
+    device_owner.BLOCKER_OTHER_OWNER: "another app ({owner}) is already Device Owner",
+    device_owner.BLOCKER_MULTIPLE_USERS: "the device has more than one Android user",
+    device_owner.BLOCKER_KS_MISSING: "Kiosk Satellite is not installed",
+    device_owner.BLOCKER_UNOBSERVED: "the device's account or policy state could not be read",
+    device_owner.BLOCKER_ACCOUNTS: (
+        "it has an account KSM cannot safely clear on this model ({accounts}); "
+        "remove it in Android Settings or factory reset"
+    ),
+}
+
+_OWNER_FAILURES = {
+    "clear_failed": "The account package could not be removed. Nothing else changed.",
+    "accounts_remain": "Accounts were still present after clearing. Device Owner was not set.",
+    "set_owner_failed": "Android refused to set Device Owner.",
+    "readback_failed": "Android reported success, but Kiosk Satellite is not listed as Device Owner.",
+    "preflight_blocked": "The device changed since the check; open Enable Device Owner again.",
+}
+
+
+def _owner_accounts_text(pre: "device_owner.Preflight") -> str:
+    if not pre.account_counts:
+        return "None. No app will be removed."
+    lines = [
+        f"- {count} × {acct_type} (from {pre.account_owners.get(acct_type) or 'unknown app'})"
+        for acct_type, count in sorted(pre.account_counts.items())
+    ]
+    lines.append(
+        "These are removed together with their app for a moment, then the app is "
+        "reinstalled: " + ", ".join(pre.clear_packages)
+    )
+    return "\n".join(lines)
+
+
+def _owner_blocker_text(pre: "device_owner.Preflight") -> str:
+    blocking = sorted(
+        t for t, pkg in pre.account_owners.items() if pkg not in pre.clear_packages
+    )
+    parts = [
+        _OWNER_BLOCKERS[b].format(owner=pre.owner_package or "unknown", accounts=", ".join(blocking))
+        for b in pre.blockers
+    ]
+    return "; ".join(parts)
+
+
+def _owner_failure_text(err: "device_owner.DeviceOwnerError") -> str:
+    if err.code == "restore_failed":
+        return f"Device Owner step finished, but an app was not restored: {err.detail}"
+    return _OWNER_FAILURES.get(err.code, err.code)
 
 
 class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):

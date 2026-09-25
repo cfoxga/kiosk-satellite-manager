@@ -24,9 +24,18 @@ def device(hass):
     return entry
 
 
+async def _open_password_step(hass, device):
+    """KSM-BEHAVE-088: device Configure opens a menu; pick the password step."""
+    result = await hass.config_entries.options.async_init(device.entry_id)
+    assert result["type"] == data_entry_flow.FlowResultType.MENU
+    return await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "device_password"}
+    )
+
+
 async def test_device_password_update_verifies_and_preserves_other_data(hass, device):
     """[KSM-TEST-165] Successful device Configure checks the candidate first."""
-    result = await hass.config_entries.options.async_init(device.entry_id)
+    result = await _open_password_step(hass, device)
     assert result["type"] == data_entry_flow.FlowResultType.FORM
     password_field = next(k for k in result["data_schema"].schema if k == CONF_PASSWORD)
     assert password_field.default is vol.UNDEFINED
@@ -59,7 +68,7 @@ async def test_device_password_update_rejects_without_writing(
     hass, device, candidate, error
 ):
     """[KSM-TEST-166] Failed validation never replaces the working secret."""
-    result = await hass.config_entries.options.async_init(device.entry_id)
+    result = await _open_password_step(hass, device)
     with patch(
         "custom_components.kiosk_satellite_manager.config_flow.login",
         new=AsyncMock(side_effect=error),

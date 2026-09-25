@@ -247,6 +247,12 @@ async def test_options_reject_revoked_token_and_device_entry(hass):
     ):
         device = await init_integration(hass)
     result = await hass.config_entries.options.async_init(device.entry.entry_id)
+    # KSM-BEHAVE-088: device Configure is a menu; its password step holds
+    # only the device's own credential, never manager settings.
+    assert result["type"] == data_entry_flow.FlowResultType.MENU
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "device_password"}
+    )
     assert result["type"] == data_entry_flow.FlowResultType.FORM
     assert {key.schema for key in result["data_schema"].schema} == {CONF_PASSWORD}
 
