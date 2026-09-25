@@ -80,10 +80,6 @@ ADB_CONNECT_TIMEOUT_S: Final = 10
 # KSM-BEHAVE-079: ADB-enabled binary sensor -- bare TCP probe, own poll.
 ADB_PROBE_TIMEOUT_S: Final = 3
 ADB_PROBE_INTERVAL_MIN: Final = 5
-# KSM-BEHAVE-091: Device Owner diagnostic sensor -- a real ADB connect+auth
-# per poll, not a bare TCP probe, so this rides a slower interval than
-# ADB_PROBE_INTERVAL_MIN (the state changes only via #54's enroll flow).
-DEVICE_OWNER_POLL_INTERVAL_MIN: Final = 60
 
 
 # KSM-BEHAVE-007: after install+launch, poll the coordinator a few times

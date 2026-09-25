@@ -114,15 +114,6 @@ def _owner_package(policy: str) -> str | None:
     return match.group(1) if match else None
 
 
-async def read_owner_package(client: ShellClient) -> str | None:
-    """Read-only: the current Device Owner package, or None (KSM-BEHAVE-091, #55).
-
-    One shell call -- the diagnostic sensor's own poll, lighter than the
-    four-call run_preflight() this shares its parser with.
-    """
-    return _owner_package(await client.shell("dumpsys device_policy"))
-
-
 async def run_preflight(client: ShellClient, model_key: str | None) -> Preflight:
     """Read-only eligibility check (KSM-BEHAVE-088). Never mutates."""
     accounts_dump = await client.shell("dumpsys account")

@@ -18,49 +18,22 @@ from custom_components.kiosk_satellite_manager.const import (
     DOMAIN,
     ENTRY_TYPE_MANAGER,
 )
-from custom_components.kiosk_satellite_manager.adb_client import AdbConnectFailed
 from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
 
 from .conftest import init_integration
-from ksm_device_owner_fake import FakeDevice
 
 _HEALTH = "custom_components.kiosk_satellite_manager.fetch_health"
 _PROBE = "custom_components.kiosk_satellite_manager.binary_sensor.async_probe_adb_port"
-_OWNER_ADB = "custom_components.kiosk_satellite_manager.binary_sensor.AdbClient"
 
 
-def _owner_client(fake: FakeDevice | None, connect_error: Exception | None = None):
-    """Patch binary_sensor's AdbClient with one wrapping `fake` (KSM-TEST-172)."""
-
-    class Client:
-        def __init__(self, host, port, key_path):
-            pass
-
-        async def connect(self, auth_timeout_s: float = 5):
-            if connect_error:
-                raise connect_error
-
-        async def shell(self, command):
-            return await fake.shell(command)
-
-        async def close(self):
-            pass
-
-    return patch(_OWNER_ADB, Client)
-
-
-def _entity(hass, entry, suffix: str):
+def _state(hass, entry, suffix: str):
     entity = next(
         (e for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
          if e.unique_id == f"{entry.entry_id}_{suffix}"),
         None,
     )
     assert entity is not None, f"no entity with unique_id suffix {suffix!r}"
-    return entity
-
-
-def _state(hass, entry, suffix: str):
-    return hass.states.get(_entity(hass, entry, suffix).entity_id)
+    return hass.states.get(entity.entity_id)
 
 
 async def test_device_type_recipe_and_ip_for_a_supported_model(hass):
@@ -114,7 +87,7 @@ async def test_manager_entry_has_no_device_diagnostics(hass):
     unique_ids = {
         e.unique_id for e in er.async_entries_for_config_entry(er.async_get(hass), manager.entry_id)
     }
-    for suffix in ("device_type", "recipe", "ip_address", "adb_enabled", "device_owner"):
+    for suffix in ("device_type", "recipe", "ip_address", "adb_enabled"):
         assert f"{manager.entry_id}_{suffix}" not in unique_ids
 
 
@@ -147,28 +120,3 @@ async def test_adb_enabled_follows_the_tcp_probe_independent_of_health(hass):
             "homeassistant", "update_entity", {"entity_id": state.entity_id}, blocking=True
         )
         assert _state(hass, ctx.entry, "adb_enabled").state == "off"
-
-
-async def test_device_owner_sensor_reflects_the_readback(hass):
-    """[KSM-TEST-172] on when KS is owner, off for another owner, unavailable when ADB fails."""
-    fake = FakeDevice(owner="me.jxl.kiosk_satellite")
-    with patch(_HEALTH, new=AsyncMock(side_effect=aiohttp.ClientError("unreachable"))), _owner_client(fake):
-        ctx = await init_integration(hass, data={CONF_DEVICE_PROFILE: "portal_mini"})
-        state = _state(hass, ctx.entry, "device_owner")
-        assert state.state == "on"
-
-        entity = _entity(hass, ctx.entry, "device_owner")
-        assert entity.entity_category == "diagnostic"
-
-        fake.owner = "com.example.other"
-        assert await async_setup_component(hass, "homeassistant", {})
-        await hass.services.async_call(
-            "homeassistant", "update_entity", {"entity_id": state.entity_id}, blocking=True
-        )
-        assert _state(hass, ctx.entry, "device_owner").state == "off"
-
-    with _owner_client(None, connect_error=AdbConnectFailed("unreachable")):
-        await hass.services.async_call(
-            "homeassistant", "update_entity", {"entity_id": state.entity_id}, blocking=True
-        )
-        assert _state(hass, ctx.entry, "device_owner").state == "unavailable"
