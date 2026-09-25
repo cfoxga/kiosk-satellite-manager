@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fix self-update status parsing for Kiosk Satellite's `{ok, data}` command
+  response. An offered release can now reach the install step; failed or
+  malformed status responses stop before installation.
+
 - Add a per-device Configure form to correct a stored Kiosk Satellite password.
   The form verifies the replacement with the device before saving and keeps
   other device settings intact when authentication fails.

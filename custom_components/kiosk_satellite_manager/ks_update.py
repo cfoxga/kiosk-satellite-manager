@@ -39,6 +39,19 @@ OUTCOME_AWAITING_CONFIRMATION = "awaiting_confirmation"
 _TRANSIENT_ERRORS = (KsApiError, aiohttp.ClientError, asyncio.TimeoutError)
 
 
+def _status_data(response: dict, entry: ConfigEntry) -> dict:
+    """Read status fields from Kiosk Satellite's command response envelope."""
+    if (
+        not isinstance(response, dict)
+        or response.get("ok") is not True
+        or not isinstance(response.get("data"), dict)
+    ):
+        raise HomeAssistantError(
+            f"Kiosk Satellite update status unavailable on {entry.title}"
+        )
+    return response["data"]
+
+
 async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> str:
     """KSM-BEHAVE-082: update Kiosk Satellite to the shared release check's
     latest version over its own API.
@@ -73,7 +86,10 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
         try:
             token = await ks_api_client.login(session, host, password)
             await ks_api_client.run_command(session, host, token, "checkUpdateNow")
-            status = await ks_api_client.run_command(session, host, token, "getUpdateStatus")
+            status = _status_data(
+                await ks_api_client.run_command(session, host, token, "getUpdateStatus"),
+                entry,
+            )
         except _TRANSIENT_ERRORS as err:
             raise HomeAssistantError(
                 f"Kiosk Satellite update failed on {entry.title}: {err}"
@@ -136,7 +152,10 @@ async def _poll_until_resolved(
             return OUTCOME_UPDATED
 
         try:
-            status = await ks_api_client.run_command(session, host, token, "getUpdateStatus")
+            status = _status_data(
+                await ks_api_client.run_command(session, host, token, "getUpdateStatus"),
+                entry,
+            )
         except _TRANSIENT_ERRORS:
             status = None
         if status is not None:

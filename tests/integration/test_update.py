@@ -61,6 +61,8 @@ def _commands(**by_command):
         result = by_command[command]
         if isinstance(result, Exception):
             raise result
+        if command == "getUpdateStatus":
+            return {"ok": True, "data": result}
         return result
 
     return fake_run_command
@@ -210,6 +212,35 @@ async def test_update_install_not_offered_raises_naming_the_version(hass, releas
     assert hass.data[DOMAIN][ctx.entry.entry_id].ksm_installing is False
 
 
+@pytest.mark.parametrize("status", [
+    {"ok": False, "data": {"availableVersion": "2026.9.77"}},
+    {"ok": True},
+])
+async def test_update_install_rejects_bad_status_envelope(hass, release_check, status):
+    """[KSM-TEST-154] A failed or missing status body cannot authorize install."""
+    release_check.return_value = _release("2026.9.77")
+    with patch(_HEALTH, new=_health("2026.9.76")):
+        ctx = await init_integration(hass)
+        entity_id = _entity_id(hass, ctx.entry, "update")
+
+        async def command(session, host, token, name):
+            if name == "checkUpdateNow":
+                return {"ok": True}
+            if name == "getUpdateStatus":
+                return status
+            raise AssertionError(f"unexpected command: {name}")
+
+        with _refuses_adb() as adb, patch(
+            _LOGIN, new=AsyncMock(return_value="device-token")
+        ), patch(_RUN_COMMAND, new=command):
+            with pytest.raises(HomeAssistantError, match="status"):
+                await hass.services.async_call(
+                    "update", "install", {"entity_id": entity_id}, blocking=True
+                )
+    adb.assert_not_called()
+    assert hass.data[DOMAIN][ctx.entry.entry_id].ksm_installing is False
+
+
 async def test_update_install_awaiting_confirmation_sets_the_attribute(hass, release_check):
     """[KSM-TEST-155] lastOutcome: "confirm" with appVersion unchanged at
     the end of the poll window is awaiting confirmation, not an error; the
@@ -324,8 +355,8 @@ async def test_update_install_poll_last_error_is_failed(hass, release_check):
             if command == "getUpdateStatus":
                 status_calls["n"] += 1
                 if status_calls["n"] == 1:
-                    return {"availableVersion": "2026.9.77"}
-                return {"availableVersion": "2026.9.77", "lastError": "boom"}
+                    return {"ok": True, "data": {"availableVersion": "2026.9.77"}}
+                return {"ok": True, "data": {"availableVersion": "2026.9.77", "lastError": "boom"}}
             if command == "getUpdateInstallerStatus":
                 return {}
             if command == "installUpdate":

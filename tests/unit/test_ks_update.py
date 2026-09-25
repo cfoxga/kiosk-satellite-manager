@@ -46,7 +46,10 @@ def _hass(release_version="2026.9.77", coordinator=None):
 
 def _commands(**by_command):
     async def fake_run_command(session, host, token, command):
-        return by_command[command]
+        value = by_command[command]
+        if command == "getUpdateStatus":
+            return {"ok": True, "data": value}
+        return value
     return fake_run_command
 
 
@@ -87,7 +90,7 @@ async def test_install_update_transient_failure_is_reported_as_failed():
             raise KsApiError("connection reset")
         return {
             "checkUpdateNow": {},
-            "getUpdateStatus": {"availableVersion": "2026.9.77"},
+            "getUpdateStatus": {"ok": True, "data": {"availableVersion": "2026.9.77"}},
             "getUpdateInstallerStatus": {},
         }[command]
 

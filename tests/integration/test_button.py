@@ -634,11 +634,14 @@ async def test_update_all_updates_two_devices_over_the_ks_api(hass, release_chec
         def fake_run_command(session, host, token, command):
             responses = {
                 "checkUpdateNow": {},
-                "getUpdateStatus": (
-                    {"availableVersion": "2026.9.77", "lastOutcome": "confirm"}
-                    if host == "192.168.99.98"
-                    else {"availableVersion": "2026.9.77"}
-                ),
+                "getUpdateStatus": {
+                    "ok": True,
+                    "data": (
+                        {"availableVersion": "2026.9.77", "lastOutcome": "confirm"}
+                        if host == "192.168.99.98"
+                        else {"availableVersion": "2026.9.77"}
+                    ),
+                },
                 "getUpdateInstallerStatus": {},
                 "installUpdate": {"ok": True},
             }
