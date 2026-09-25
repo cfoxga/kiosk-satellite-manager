@@ -262,7 +262,14 @@ async def test_rename_device_reloads_linked_esphome_entry_and_reports_callers(ha
         "old_prefix": "old_device",
         "new_prefix": "great_room_device",
         "callers": ["automation.leak_alert", "script.open_clock"],
+        "removed": ["esphome.old_device_launch_app", "esphome.old_device_notification"],
     }
+    # [KSM-TEST-176] the old names were bound to the unloaded connection:
+    # once both re-registered under the new prefix they are removed.
+    assert not hass.services.has_service("esphome", "old_device_notification")
+    assert not hass.services.has_service("esphome", "old_device_launch_app")
+    assert hass.services.has_service("esphome", "great_room_device_notification")
+    assert hass.services.has_service("esphome", "great_room_device_launch_app")
 
 
 @pytest.mark.parametrize("duplicate", [False, True])
@@ -316,6 +323,11 @@ async def test_rename_device_esphome_actions_missing_after_reload_is_pending(has
     reload.assert_awaited_once_with(linked.entry_id)
     assert result["esphome"] == "pending"
     assert result["esphome_actions"]["callers"] == []
+    # [KSM-TEST-176] pending removes nothing -- not even the old action whose
+    # suffix did re-register, and certainly not launch_app, which never did.
+    assert result["esphome_actions"]["removed"] == []
+    assert hass.services.has_service("esphome", "old_device_notification")
+    assert hass.services.has_service("esphome", "old_device_launch_app")
 
 
 async def test_rename_device_esphome_actions_complete_despite_sibling_prefix(hass):
@@ -341,6 +353,12 @@ async def test_rename_device_esphome_actions_complete_despite_sibling_prefix(has
         result = await _call_rename(hass, ctx.entry.entry_id, "Great Room Device", await admin_context(hass))
 
     assert result["esphome"] == "applied"
+    # [KSM-TEST-176] another node's action under a longer prefix is never removed.
+    assert result["esphome_actions"]["removed"] == [
+        "esphome.old_device_launch_app",
+        "esphome.old_device_notification",
+    ]
+    assert hass.services.has_service("esphome", "old_device_annex_notification")
 
 
 async def test_rename_device_esphome_reload_error_is_failed(hass):
@@ -464,3 +482,30 @@ async def test_rename_device_esphome_reload_returning_false_is_failed(hass):
 
     assert result["esphome"] == "failed"
     assert result["esphome_actions"]["old_prefix"] == "old_device"
+
+
+async def test_rename_device_separator_only_node_change_keeps_live_actions(hass):
+    """[KSM-TEST-176] negative: an old node that differs only by separator
+    (`great_room_device` -> `great-room-device`) keeps the same action
+    prefix, so the re-registered actions are the live ones and nothing is
+    removed."""
+    with patch(_FETCH_HEALTH, new=AsyncMock(return_value={"name": "old"})):
+        ctx = await init_integration(hass, data={CONF_HOST: _KSM_HOST})
+    linked = _esphome_entry(hass, device_name="great_room_device")
+    _register_esphome_actions(hass, "great_room_device")
+
+    async def _reload(entry_id):
+        _register_esphome_actions(hass, "great_room_device")
+        return True
+
+    with patch(_RESOLVE_HOST, new=_fake_resolve), patch(_LOGIN, new=AsyncMock(return_value="t")), patch(
+        _APPLY_KS, new=AsyncMock(side_effect=_ks_rename_side_effect(hass, linked))
+    ), patch(_RESOLVE_DNS, new=AsyncMock(return_value=False)), patch(
+        _TIMEOUT, 0.5
+    ), patch(_INTERVAL, 0.01), patch.object(hass.config_entries, "async_reload", new=_reload):
+        result = await _call_rename(hass, ctx.entry.entry_id, "Great Room Device", await admin_context(hass))
+
+    assert result["esphome"] == "applied"
+    assert result["esphome_actions"]["removed"] == []
+    assert hass.services.has_service("esphome", "great_room_device_notification")
+    assert hass.services.has_service("esphome", "great_room_device_launch_app")

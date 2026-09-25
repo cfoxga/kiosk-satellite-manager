@@ -20,6 +20,7 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.exceptions import HomeAssistantError
 
+from .ks_api_client import get_settings
 from .provisioning import apply_provisioning, fetch_health
 
 _SLUG_COLLAPSE_RE = re.compile(r"[^a-z0-9]+")
@@ -62,23 +63,20 @@ async def apply_rename_ks_settings(
 ) -> str:
     """KSM-BEHAVE-084: apply the derived settings over the same
     `PATCH /api/settings` + `/api/health` readback path `provision` uses.
-    Returns "unchanged" without a PATCH when the device already reports the
-    target name, making a repeated call idempotent. Raises
-    `ProvisioningMismatch`/`KsApiError` on a real failure -- the caller
-    decides how a failed KS layer affects the overall result."""
-    health = await fetch_health(session, host)
-    if health.get("name") == names.device_name:
+    Returns "unchanged" without a PATCH when the device's current settings
+    already hold every derived value, making a repeated call idempotent.
+    `/api/health` has no node name, so it cannot decide that on its own
+    (#56). Raises `ProvisioningMismatch`/`KsApiError` on a real failure --
+    the caller decides how a failed KS layer affects the overall result."""
+    target = {
+        "device.name": names.device_name,
+        "device.hostname": names.hostname,
+        "esphome.node_name": names.esphome_node_name,
+    }
+    current = await get_settings(session, host, token)
+    if all(current.get(key) == value for key, value in target.items()):
         return "unchanged"
-    await apply_provisioning(
-        session,
-        host,
-        token,
-        {
-            "device.name": names.device_name,
-            "device.hostname": names.hostname,
-            "esphome.node_name": names.esphome_node_name,
-        },
-    )
+    await apply_provisioning(session, host, token, target)
     return "applied"
 
 
@@ -252,6 +250,10 @@ async def rename_esphome_actions(
     re-registers an action whose definition changed, so without the reload
     the old names linger and the new ones never appear.
 
+    HA also never unregisters the old names on reload; they stay bound to
+    the unloaded connection until HA restarts. Once every recorded action is
+    back under the new prefix, the old names are removed.
+
     Returns the `esphome` result and, when the node changed, the
     `esphome_actions` report."""
     new_prefix = action_prefix(new_node)
@@ -267,6 +269,7 @@ async def rename_esphome_actions(
             "old_prefix": old_prefix,
             "new_prefix": new_prefix,
             "callers": find_action_callers(hass, old_prefix, link.old_actions),
+            "removed": [],
         }
 
     # KS restarts its ESPHome server on a node change and HA records the new
@@ -284,8 +287,14 @@ async def rename_esphome_actions(
         return "failed", actions
 
     expected = link.old_actions if renamed else frozenset()
-    if await _wait_until(
+    if not await _wait_until(
         lambda: expected <= _node_actions(hass, new_prefix, others), ESPHOME_RENAME_TIMEOUT
     ):
-        return "applied", actions
-    return "pending", actions
+        return "pending", actions
+    if actions is not None and actions["old_prefix"] != new_prefix:
+        replaced = link.old_actions & _node_actions(hass, new_prefix, others)
+        for suffix in sorted(replaced):
+            name = f"{actions['old_prefix']}_{suffix}"
+            hass.services.async_remove(ESPHOME_DOMAIN, name)
+            actions["removed"].append(f"{ESPHOME_DOMAIN}.{name}")
+    return "applied", actions

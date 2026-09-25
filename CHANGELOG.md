@@ -8,9 +8,18 @@
   `esphome.<new_node>_*` actions register. The result gains `esphome`
   (`applied`/`unchanged`/`pending`/`not_found`/`failed`) and, when the node name
   changed, `esphome_actions` listing the automations and scripts that still call
-  the old action names. KSM reports them and edits nothing. The ESPHome node name
-  now matches the hostname (`great-room-portal`), since Kiosk Satellite uses
-  hyphens anyway.
+  the old action names. KSM reports those callers and edits none of them. The
+  ESPHome node name now matches the hostname (`great-room-portal`), since Kiosk
+  Satellite uses hyphens anyway.
+
+- Fix two `rename_device` gaps found testing against a real kiosk. Renaming to
+  the name the device already shows (e.g. after a fresh install left the node as
+  `ks-<name>`) skipped the update and then waited 60 s to report `pending`; KSM
+  now reads the device's settings and only skips when the name, hostname and
+  node name all already match. And Home Assistant never removes ESPHome actions
+  on reload, so each rename left a set of dead `esphome.<old_node>_*` actions
+  behind until the next restart; KSM now removes the old ones once the same
+  actions exist under the new name, and lists them in `esphome_actions.removed`.
 
 - Add **Enable Device Owner** to a device's Configure menu. It explains what
   Device Owner gives Kiosk Satellite (silent self-updates, true kiosk lock, home

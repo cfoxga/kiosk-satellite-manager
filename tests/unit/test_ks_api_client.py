@@ -93,6 +93,10 @@ async def test_get_setup_status_bounds_a_malformed_http_response(monkeypatch):
             ),
             b"synthetic-device-token",
         ),
+        (
+            lambda session, host: ks_api_client.get_settings(session, host, "synthetic-device-token"),
+            b"synthetic-device-token",
+        ),
     ],
 )
 async def test_credential_operations_reach_configured_http_device(monkeypatch, operation, expected_secret):
@@ -331,3 +335,31 @@ async def test_check_ha_connection_false_on_failure():
     _, kwargs = session.post.call_args
     assert kwargs["allow_redirects"] is False
     assert session.post.call_args.args[0] == "http://192.168.1.50:2324/api/commands/haCheckConnection"
+
+
+async def test_get_settings_maps_described_settings_to_values():
+    """[KSM-TEST-175] GET /api/settings describes every setting; only the
+    key -> current value map is returned."""
+    session = _fake_session(
+        get=_fake_response(
+            {
+                "settings": [
+                    {"key": "device.name", "type": "string", "value": "Kitchen"},
+                    {"key": "esphome.node_name", "type": "string", "value": "ks-kitchen"},
+                    {"key": "no.value", "type": "string"},
+                ],
+                "subpageHints": {},
+            }
+        )
+    )
+    result = await ks_api_client.get_settings(session, "host", "device-token")
+    assert result == {"device.name": "Kitchen", "esphome.node_name": "ks-kitchen", "no.value": None}
+    kwargs = session.get.call_args.kwargs
+    assert kwargs["headers"] == {"Authorization": "Bearer device-token"}
+    assert kwargs["allow_redirects"] is False
+
+
+async def test_get_settings_raises_on_rejected_token():
+    session = _fake_session(get=_fake_response({"error": "unauthorized"}, ok=False, status=401))
+    with pytest.raises(KsApiError, match="unauthorized"):
+        await ks_api_client.get_settings(session, "host", "bad-token")

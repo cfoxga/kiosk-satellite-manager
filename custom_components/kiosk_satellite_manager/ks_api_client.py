@@ -11,6 +11,7 @@ guessed:
   device-rename step reuses this single call to set the admin password and
   Device Name together on first run.
 - `POST /api/login` body {password} -> {token, ...} (unauthenticated).
+- `GET /api/settings`, Bearer token -> {settings: [{key, value, ...}], ...}.
 - `PATCH /api/settings` body {<key>: <value>, ...}, Bearer token -- used for
   both `device.name` (once a password already exists -- wizard.js's rename
   step falls back to this when !passwordNeeded) and `ha.url`/`ha.token`
@@ -96,6 +97,23 @@ async def login(session: aiohttp.ClientSession, host: str, password: str) -> str
         if not resp.ok:
             raise KsApiError(data.get("error") or f"HTTP {resp.status}")
         return data["token"]
+
+
+async def get_settings(session: aiohttp.ClientSession, host: str, token: str) -> dict:
+    """`GET /api/settings`, Bearer token -> {key: current value}. The device
+    describes every setting it has; only the values are kept (#56: the
+    node name is readable here and nowhere unauthenticated)."""
+    async with session.get(
+        _credential_url(host, "/api/settings"),
+        headers={"Authorization": f"Bearer {token}"},
+        allow_redirects=False,
+        ssl=True,
+        timeout=aiohttp.ClientTimeout(total=HEALTH_TIMEOUT_S),
+    ) as resp:
+        data = await resp.json()
+        if not resp.ok:
+            raise KsApiError(data.get("error") or f"HTTP {resp.status}")
+        return {item["key"]: item.get("value") for item in data.get("settings") or []}
 
 
 async def patch_settings(

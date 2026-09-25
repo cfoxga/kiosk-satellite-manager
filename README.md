@@ -61,8 +61,9 @@ remotely — do them once per device, in order:
   verified to resolve to the same device. Returns a per-layer result instead of raising on a
   device-side failure; Android's own system device name has no verified non-ADB write path yet and
   is reported as `unsupported`. It then reloads the device's ESPHome entry, matched by IP, so
-  Home Assistant registers the ESPHome actions under the new name, and it lists any automations
-  or scripts that still call the old action names (reported only, never edited).
+  Home Assistant registers the ESPHome actions under the new name, removes the old-name actions
+  it replaced (HA leaves them behind, dead, until a restart), and lists any automations or
+  scripts that still call the old action names (reported only, never edited).
 
 Voice Satellite binding was explored and dropped (not worth the hassle yet) — see the design doc's
 Non-goals if you're wondering why it isn't here.

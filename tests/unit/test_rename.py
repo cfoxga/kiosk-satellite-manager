@@ -3,7 +3,7 @@
 `derive_rename_names`/`derive_dns_host` are pure and tested directly.
 `apply_rename_ks_settings` reuses `provisioning.apply_provisioning`'s
 patch-then-readback shape (already covered by test_provisioning.py) so
-this only pins the idempotent-skip and delegation behavior.
+this only pins the settings-based idempotent skip and delegation.
 `resolve_and_verify_dns_host` fakes DNS via a stand-in `hass` executor.
 """
 from __future__ import annotations
@@ -22,6 +22,7 @@ from custom_components.kiosk_satellite_manager.rename import (
 )
 
 _FETCH_HEALTH = "custom_components.kiosk_satellite_manager.rename.fetch_health"
+_GET_SETTINGS = "custom_components.kiosk_satellite_manager.rename.get_settings"
 _APPLY_PROVISIONING = "custom_components.kiosk_satellite_manager.rename.apply_provisioning"
 
 
@@ -68,22 +69,33 @@ def test_derive_dns_host_returns_none_for_bare_hostname():
 
 # --- apply_rename_ks_settings (KSM-BEHAVE-084) ----------------------------
 
+_CURRENT = {
+    "device.name": "Kitchen Display",
+    "device.hostname": "kitchen-display",
+    "esphome.node_name": "kitchen-display",
+}
+
+
 async def test_apply_rename_ks_settings_skips_patch_when_already_applied():
-    names = RenameNames("Kitchen Display", "kitchen-display", "kitchen_display")
-    with patch(_FETCH_HEALTH, new=AsyncMock(return_value={"name": "Kitchen Display"})), patch(
+    """[KSM-TEST-175] every derived value already on the device -> no PATCH."""
+    names = RenameNames("Kitchen Display", "kitchen-display", "kitchen-display")
+    with patch(_GET_SETTINGS, new=AsyncMock(return_value=dict(_CURRENT))) as mock_get, patch(
         _APPLY_PROVISIONING
     ) as mock_apply:
         result = await apply_rename_ks_settings(MagicMock(), "host", "token", names)
     assert result == "unchanged"
+    mock_get.assert_awaited_once()
     mock_apply.assert_not_called()
 
 
-async def test_apply_rename_ks_settings_applies_when_name_differs():
-    names = RenameNames("Kitchen Display", "kitchen-display", "kitchen_display")
+async def test_apply_rename_ks_settings_patches_stale_node_despite_matching_name():
+    """[KSM-TEST-175] /api/health carries no node name: a matching display
+    name with a stale node (a fresh install's `ks-` default) still PATCHes."""
+    names = RenameNames("Kitchen Display", "kitchen-display", "kitchen-display")
     session = MagicMock()
-    with patch(_FETCH_HEALTH, new=AsyncMock(return_value={"name": "old"})), patch(
-        _APPLY_PROVISIONING, new=AsyncMock(return_value={"name": "Kitchen Display"})
-    ) as mock_apply:
+    with patch(_FETCH_HEALTH, new=AsyncMock(return_value={"name": "Kitchen Display"})), patch(
+        _GET_SETTINGS, new=AsyncMock(return_value={**_CURRENT, "esphome.node_name": "ks-kitchen-display"})
+    ), patch(_APPLY_PROVISIONING, new=AsyncMock(return_value={"name": "Kitchen Display"})) as mock_apply:
         result = await apply_rename_ks_settings(session, "host", "token", names)
     assert result == "applied"
     mock_apply.assert_awaited_once_with(
@@ -93,12 +105,21 @@ async def test_apply_rename_ks_settings_applies_when_name_differs():
         {
             "device.name": "Kitchen Display",
             "device.hostname": "kitchen-display",
-            "esphome.node_name": "kitchen_display",
+            "esphome.node_name": "kitchen-display",
         },
     )
 
 
-# --- set_android_device_name (KSM-BEHAVE-084) -----------------------------
+@pytest.mark.parametrize("key", ["device.name", "device.hostname"])
+async def test_apply_rename_ks_settings_applies_when_name_or_hostname_differs(key):
+    names = RenameNames("Kitchen Display", "kitchen-display", "kitchen-display")
+    with patch(_GET_SETTINGS, new=AsyncMock(return_value={**_CURRENT, key: "old"})), patch(
+        _APPLY_PROVISIONING, new=AsyncMock(return_value={"name": "Kitchen Display"})
+    ) as mock_apply:
+        result = await apply_rename_ks_settings(MagicMock(), "host", "token", names)
+    assert result == "applied"
+    mock_apply.assert_awaited_once()
+
 
 async def test_set_android_device_name_reports_unsupported():
     names = RenameNames("Kitchen Display", "kitchen-display", "kitchen_display")
