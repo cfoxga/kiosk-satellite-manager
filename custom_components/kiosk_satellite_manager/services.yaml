@@ -53,7 +53,8 @@ rename_device:
   description: >-
     Rename a managed device's Kiosk Satellite identity, Android system name
     (when a supported method exists), and KSM entry/DNS host from one
-    display name. Returns a per-layer result -- a partial completion (e.g.
+    display name, then reload its ESPHome entry so the ESPHome actions
+    register under the new name. Returns a per-layer result -- a partial completion (e.g.
     host: pending) is not a failure.
   fields:
     config_entry_id:

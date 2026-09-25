@@ -68,6 +68,8 @@ from .rename import (
     apply_rename_ks_settings,
     derive_dns_host,
     derive_rename_names,
+    find_esphome_link,
+    rename_esphome_actions,
     resolve_and_verify_dns_host,
     set_android_device_name,
 )
@@ -343,7 +345,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             session = async_get_clientsession(hass)
             host = target_entry.data[CONF_HOST]
-            result: dict = {"ks": "failed", "android": "unsupported", "entry": "failed", "host": "unchanged"}
+            result: dict = {
+                "ks": "failed",
+                "android": "unsupported",
+                "entry": "failed",
+                "host": "unchanged",
+                "esphome": "unchanged",
+            }
+            # KSM-BEHAVE-092: locate the ESPHome entry and snapshot its
+            # actions before the PATCH -- HA rewrites the stored node name
+            # as soon as KS reconnects under the new one.
+            esphome_link = await find_esphome_link(hass, host)
             try:
                 token = await ks_api_login(session, host, password)
                 result["ks"] = await apply_rename_ks_settings(session, host, token, names)
@@ -376,6 +388,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 result["host"] = "applied"
             else:
                 result["host"] = "pending"
+
+            if esphome_link is None:
+                result["esphome"] = "not_found"
+            else:
+                result["esphome"], esphome_actions = await rename_esphome_actions(
+                    hass, esphome_link, names.esphome_node_name
+                )
+                if esphome_actions is not None:
+                    result["esphome_actions"] = esphome_actions
 
             await target_coordinator.async_request_refresh()
             return result

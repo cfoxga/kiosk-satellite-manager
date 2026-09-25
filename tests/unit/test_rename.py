@@ -27,11 +27,13 @@ _APPLY_PROVISIONING = "custom_components.kiosk_satellite_manager.rename.apply_pr
 
 # --- derive_rename_names (KSM-BEHAVE-084) ---------------------------------
 
-def test_derive_rename_names_slugifies_and_underscores():
+def test_derive_rename_names_slugifies_node_name_as_dns_label():
+    """[KSM-TEST-162] #56: the node name is the hyphenated DNS label KS puts
+    on the wire, never HA's underscore action-name form."""
     names = derive_rename_names("Great Room Device")
     assert names.device_name == "Great Room Device"
     assert names.hostname == "great-room-device"
-    assert names.esphome_node_name == "great_room_device"
+    assert names.esphome_node_name == "great-room-device"
 
 
 def test_derive_rename_names_strips_display_name_whitespace():

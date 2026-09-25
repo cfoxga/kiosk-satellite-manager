@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Fix `rename_device` leaving a kiosk's ESPHome actions under the old name. After a
+  verified rename, KSM finds the one ESPHome entry at the same IP, waits for Home
+  Assistant to record the new node name, and reloads that entry so
+  `esphome.<new_node>_*` actions register. The result gains `esphome`
+  (`applied`/`unchanged`/`pending`/`not_found`/`failed`) and, when the node name
+  changed, `esphome_actions` listing the automations and scripts that still call
+  the old action names. KSM reports them and edits nothing. The ESPHome node name
+  now matches the hostname (`great-room-portal`), since Kiosk Satellite uses
+  hyphens anyway.
+
 - Add **Enable Device Owner** to a device's Configure menu. It explains what
   Device Owner gives Kiosk Satellite (silent self-updates, true kiosk lock, home
   app without a prompt, remote reboot, real Wi-Fi MAC) and its side effects (only
