@@ -63,6 +63,31 @@ def adb_probe():
         yield mock
 
 
+@pytest.fixture(autouse=True)
+def device_owner_adb():
+    """KSM-BEHAVE-091: the Device Owner diagnostic sensor connects over ADB
+    on its own poll. Keep it off the network by default (unavailable);
+    tests that care patch `binary_sensor.AdbClient` themselves."""
+    class _UnreachableClient:
+        def __init__(self, host, port, key_path):
+            pass
+
+        async def connect(self, auth_timeout_s: float = 5):
+            raise OSError("network unreachable in tests")
+
+        async def shell(self, command):
+            raise AssertionError("shell() called on an unconnected fake client")
+
+        async def close(self):
+            pass
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.binary_sensor.AdbClient",
+        new=_UnreachableClient,
+    ):
+        yield
+
+
 @dataclass
 class KSMContext:
     entry: MockConfigEntry
