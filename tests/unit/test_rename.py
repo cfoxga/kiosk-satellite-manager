@@ -82,7 +82,7 @@ async def test_apply_rename_ks_settings_skips_patch_when_already_applied():
     with patch(_GET_SETTINGS, new=AsyncMock(return_value=dict(_CURRENT))) as mock_get, patch(
         _APPLY_PROVISIONING
     ) as mock_apply:
-        result = await apply_rename_ks_settings(MagicMock(), "host", "token", names)
+        result = await apply_rename_ks_settings(MagicMock(), "host", "token", names, pin=None)
     assert result == "unchanged"
     mock_get.assert_awaited_once()
     mock_apply.assert_not_called()
@@ -96,7 +96,7 @@ async def test_apply_rename_ks_settings_patches_stale_node_despite_matching_name
     with patch(_FETCH_HEALTH, new=AsyncMock(return_value={"name": "Kitchen Display"})), patch(
         _GET_SETTINGS, new=AsyncMock(return_value={**_CURRENT, "esphome.node_name": "ks-kitchen-display"})
     ), patch(_APPLY_PROVISIONING, new=AsyncMock(return_value={"name": "Kitchen Display"})) as mock_apply:
-        result = await apply_rename_ks_settings(session, "host", "token", names)
+        result = await apply_rename_ks_settings(session, "host", "token", names, pin=None)
     assert result == "applied"
     mock_apply.assert_awaited_once_with(
         session,
@@ -107,6 +107,7 @@ async def test_apply_rename_ks_settings_patches_stale_node_despite_matching_name
             "device.hostname": "kitchen-display",
             "esphome.node_name": "kitchen-display",
         },
+        pin=None,
     )
 
 
@@ -116,7 +117,7 @@ async def test_apply_rename_ks_settings_applies_when_name_or_hostname_differs(ke
     with patch(_GET_SETTINGS, new=AsyncMock(return_value={**_CURRENT, key: "old"})), patch(
         _APPLY_PROVISIONING, new=AsyncMock(return_value={"name": "Kitchen Display"})
     ) as mock_apply:
-        result = await apply_rename_ks_settings(MagicMock(), "host", "token", names)
+        result = await apply_rename_ks_settings(MagicMock(), "host", "token", names, pin=None)
     assert result == "applied"
     mock_apply.assert_awaited_once()
 
@@ -142,18 +143,18 @@ def _fake_hass(resolutions: dict):
 async def test_resolve_and_verify_dns_host_true_when_same_ip_and_health_ok():
     hass = _fake_hass({"old.example.com": "10.0.0.5", "new.example.com": "10.0.0.5"})
     with patch(_FETCH_HEALTH, new=AsyncMock(return_value={"name": "ok"})):
-        assert await resolve_and_verify_dns_host(hass, MagicMock(), "old.example.com", "new.example.com")
+        assert await resolve_and_verify_dns_host(hass, MagicMock(), "old.example.com", "new.example.com", pin=None)
 
 
 async def test_resolve_and_verify_dns_host_false_when_different_ip():
     hass = _fake_hass({"old.example.com": "10.0.0.5", "new.example.com": "10.0.0.6"})
     with patch(_FETCH_HEALTH, new=AsyncMock(return_value={"name": "ok"})):
-        assert not await resolve_and_verify_dns_host(hass, MagicMock(), "old.example.com", "new.example.com")
+        assert not await resolve_and_verify_dns_host(hass, MagicMock(), "old.example.com", "new.example.com", pin=None)
 
 
 async def test_resolve_and_verify_dns_host_false_when_candidate_unresolvable():
     hass = _fake_hass({"old.example.com": "10.0.0.5"})
-    assert not await resolve_and_verify_dns_host(hass, MagicMock(), "old.example.com", "new.example.com")
+    assert not await resolve_and_verify_dns_host(hass, MagicMock(), "old.example.com", "new.example.com", pin=None)
 
 
 async def test_resolve_and_verify_dns_host_false_when_health_unreachable():
@@ -161,4 +162,4 @@ async def test_resolve_and_verify_dns_host_false_when_health_unreachable():
 
     hass = _fake_hass({"old.example.com": "10.0.0.5", "new.example.com": "10.0.0.5"})
     with patch(_FETCH_HEALTH, new=AsyncMock(side_effect=aiohttp.ClientError("unreachable"))):
-        assert not await resolve_and_verify_dns_host(hass, MagicMock(), "old.example.com", "new.example.com")
+        assert not await resolve_and_verify_dns_host(hass, MagicMock(), "old.example.com", "new.example.com", pin=None)

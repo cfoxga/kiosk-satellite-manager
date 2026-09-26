@@ -23,6 +23,7 @@ from . import ks_api_client
 from .const import (
     CONF_HOST,
     CONF_PASSWORD,
+    CONF_TLS_SPKI,
     DOMAIN,
     RELEASE_COORDINATOR_KEY,
     SELF_UPDATE_POLL_ATTEMPTS,
@@ -73,6 +74,7 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
 
     host = entry.data[CONF_HOST]
     password = entry.data.get(CONF_PASSWORD)
+    pin = entry.data.get(CONF_TLS_SPKI)
     if not password:
         raise HomeAssistantError(
             f"no Kiosk Satellite password stored for {entry.title}"
@@ -84,10 +86,10 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
         coordinator.async_update_listeners()
     try:
         try:
-            token = await ks_api_client.login(session, host, password)
-            await ks_api_client.run_command(session, host, token, "checkUpdateNow")
+            token = await ks_api_client.login(session, host, password, pin=pin)
+            await ks_api_client.run_command(session, host, token, "checkUpdateNow", pin=pin)
             status = _status_data(
-                await ks_api_client.run_command(session, host, token, "getUpdateStatus"),
+                await ks_api_client.run_command(session, host, token, "getUpdateStatus", pin=pin),
                 entry,
             )
         except _TRANSIENT_ERRORS as err:
@@ -104,14 +106,14 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
             # Diagnostics only (nativeSilent/helper/shizukuReady) -- not
             # used to gate the install, just logged for support.
             installer_status = await ks_api_client.run_command(
-                session, host, token, "getUpdateInstallerStatus"
+                session, host, token, "getUpdateInstallerStatus", pin=pin
             )
             _LOGGER.debug(
                 "Kiosk Satellite update installer status on %s: %s",
                 entry.title,
                 installer_status,
             )
-            result = await ks_api_client.run_command(session, host, token, "installUpdate")
+            result = await ks_api_client.run_command(session, host, token, "installUpdate", pin=pin)
         except _TRANSIENT_ERRORS as err:
             raise HomeAssistantError(
                 f"Kiosk Satellite update failed on {entry.title}: {err}"
@@ -123,7 +125,7 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
                 f"{result.get('error') or 'installUpdate rejected'}"
             )
 
-        outcome = await _poll_until_resolved(session, host, token, version, entry)
+        outcome = await _poll_until_resolved(session, host, token, version, entry, pin=pin)
         if coordinator is not None:
             # The poll above confirmed the new version over its own direct
             # /api/health call -- refresh the entry's health coordinator too
@@ -138,14 +140,20 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
 
 
 async def _poll_until_resolved(
-    session: aiohttp.ClientSession, host: str, token: str, version: str, entry: ConfigEntry
+    session: aiohttp.ClientSession,
+    host: str,
+    token: str,
+    version: str,
+    entry: ConfigEntry,
+    *,
+    pin: str | None,
 ) -> str:
     """Poll /api/health and getUpdateStatus for a bounded window. A
     connection refused while the app restarts is expected, not a failure."""
     last_outcome: str | None = None
     for attempt in range(SELF_UPDATE_POLL_ATTEMPTS):
         try:
-            health = await fetch_health(session, host)
+            health = await fetch_health(session, host, pin=pin)
         except (aiohttp.ClientError, asyncio.TimeoutError):
             health = None
         if health is not None and health.get("appVersion") == version:
@@ -153,7 +161,7 @@ async def _poll_until_resolved(
 
         try:
             status = _status_data(
-                await ks_api_client.run_command(session, host, token, "getUpdateStatus"),
+                await ks_api_client.run_command(session, host, token, "getUpdateStatus", pin=pin),
                 entry,
             )
         except _TRANSIENT_ERRORS:

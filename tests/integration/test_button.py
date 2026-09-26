@@ -89,7 +89,7 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
     # network call.
     health_responses = iter([{"appVersion": "old"}, {"appVersion": "new"}])
 
-    async def fake_fetch_health(session, host):
+    async def fake_fetch_health(session, host, *, pin=None):
         return next(health_responses)
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
@@ -200,7 +200,7 @@ async def test_press_persists_only_a_new_device_token(
 ):
     """[KSM-TEST-087] A first install saves its device token once, while a
     reinstall keeps the configured credential rather than replacing it."""
-    async def fake_fetch_health(session, host):
+    async def fake_fetch_health(session, host, *, pin=None):
         return {"appVersion": "old"}
 
     entry_data = {}
@@ -236,7 +236,7 @@ async def test_press_persists_only_a_new_device_token(
 
 async def test_auto_credential_recovery_rotates_after_the_replacement_is_verified(hass):
     """[KSM-TEST-110] Auto credentials rotate; selected tokens never do."""
-    async def fake_fetch_health(session, host):
+    async def fake_fetch_health(session, host, *, pin=None):
         return {"appVersion": "old"}
 
     entry_data = {
@@ -276,7 +276,7 @@ async def test_press_retries_health_until_success_without_a_terminal_delay(hass)
     """[KSM-TEST-088] Post-install health polling stops at the first healthy
     response; a permanently unhealthy device gets exactly the bounded delays
     *between* attempts, never an extra delay after the final request."""
-    async def fake_fetch_health(session, host):
+    async def fake_fetch_health(session, host, *, pin=None):
         return {"appVersion": "old"}
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
@@ -324,7 +324,7 @@ async def test_press_retries_health_until_success_without_a_terminal_delay(hass)
 async def test_press_stops_health_retries_at_the_first_success(hass):
     """[KSM-TEST-089] A successful refresh stops the bounded retry loop
     immediately instead of continuing to poll a now-healthy device."""
-    async def fake_fetch_health(session, host):
+    async def fake_fetch_health(session, host, *, pin=None):
         return {"appVersion": "old"}
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
@@ -373,7 +373,7 @@ async def test_press_cleans_up_installing_state_and_connection_after_install_fai
     """[KSM-TEST-090] Once connected, a failed install still closes ADB and
     clears the transient sensor state so the button never leaves it stuck on
     Installing."""
-    async def fake_fetch_health(session, host):
+    async def fake_fetch_health(session, host, *, pin=None):
         return {"appVersion": "old"}
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
@@ -413,7 +413,7 @@ async def test_press_cleans_up_installing_state_and_connection_after_install_fai
 async def test_press_cleans_up_installing_state_after_connection_failure(hass):
     """[KSM-TEST-091] A rejected ADB connection never leaves the version
     sensor in Installing, and does not try to close an unacquired session."""
-    async def fake_fetch_health(session, host):
+    async def fake_fetch_health(session, host, *, pin=None):
         return {"appVersion": "old"}
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
@@ -445,7 +445,7 @@ async def test_press_cleans_up_installing_state_after_connection_failure(hass):
 async def test_press_succeeds_when_the_entry_coordinator_is_missing(hass):
     """[KSM-TEST-092] A button left behind during coordinator teardown still
     installs safely; optional refresh bookkeeping cannot block recovery."""
-    async def fake_fetch_health(session, host):
+    async def fake_fetch_health(session, host, *, pin=None):
         return {"appVersion": "old"}
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
@@ -478,7 +478,7 @@ async def test_press_succeeds_when_the_entry_coordinator_is_missing(hass):
 async def test_uninstall_button_press_uninstalls_ks(hass):
     """[KSM-TEST-008] The cleanup button connects over ADB, uninstalls Kiosk
     Satellite, and disconnects."""
-    async def fake_fetch_health(session, host):
+    async def fake_fetch_health(session, host, *, pin=None):
         return {"appVersion": "2026.9.62"}
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
@@ -519,7 +519,7 @@ async def test_press_refuses_to_provision_a_device_with_no_approved_recipe(hass)
     identify carries no model key. Pressing Install must fail closed rather
     than fall back to the Meta Portal recipe, and must not touch the device:
     no APK push, no pm install, no permission grants."""
-    async def fake_fetch_health(session, host):
+    async def fake_fetch_health(session, host, *, pin=None):
         return {"appVersion": "old"}
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
@@ -563,7 +563,7 @@ async def test_install_press_names_adb_and_host_port_on_connect_refusal(hass):
     """[KSM-TEST-158] negative case: the Install/Reinstall button with ADB
     refused raises an error naming ADB and host:port, not a bare
     AdbConnectFailed (KSM-BEHAVE-081)."""
-    async def fake_fetch_health(session, host):
+    async def fake_fetch_health(session, host, *, pin=None):
         return {"appVersion": "old"}
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
@@ -585,7 +585,7 @@ async def test_install_press_names_adb_and_host_port_on_connect_refusal(hass):
 async def test_uninstall_press_names_adb_and_host_port_on_connect_refusal(hass):
     """[KSM-TEST-158] negative case: the Uninstall button with ADB refused
     raises an error naming ADB and host:port, not a bare AdbConnectFailed."""
-    async def fake_fetch_health(session, host):
+    async def fake_fetch_health(session, host, *, pin=None):
         return {"appVersion": "old"}
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
@@ -611,7 +611,7 @@ async def test_update_all_updates_two_devices_over_the_ks_api(hass, release_chec
     notification reports all four buckets; no AdbClient is constructed."""
     release_check.return_value = _release("2026.9.77")
 
-    async def fake_fetch_health(session, host):
+    async def fake_fetch_health(session, host, *, pin=None):
         return {"appVersion": "2026.9.76"}
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
@@ -623,7 +623,7 @@ async def test_update_all_updates_two_devices_over_the_ks_api(hass, release_chec
         )
         update_all_entity_id = _entity_id(hass, manager.entry_id, "button", "update_all")
 
-        async def fake_poll_health(session, host):
+        async def fake_poll_health(session, host, *, pin=None):
             # The first device's poll sees the new version land immediately;
             # the second's never does, so its outcome resolves from
             # getUpdateStatus's lastOutcome instead (KSM-TEST-155/158).
@@ -631,7 +631,7 @@ async def test_update_all_updates_two_devices_over_the_ks_api(hass, release_chec
                 return {"appVersion": "2026.9.76"}
             return {"appVersion": "2026.9.77"}
 
-        def fake_run_command(session, host, token, command):
+        def fake_run_command(session, host, token, command, *, pin=None):
             responses = {
                 "checkUpdateNow": {},
                 "getUpdateStatus": {

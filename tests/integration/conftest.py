@@ -63,6 +63,19 @@ def adb_probe():
         yield mock
 
 
+@pytest.fixture(autouse=True)
+def tls_migration():
+    """KSM-BEHAVE-094: setup of an unpinned entry with a password switches
+    the device to HTTPS in the background. Keep it off the network; a KS that
+    predates TLS (None) leaves the entry unchanged. `test_tls_migration.py`
+    patches the same target itself."""
+    with patch(
+        "custom_components.kiosk_satellite_manager.ks_tls.async_establish_tls",
+        new=AsyncMock(return_value=None),
+    ) as mock:
+        yield mock
+
+
 @dataclass
 class KSMContext:
     entry: MockConfigEntry

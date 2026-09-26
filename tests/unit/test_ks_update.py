@@ -45,7 +45,7 @@ def _hass(release_version="2026.9.77", coordinator=None):
 
 
 def _commands(**by_command):
-    async def fake_run_command(session, host, token, command):
+    async def fake_run_command(session, host, token, command, *, pin=None):
         value = by_command[command]
         if command == "getUpdateStatus":
             return {"ok": True, "data": value}
@@ -85,7 +85,7 @@ async def test_install_update_transient_failure_is_reported_as_failed():
     login/checkUpdateNow) fails loudly, naming the entry."""
     hass = _hass()
 
-    async def fake_run_command(session, host, token, command):
+    async def fake_run_command(session, host, token, command, *, pin=None):
         if command == "installUpdate":
             raise KsApiError("connection reset")
         return {
@@ -115,7 +115,7 @@ async def test_poll_treats_a_transient_health_error_as_not_yet_healthy():
         "custom_components.kiosk_satellite_manager.ks_update.SELF_UPDATE_POLL_DELAY_S", 0
     ):
         outcome = await ks_update._poll_until_resolved(
-            session=None, host="192.168.1.50", token="tok", version="2026.9.77", entry=_entry()
+            session=None, host="192.168.1.50", token="tok", version="2026.9.77", entry=_entry(), pin=None,
         )
     assert outcome == ks_update.OUTCOME_UPDATED
 
@@ -124,7 +124,7 @@ async def test_poll_treats_a_transient_status_error_as_no_outcome_yet():
     """[KSM-TEST-156] getUpdateStatus itself failing transiently during the
     poll doesn't end the poll -- it's the same "still restarting" tolerance
     as the health read, just on the other call the poll makes each attempt."""
-    async def flaky_status(session, host, token, command):
+    async def flaky_status(session, host, token, command, *, pin=None):
         raise KsApiError("temporarily unreachable")
 
     with patch(_POLL_HEALTH, new=AsyncMock(return_value=None)), patch(
@@ -134,5 +134,5 @@ async def test_poll_treats_a_transient_status_error_as_no_outcome_yet():
     ):
         with pytest.raises(HomeAssistantError, match="did not complete"):
             await ks_update._poll_until_resolved(
-                session=None, host="192.168.1.50", token="tok", version="2026.9.77", entry=_entry()
+                session=None, host="192.168.1.50", token="tok", version="2026.9.77", entry=_entry(), pin=None,
             )

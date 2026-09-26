@@ -36,7 +36,7 @@ def _fake_session(**method_returns):
 async def test_get_setup_status_gets_unauthenticated_status_url():
     resp_cm = _fake_response({"setupNeeded": True, "passwordNeeded": True})
     session = _fake_session(get=resp_cm)
-    result = await ks_api_client.get_setup_status(session, "192.168.1.50")
+    result = await ks_api_client.get_setup_status(session, "192.168.1.50", pin=None)
     assert result == {"setupNeeded": True, "passwordNeeded": True}
     session.get.assert_called_once()
     assert session.get.call_args.args[0] == "http://192.168.1.50:2324/api/setup/status"
@@ -59,12 +59,12 @@ async def test_get_setup_status_bounds_a_malformed_http_response(monkeypatch):
 
     server = await asyncio.start_server(malformed_server, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
-    monkeypatch.setattr(ks_api_client, "_base_url", lambda _host: f"http://127.0.0.1:{port}")
+    monkeypatch.setattr(ks_api_client, "_base_url", lambda _host, _pin: f"http://127.0.0.1:{port}")
     try:
         async with aiohttp.ClientSession() as session:
             with pytest.raises(aiohttp.ClientError):
                 await asyncio.wait_for(
-                    ks_api_client.get_setup_status(session, "malformed-device"), timeout=1
+                    ks_api_client.get_setup_status(session, "malformed-device", pin=None), timeout=1
                 )
     finally:
         server.close()
@@ -76,25 +76,25 @@ async def test_get_setup_status_bounds_a_malformed_http_response(monkeypatch):
     [
         (
             lambda session, host: ks_api_client.setup_password(
-                session, host, "synthetic-password", "Kitchen"
+                session, host, "synthetic-password", "Kitchen", pin=None,
             ),
             b"synthetic-password",
         ),
-        (lambda session, host: ks_api_client.login(session, host, "synthetic-password"), b"synthetic-password"),
+        (lambda session, host: ks_api_client.login(session, host, "synthetic-password", pin=None), b"synthetic-password"),
         (
             lambda session, host: ks_api_client.patch_settings(
-                session, host, "synthetic-device-token", {"ha.token": "synthetic-ha-token"}
+                session, host, "synthetic-device-token", {"ha.token": "synthetic-ha-token"}, pin=None,
             ),
             b"synthetic-ha-token",
         ),
         (
             lambda session, host: ks_api_client.check_ha_connection(
-                session, host, "synthetic-device-token"
+                session, host, "synthetic-device-token", pin=None,
             ),
             b"synthetic-device-token",
         ),
         (
-            lambda session, host: ks_api_client.get_settings(session, host, "synthetic-device-token"),
+            lambda session, host: ks_api_client.get_settings(session, host, "synthetic-device-token", pin=None),
             b"synthetic-device-token",
         ),
     ],
@@ -158,10 +158,10 @@ async def test_status_request_remains_available_to_http_capture(monkeypatch):
 
     server = await asyncio.start_server(status_server, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
-    monkeypatch.setattr(ks_api_client, "_base_url", lambda _host: f"http://127.0.0.1:{port}")
+    monkeypatch.setattr(ks_api_client, "_base_url", lambda _host, _pin: f"http://127.0.0.1:{port}")
     try:
         async with aiohttp.ClientSession() as session:
-            assert await ks_api_client.get_setup_status(session, "status-device") == {
+            assert await ks_api_client.get_setup_status(session, "status-device", pin=None) == {
                 "setupNeeded": True,
                 "passwordNeeded": True,
             }
@@ -174,34 +174,34 @@ async def test_status_request_remains_available_to_http_capture(monkeypatch):
 async def test_credential_operation_rejects_a_different_http_origin(monkeypatch):
     """[KSM-TEST-127] A base URL override cannot send a secret to another host."""
     monkeypatch.setattr(
-        ks_api_client, "_base_url", lambda _host: "http://other-device.invalid:2324"
+        ks_api_client, "_base_url", lambda _host, _pin: "http://other-device.invalid:2324"
     )
     session = _fake_session(post=_fake_response({"token": "unused"}))
 
     with pytest.raises(KsApiError, match="configured device"):
-        await ks_api_client.login(session, "configured-device.invalid", "synthetic-password")
+        await ks_api_client.login(session, "configured-device.invalid", "synthetic-password", pin=None)
 
     session.post.assert_not_called()
 
 
 async def test_credential_operation_rejects_a_different_port(monkeypatch):
     """[KSM-TEST-127] Host equality cannot hide a substituted port."""
-    monkeypatch.setattr(ks_api_client, "_base_url", lambda _host: "http://127.0.0.1:8080")
+    monkeypatch.setattr(ks_api_client, "_base_url", lambda _host, _pin: "http://127.0.0.1:8080")
     session = _fake_session(post=_fake_response({"token": "unused"}))
 
     with pytest.raises(KsApiError, match="configured device"):
-        await ks_api_client.login(session, "127.0.0.1", "synthetic-password")
+        await ks_api_client.login(session, "127.0.0.1", "synthetic-password", pin=None)
 
     session.post.assert_not_called()
 
 
 async def test_credential_operation_rejects_a_different_scheme(monkeypatch):
     """[KSM-TEST-127] The allowed origin includes the current HTTP scheme."""
-    monkeypatch.setattr(ks_api_client, "_base_url", lambda _host: "https://127.0.0.1:2324")
+    monkeypatch.setattr(ks_api_client, "_base_url", lambda _host, _pin: "https://127.0.0.1:2324")
     session = _fake_session(post=_fake_response({"token": "unused"}))
 
     with pytest.raises(KsApiError, match="configured device"):
-        await ks_api_client.login(session, "127.0.0.1", "synthetic-password")
+        await ks_api_client.login(session, "127.0.0.1", "synthetic-password", pin=None)
 
     session.post.assert_not_called()
 
@@ -235,7 +235,7 @@ async def test_credential_redirect_does_not_forward_password(monkeypatch):
     try:
         async with aiohttp.ClientSession() as session:
             with pytest.raises(aiohttp.ContentTypeError):
-                await ks_api_client.login(session, "127.0.0.1", "synthetic-password")
+                await ks_api_client.login(session, "127.0.0.1", "synthetic-password", pin=None)
         assert not forwarded.is_set()
     finally:
         redirect_server.close()
@@ -246,7 +246,7 @@ async def test_credential_redirect_does_not_forward_password(monkeypatch):
 
 async def test_setup_password_posts_password_and_device_name_returns_token():
     session = _fake_session(post=_fake_response({"token": "tok-123"}))
-    token = await ks_api_client.setup_password(session, "192.168.1.50", "hunter22", "Kitchen")
+    token = await ks_api_client.setup_password(session, "192.168.1.50", "hunter22", "Kitchen", pin=None)
     assert token == "tok-123"
     _, kwargs = session.post.call_args
     assert kwargs["json"] == {"password": "hunter22", "deviceName": "Kitchen"}
@@ -257,12 +257,12 @@ async def test_setup_password_posts_password_and_device_name_returns_token():
 async def test_setup_password_raises_ksapierror_on_rejection():
     session = _fake_session(post=_fake_response({"error": "already set"}, ok=False, status=403))
     with pytest.raises(KsApiError, match="already set"):
-        await ks_api_client.setup_password(session, "192.168.1.50", "hunter22", "Kitchen")
+        await ks_api_client.setup_password(session, "192.168.1.50", "hunter22", "Kitchen", pin=None)
 
 
 async def test_login_posts_password_returns_token():
     session = _fake_session(post=_fake_response({"token": "tok-456"}))
-    token = await ks_api_client.login(session, "192.168.1.50", "hunter22")
+    token = await ks_api_client.login(session, "192.168.1.50", "hunter22", pin=None)
     assert token == "tok-456"
     _, kwargs = session.post.call_args
     assert kwargs["json"] == {"password": "hunter22"}
@@ -274,19 +274,19 @@ async def test_login_and_settings_rejections_fall_back_to_http_status():
     """[KSM-TEST-010] Empty device errors remain actionable and bounded."""
     login_session = _fake_session(post=_fake_response({}, ok=False, status=401))
     with pytest.raises(KsApiError, match="HTTP 401"):
-        await ks_api_client.login(login_session, "192.168.1.50", "hunter22")
+        await ks_api_client.login(login_session, "192.168.1.50", "hunter22", pin=None)
 
     settings_session = _fake_session(patch=_fake_response({}, ok=False, status=503))
     with pytest.raises(KsApiError, match="HTTP 503"):
         await ks_api_client.patch_settings(
-            settings_session, "192.168.1.50", "tok-789", {"ha.url": "https://ha.example"}
+            settings_session, "192.168.1.50", "tok-789", {"ha.url": "https://ha.example"}, pin=None,
         )
 
 
 async def test_patch_settings_sends_bearer_token_and_values():
     session = _fake_session(patch=_fake_response({"rejected": []}))
     await ks_api_client.patch_settings(
-        session, "192.168.1.50", "tok-789", {"device.name": "Kitchen"}
+        session, "192.168.1.50", "tok-789", {"device.name": "Kitchen"}, pin=None,
     )
     _, kwargs = session.patch.call_args
     assert kwargs["json"] == {"device.name": "Kitchen"}
@@ -299,13 +299,13 @@ async def test_patch_settings_raises_when_key_rejected():
     session = _fake_session(patch=_fake_response({"rejected": ["ha.url"]}))
     with pytest.raises(KsApiError, match="ha.url"):
         await ks_api_client.patch_settings(
-            session, "192.168.1.50", "tok-789", {"ha.url": "not a url"}
+            session, "192.168.1.50", "tok-789", {"ha.url": "not a url"}, pin=None,
         )
 
 
 async def test_check_ha_connection_returns_ok_flag():
     session = _fake_session(post=_fake_response({"ok": True}))
-    assert await ks_api_client.check_ha_connection(session, "192.168.1.50", "tok-789") is True
+    assert await ks_api_client.check_ha_connection(session, "192.168.1.50", "tok-789", pin=None) is True
     _, kwargs = session.post.call_args
     assert kwargs["allow_redirects"] is False
     assert session.post.call_args.args[0] == "http://192.168.1.50:2324/api/commands/haCheckConnection"
@@ -315,7 +315,7 @@ async def test_run_command_posts_bearer_token_to_the_command_url():
     """[KSM-BEHAVE-082] checkUpdateNow/getUpdateStatus/getUpdateInstallerStatus/
     installUpdate all ride this same POST /api/commands/<command> shape."""
     session = _fake_session(post=_fake_response({"availableVersion": "2026.9.77"}))
-    result = await ks_api_client.run_command(session, "192.168.1.50", "tok-789", "getUpdateStatus")
+    result = await ks_api_client.run_command(session, "192.168.1.50", "tok-789", "getUpdateStatus", pin=None)
     assert result == {"availableVersion": "2026.9.77"}
     _, kwargs = session.post.call_args
     assert kwargs["headers"]["Authorization"] == "Bearer tok-789"
@@ -326,12 +326,12 @@ async def test_run_command_posts_bearer_token_to_the_command_url():
 async def test_run_command_raises_ksapierror_on_rejection():
     session = _fake_session(post=_fake_response({"error": "not authenticated"}, ok=False, status=401))
     with pytest.raises(KsApiError, match="not authenticated"):
-        await ks_api_client.run_command(session, "192.168.1.50", "tok-789", "installUpdate")
+        await ks_api_client.run_command(session, "192.168.1.50", "tok-789", "installUpdate", pin=None)
 
 
 async def test_check_ha_connection_false_on_failure():
     session = _fake_session(post=_fake_response({"ok": False, "error": "unreachable"}))
-    assert await ks_api_client.check_ha_connection(session, "192.168.1.50", "tok-789") is False
+    assert await ks_api_client.check_ha_connection(session, "192.168.1.50", "tok-789", pin=None) is False
     _, kwargs = session.post.call_args
     assert kwargs["allow_redirects"] is False
     assert session.post.call_args.args[0] == "http://192.168.1.50:2324/api/commands/haCheckConnection"
@@ -352,7 +352,7 @@ async def test_get_settings_maps_described_settings_to_values():
             }
         )
     )
-    result = await ks_api_client.get_settings(session, "host", "device-token")
+    result = await ks_api_client.get_settings(session, "host", "device-token", pin=None)
     assert result == {"device.name": "Kitchen", "esphome.node_name": "ks-kitchen", "no.value": None}
     kwargs = session.get.call_args.kwargs
     assert kwargs["headers"] == {"Authorization": "Bearer device-token"}
@@ -362,4 +362,4 @@ async def test_get_settings_maps_described_settings_to_values():
 async def test_get_settings_raises_on_rejected_token():
     session = _fake_session(get=_fake_response({"error": "unauthorized"}, ok=False, status=401))
     with pytest.raises(KsApiError, match="unauthorized"):
-        await ks_api_client.get_settings(session, "host", "bad-token")
+        await ks_api_client.get_settings(session, "host", "bad-token", pin=None)

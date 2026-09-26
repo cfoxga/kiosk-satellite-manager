@@ -142,6 +142,26 @@ def _fake_session(app_version=_TARGET_VERSION):
 
 
 @pytest.fixture(autouse=True)
+def _ks_without_tls(monkeypatch):
+    """These tests predate #57: model a KS release without HTTPS support so
+    onboarding keeps its HTTP path. TLS onboarding is test_ks_tls.py."""
+    monkeypatch.setattr(
+        "custom_components.kiosk_satellite_manager.install.ks_tls.async_establish_tls",
+        AsyncMock(return_value=None),
+    )
+
+    async def _http_health(session, host):
+        # The HTTP-device leg of _read_health_any, served by _fake_session.
+        async with session.get(f"http://{host}:2324/api/health") as resp:
+            resp.raise_for_status()
+            return await resp.json()
+
+    monkeypatch.setattr(
+        "custom_components.kiosk_satellite_manager.install._read_health_any", _http_health
+    )
+
+
+@pytest.fixture(autouse=True)
 def _accept_fake_apk_artifacts(monkeypatch):
     """Existing install-flow tests use arbitrary bytes, not signed APK files."""
     monkeypatch.setattr(
@@ -336,6 +356,7 @@ async def test_install_and_launch_uses_the_assigned_recipe_for_start_url_and_lau
         "custom_components.kiosk_satellite_manager.install.get_url",
         return_value="http://192.168.1.2:8123",
     ):
+        mock_api.probe_https = AsyncMock(return_value=None)  # device still on HTTP
         mock_api.get_setup_status = AsyncMock(
             return_value={"passwordNeeded": True, "deviceName": "Test"}
         )
@@ -438,6 +459,7 @@ async def test_install_and_launch_syncs_password_and_name_on_first_run():
         "custom_components.kiosk_satellite_manager.install.get_url",
         return_value="http://192.168.1.2:8123",
     ):
+        mock_api.probe_https = AsyncMock(return_value=None)  # device still on HTTP
         mock_api.get_setup_status = AsyncMock(
             return_value={"passwordNeeded": True, "deviceName": "unconfigured"}
         )
@@ -450,7 +472,7 @@ async def test_install_and_launch_syncs_password_and_name_on_first_run():
             device_model="portal_go",
         )
 
-    mock_api.setup_password.assert_awaited_once_with(session, "192.168.1.50", "hunter22", "Kitchen")
+    mock_api.setup_password.assert_awaited_once_with(session, "192.168.1.50", "hunter22", "Kitchen", pin=None)
     mock_api.login.assert_not_called()
     hass.auth.async_get_owner.assert_not_called()
     hass.auth.async_create_user.assert_awaited_once_with(
@@ -466,8 +488,9 @@ async def test_install_and_launch_syncs_password_and_name_on_first_run():
             "browser.start_url": "http://192.168.1.2:8123/portal",
             "browser.ignore_ssl_errors": False,
         },
+        pin=None,
     )
-    mock_api.check_ha_connection.assert_awaited_once_with(session, "192.168.1.50", "ks-token")
+    mock_api.check_ha_connection.assert_awaited_once_with(session, "192.168.1.50", "ks-token", pin=None)
 
 
 async def test_install_and_launch_mints_a_unique_managed_token_name():
@@ -485,6 +508,7 @@ async def test_install_and_launch_mints_a_unique_managed_token_name():
         "custom_components.kiosk_satellite_manager.install.get_url",
         return_value="http://192.168.1.2:8123",
     ):
+        mock_api.probe_https = AsyncMock(return_value=None)  # device still on HTTP
         mock_api.get_setup_status = AsyncMock(return_value={"passwordNeeded": True})
         mock_api.setup_password = AsyncMock(return_value="ks-token")
         mock_api.patch_settings = AsyncMock(return_value={})
@@ -515,6 +539,7 @@ async def test_install_failure_after_mint_revokes_the_owned_refresh_token():
         "custom_components.kiosk_satellite_manager.install.get_url",
         return_value="http://192.168.1.2:8123",
     ):
+        mock_api.probe_https = AsyncMock(return_value=None)  # device still on HTTP
         mock_api.get_setup_status = AsyncMock(return_value={"passwordNeeded": True})
         mock_api.setup_password = AsyncMock(return_value="ks-token")
         mock_api.patch_settings = AsyncMock(side_effect=KsApiError("offline"))
@@ -544,6 +569,7 @@ async def test_install_and_launch_logs_in_and_patches_name_when_password_already
         "custom_components.kiosk_satellite_manager.install.get_url",
         return_value="http://192.168.1.2:8123",
     ):
+        mock_api.probe_https = AsyncMock(return_value=None)  # device still on HTTP
         mock_api.get_setup_status = AsyncMock(
             return_value={"passwordNeeded": False, "deviceName": "old-name"}
         )
@@ -557,7 +583,7 @@ async def test_install_and_launch_logs_in_and_patches_name_when_password_already
         )
 
     mock_api.setup_password.assert_not_called()
-    mock_api.login.assert_awaited_once_with(session, "192.168.1.50", "hunter22")
+    mock_api.login.assert_awaited_once_with(session, "192.168.1.50", "hunter22", pin=None)
     name_patch_call = mock_api.patch_settings.await_args_list[0]
     assert name_patch_call.args[3] == {"device.name": "Kitchen"}
 
@@ -577,6 +603,7 @@ async def test_install_and_launch_does_not_repatch_name_when_already_correct():
         "custom_components.kiosk_satellite_manager.install.get_url",
         return_value="http://192.168.1.2:8123",
     ):
+        mock_api.probe_https = AsyncMock(return_value=None)  # device still on HTTP
         mock_api.get_setup_status = AsyncMock(
             return_value={"passwordNeeded": False, "deviceName": "Kitchen"}
         )
@@ -610,6 +637,7 @@ async def test_install_and_launch_sync_failure_is_logged_not_raised():
     ), patch(
         "custom_components.kiosk_satellite_manager.install.ks_api_client"
     ) as mock_api:
+        mock_api.probe_https = AsyncMock(return_value=None)  # device still on HTTP
         mock_api.get_setup_status = AsyncMock(side_effect=KsApiError("web UI not up yet"))
 
         # must not raise -- install already succeeded by this point
@@ -677,6 +705,7 @@ async def test_install_and_launch_reuses_provided_token_and_respects_launcher_fl
         "custom_components.kiosk_satellite_manager.install.get_url",
         return_value="http://192.168.1.2:8123",
     ):
+        mock_api.probe_https = AsyncMock(return_value=None)  # device still on HTTP
         mock_api.get_setup_status = AsyncMock(
             return_value={"passwordNeeded": False, "deviceName": "Kitchen"}
         )
@@ -823,7 +852,7 @@ async def test_health_poll_retries_transport_failure_then_returns_on_matching_re
     """[KSM-TEST-114] Health retries only after a transport failure."""
     fetch = AsyncMock(side_effect=[aiohttp.ClientConnectionError("refused"), {"appVersion": _TARGET_VERSION}])
     sleep = AsyncMock()
-    monkeypatch.setattr("custom_components.kiosk_satellite_manager.install.fetch_health", fetch)
+    monkeypatch.setattr("custom_components.kiosk_satellite_manager.install._read_health_any", fetch)
     monkeypatch.setattr("custom_components.kiosk_satellite_manager.install.asyncio.sleep", sleep)
 
     await _verify_health(MagicMock(), "192.168.1.50", _TARGET_VERSION)
@@ -836,7 +865,7 @@ async def test_health_poll_reports_the_last_failed_readback(monkeypatch):
     """[KSM-TEST-114] A reachable but wrong app version cannot pass health verification."""
     fetch = AsyncMock(return_value={"appVersion": "stale"})
     sleep = AsyncMock()
-    monkeypatch.setattr("custom_components.kiosk_satellite_manager.install.fetch_health", fetch)
+    monkeypatch.setattr("custom_components.kiosk_satellite_manager.install._read_health_any", fetch)
     monkeypatch.setattr("custom_components.kiosk_satellite_manager.install.asyncio.sleep", sleep)
 
     with pytest.raises(KsInstallVerificationFailed, match="appVersion='stale'"):
@@ -851,9 +880,13 @@ async def test_setup_status_poll_retries_and_exhaustion_is_actionable(monkeypatc
     sleep = AsyncMock()
     status = AsyncMock(side_effect=[asyncio.TimeoutError(), {"passwordNeeded": False}])
     monkeypatch.setattr("custom_components.kiosk_satellite_manager.install.ks_api_client.get_setup_status", status)
+    monkeypatch.setattr(
+        "custom_components.kiosk_satellite_manager.install.ks_api_client.probe_https",
+        AsyncMock(return_value=None),
+    )
     monkeypatch.setattr("custom_components.kiosk_satellite_manager.install.asyncio.sleep", sleep)
 
-    assert await _wait_for_setup_status(MagicMock(), "192.168.1.50") == {"passwordNeeded": False}
+    assert await _wait_for_setup_status(MagicMock(), "192.168.1.50") == ({"passwordNeeded": False}, None)
     assert status.await_count == 2
     sleep.assert_awaited_once()
 

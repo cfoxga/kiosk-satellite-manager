@@ -49,6 +49,7 @@ from .adb_client import AdbAuthPending, AdbClient, AdbConnectFailed, ensure_adb_
 from .const import (
     CONF_AREA_ID,
     CONF_AUTO_UPDATE,
+    CONF_TLS_SPKI,
     CONF_DEVICE_PROFILE,
     CONF_ENTRY_TYPE,
     CONF_EXISTING_INSTALL_ACTION,
@@ -225,6 +226,7 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
                         async_get_clientsession(self.hass),
                         self._entry.data[CONF_HOST],
                         candidate,
+                        pin=self._entry.data.get(CONF_TLS_SPKI),
                     )
                 except Exception:  # noqa: BLE001 -- never expose a device response or secret
                     errors[CONF_PASSWORD] = "password_verification_failed"
@@ -397,6 +399,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._ks_installed: bool = False
         self._existing_install_action: str | None = None
         self._install_task: asyncio.Task | None = None
+        self._tls_pin: str | None = None
         self._global: dict | None = None
         self._ha_url: str | None = None
         self._auto_update: bool = False
@@ -798,6 +801,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     home_launcher=self._home_launcher,
                     device_model=self._profile_key,
                     ha_url=self._ha_url,
+                    on_tls_pinned=self._set_tls_pin,
                 )
                 if used_token:
                     self._credential = used_token
@@ -820,6 +824,11 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 notification_id=f"{DOMAIN}_install_failed_{self._host}",
             )
 
+    def _set_tls_pin(self, pin: str) -> None:
+        """KSM-BEHAVE-094: the device key onboarding pinned, stored in the
+        created entry."""
+        self._tls_pin = pin
+
     async def async_step_install_done(self, user_input: dict | None = None) -> FlowResult:
         data = {
             CONF_HOST: self._host,
@@ -831,6 +840,8 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_PASSWORD: self._password,
             CONF_HA_URL: self._ha_url,
         }
+        if self._tls_pin:
+            data[CONF_TLS_SPKI] = self._tls_pin
         if self._existing_install_action != EXISTING_INSTALL_REUSE or self._global:
             data.update(
                 {

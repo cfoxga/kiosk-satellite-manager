@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Talk to Kiosk Satellite devices over HTTPS instead of plain HTTP (#57). On a
+  device running Kiosk Satellite 2026.9.78 or later, KSM turns on the device's
+  HTTPS setting and remembers the device's key. After that, the admin password
+  and login token only go to a device that presents that same key, and a changed
+  key blocks management and raises a repair you confirm to trust the new one.
+  Existing devices switch over automatically the first time Home Assistant loads
+  KSM after this update. Older Kiosk Satellite versions stay on HTTP and log a
+  warning naming the version needed.
+
 - Fix `rename_device` leaving a kiosk's ESPHome actions under the old name. After a
   verified rename, KSM finds the one ESPHome entry at the same IP, waits for Home
   Assistant to record the new node name, and reloads that entry so

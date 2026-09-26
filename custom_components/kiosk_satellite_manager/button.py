@@ -22,11 +22,13 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 
 from .adb_client import AdbClient, AdbConnectFailed
 from .const import (
     CONF_AREA_ID,
     CONF_ENTRY_TYPE,
+    CONF_TLS_SPKI,
     CONF_DEVICE_PROFILE,
     CONF_HA_TOKEN,
     CONF_HA_URL,
@@ -80,6 +82,13 @@ async def async_setup_entry(
     )
 
 
+def _store_tls_pin(hass: HomeAssistant, entry: ConfigEntry, pin: str) -> None:
+    """KSM-BEHAVE-094: Install is an operator trust event -- persist the key
+    it just pinned and clear any certificate-changed repair it resolves."""
+    hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_TLS_SPKI: pin})
+    ir.async_delete_issue(hass, DOMAIN, f"tls_certificate_changed_{entry.entry_id}")
+
+
 async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Install/upgrade Kiosk Satellite over ADB on one entry's device.
 
@@ -131,6 +140,7 @@ async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 home_launcher=entry.data.get(CONF_HOME_LAUNCHER, True),
                 device_model=entry.data.get(CONF_DEVICE_PROFILE),
                 ha_url=entry.data.get(CONF_HA_URL),
+                on_tls_pinned=lambda pin: _store_tls_pin(hass, entry, pin),
             )
 
             if used_token and (rotate_managed_credential or not entry.data.get(CONF_HA_TOKEN)):

@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
+import aiohttp
 import voluptuous as vol
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
@@ -36,6 +37,7 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -51,6 +53,7 @@ from .const import (
     CONF_KEY_PATH,
     CONF_PASSWORD,
     CONF_PORT,
+    CONF_TLS_SPKI,
     DOMAIN,
     HEALTH_SCAN_INTERVAL_MIN,
     MANAGER_PLATFORMS,
@@ -59,6 +62,7 @@ from .const import (
     RELEASE_COORDINATOR_KEY,
     MANAGER_ENTRY_KEY,
 )
+from . import ks_tls
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .ks_api import latest_release_info
 from .ks_api_client import KsApiError
@@ -200,6 +204,28 @@ async def _async_ensure_release_coordinator(hass: HomeAssistant) -> None:
     await coordinator.async_refresh()
 
 
+def tls_issue_id(entry: ConfigEntry) -> str:
+    return f"tls_certificate_changed_{entry.entry_id}"
+
+
+async def _async_migrate_tls(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """KSM-BEHAVE-094: switch an unpinned device entry to pinned HTTPS once.
+    `None` (KS predates TLS) or an error leaves the entry as it was; the
+    next setup tries again."""
+    host = entry.data[CONF_HOST]
+    try:
+        pin = await ks_tls.async_establish_tls(
+            async_get_clientsession(hass), host, entry.data[CONF_PASSWORD]
+        )
+    except (KsApiError, aiohttp.ClientError, TimeoutError) as err:
+        _LOGGER.warning("Could not switch Kiosk Satellite %s to HTTPS: %s", host, err)
+        return
+    if pin is None:
+        return
+    hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_TLS_SPKI: pin})
+    _LOGGER.info("Kiosk Satellite %s now managed over pinned HTTPS", host)
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """KSM-BEHAVE-078: ensure the manager entry exists before any entry setup.
 
@@ -238,7 +264,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     host = entry.data[CONF_HOST]
 
     async def _update():
-        return await fetch_health(session, host)
+        # Read at call time: migration, the Install button and the repair
+        # flow all update the pin in place (KSM-BEHAVE-093/095).
+        try:
+            health = await fetch_health(session, host, pin=entry.data.get(CONF_TLS_SPKI))
+        except aiohttp.ServerFingerprintMismatch as err:
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                tls_issue_id(entry),
+                is_fixable=True,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key="tls_certificate_changed",
+                translation_placeholders={"name": entry.title, "host": host},
+                data={"entry_id": entry.entry_id},
+            )
+            raise UpdateFailed(
+                f"{host} presented a TLS key that does not match its pin; "
+                "management is blocked until the repair is confirmed"
+            ) from err
+        return health
 
     coordinator = DataUpdateCoordinator(
         hass,
@@ -253,6 +298,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await _async_ensure_release_coordinator(hass)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    if entry.data.get(CONF_PASSWORD) and not entry.data.get(CONF_TLS_SPKI):
+        entry.async_create_background_task(
+            hass, _async_migrate_tls(hass, entry), f"{DOMAIN}_tls_migration_{host}"
+        )
 
     if not hass.services.has_service(DOMAIN, SERVICE_PROVISION):
 
@@ -269,11 +319,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
             session = async_get_clientsession(hass)
             host = target_entry.data[CONF_HOST]
+            pin = target_entry.data.get(CONF_TLS_SPKI)
             try:
-                token = await ks_api_login(session, host, password)
-                await apply_provisioning(session, host, token, call.data["settings"])
+                token = await ks_api_login(session, host, password, pin=pin)
+                await apply_provisioning(session, host, token, call.data["settings"], pin=pin)
             except ProvisioningMismatch as err:
                 raise ServiceValidationError(str(err)) from err
+            except aiohttp.ServerFingerprintMismatch as err:
+                raise ServiceValidationError(
+                    f"{target_entry.title} presented a TLS key that does not match its pin"
+                ) from err
             except KsApiError as err:
                 raise ServiceValidationError(
                     f"Kiosk Satellite API error on {target_entry.title}: {err}"
@@ -356,11 +411,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # actions before the PATCH -- HA rewrites the stored node name
             # as soon as KS reconnects under the new one.
             esphome_link = await find_esphome_link(hass, host)
+            pin = target_entry.data.get(CONF_TLS_SPKI)
             try:
-                token = await ks_api_login(session, host, password)
-                result["ks"] = await apply_rename_ks_settings(session, host, token, names)
+                token = await ks_api_login(session, host, password, pin=pin)
+                result["ks"] = await apply_rename_ks_settings(session, host, token, names, pin=pin)
             except ProvisioningMismatch as err:
                 result["error"] = str(err)
+                return result
+            except aiohttp.ServerFingerprintMismatch:
+                result["error"] = f"{target_entry.title} presented a TLS key that does not match its pin"
                 return result
             except KsApiError as err:
                 result["error"] = f"Kiosk Satellite API error on {target_entry.title}: {err}"
@@ -381,7 +440,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             candidate_host = derive_dns_host(host, names.hostname)
             if candidate_host is None or candidate_host == host:
                 result["host"] = "unchanged"
-            elif await resolve_and_verify_dns_host(hass, session, host, candidate_host):
+            elif await resolve_and_verify_dns_host(hass, session, host, candidate_host, pin=pin):
                 hass.config_entries.async_update_entry(
                     target_entry, data={**target_entry.data, CONF_HOST: candidate_host}
                 )

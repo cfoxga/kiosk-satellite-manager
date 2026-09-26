@@ -27,7 +27,7 @@ async def test_provision_applies_and_refreshes_on_match(hass):
     """[KSM-TEST-159] one PATCH /api/settings, no AdbClient constructed."""
     health_responses = iter([{"name": "old"}, {"name": "Kitchen Portal"}])
 
-    async def fake_fetch_health(session, host):
+    async def fake_fetch_health(session, host, *, pin=None):
         return next(health_responses)
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):

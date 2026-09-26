@@ -46,9 +46,10 @@ from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.network import get_url
 
+from collections.abc import Callable
 from typing import Any, Final
 
-from . import ks_api_client
+from . import ks_api_client, ks_tls
 from .adb_client import AdbClient
 from .apk_signing import verify_ks_apk_signer
 from .const import (
@@ -65,7 +66,7 @@ from .credentials import TokenCredential, async_revoke_owned_credential
 from .install_recipes import InstallRecipe
 from .ks_api import latest_release
 from .ks_api_client import KsApiError
-from .provisioning import build_provision_command, fetch_health
+from .provisioning import build_provision_command
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -314,6 +315,7 @@ async def install_and_launch(
     home_launcher: bool = True,
     device_model: str | None = None,
     ha_url: str | None = None,
+    on_tls_pinned: Callable[[str], None] | None = None,
 ) -> TokenCredential | None:
     """Fetch the latest KS APK matching the device's ABI, install it, launch
     it, and grant full permissions. If a password is configured on the entry,
@@ -323,7 +325,10 @@ async def install_and_launch(
     `device_model` is an exact `device_models` key. Resolution happens first,
     before any device mutation: a model with no approved recipe assignment
     raises `NoApprovedRecipe` here rather than being provisioned on a guess
-    (KSM-BEHAVE-048)."""
+    (KSM-BEHAVE-048).
+
+    `on_tls_pinned` receives the device's HTTPS key pin once the sync has
+    established it (KSM-BEHAVE-094); the caller persists it."""
     recipe = require_recipe(device_model)
     abi = await client.getprop("ro.product.cpu.abi")
     try:
@@ -416,6 +421,7 @@ async def install_and_launch(
             home_launcher=home_launcher,
             recipe=recipe,
             ha_url=ha_url,
+            on_tls_pinned=on_tls_pinned,
         )
     except (KsApiError, aiohttp.ClientError, asyncio.TimeoutError) as err:
         _LOGGER.warning("device-name/HA auto-connect sync failed for %s: %s", host, err)
@@ -434,7 +440,7 @@ async def _verify_health(
     last: str = "never reachable"
     for attempt in range(SYNC_STATUS_POLL_ATTEMPTS):
         try:
-            health = await fetch_health(session, host)
+            health = await _read_health_any(session, host)
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             last = str(err)
         else:
@@ -448,11 +454,26 @@ async def _verify_health(
     )
 
 
-async def _wait_for_setup_status(session: aiohttp.ClientSession, host: str) -> dict:
+async def _read_health_any(session: aiohttp.ClientSession, host: str) -> dict:
+    """Unauthenticated health on whichever transport the device serves right
+    now -- a reinstall keeps `remote.tls`, a factory reset clears it."""
+    probed = await ks_api_client.probe_https(session, host)
+    if probed is not None:
+        return probed[1]
+    return await ks_api_client.get_health(session, host, pin=None)
+
+
+async def _wait_for_setup_status(
+    session: aiohttp.ClientSession, host: str
+) -> tuple[dict, str | None]:
+    """(setup status, served HTTPS key or None when the device is on HTTP)."""
     last_err: Exception | None = None
     for attempt in range(SYNC_STATUS_POLL_ATTEMPTS):
+        probed = await ks_api_client.probe_https(session, host, "/api/setup/status")
+        if probed is not None:
+            return probed[1], probed[0]
         try:
-            return await ks_api_client.get_setup_status(session, host)
+            return await ks_api_client.get_setup_status(session, host, pin=None), None
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             last_err = err
             if attempt < SYNC_STATUS_POLL_ATTEMPTS - 1:
@@ -499,14 +520,32 @@ async def _sync_device_and_connect_ha(
     token_credential: TokenCredential | None = None,
     home_launcher: bool = True,
     ha_url: str | None = None,
+    on_tls_pinned: Callable[[str], None] | None = None,
 ) -> TokenCredential:
-    status = await _wait_for_setup_status(session, host)
-    if status.get("passwordNeeded", True):
-        token = await ks_api_client.setup_password(session, host, password, device_name)
-    else:
-        token = await ks_api_client.login(session, host, password)
-        if status.get("deviceName") != device_name:
-            await ks_api_client.patch_settings(session, host, token, {"device.name": device_name})
+    status, served = await _wait_for_setup_status(session, host)
+    password_needed = status.get("passwordNeeded", True)
+    token: str | None = None
+    if password_needed:
+        # The one accepted plaintext bootstrap on an HTTP device: first-run
+        # password + Device Name (KSM-BEHAVE-094).
+        token = await ks_api_client.setup_password(
+            session, host, password, device_name, pin=served
+        )
+    # KSM-BEHAVE-094: an operator trust event -- re-establish the pin rather
+    # than reuse a stored one. Raises (before any HA credential is sent) if a
+    # TLS-capable device cannot be switched; None means the KS predates TLS.
+    pin = await ks_tls.async_establish_tls(session, host, password)
+    if served is not None and pin != served:
+        raise KsApiError(f"{host} changed its TLS key during onboarding; nothing pinned")
+    if pin is not None and on_tls_pinned is not None:
+        on_tls_pinned(pin)
+    if pin is not None or token is None:
+        # The token that authorizes the HA-token PATCH never crossed HTTP.
+        token = await ks_api_client.login(session, host, password, pin=pin)
+    if not password_needed and status.get("deviceName") != device_name:
+        await ks_api_client.patch_settings(
+            session, host, token, {"device.name": device_name}, pin=pin
+        )
 
     credential = token_credential
     created_credential = False
@@ -534,8 +573,8 @@ async def _sync_device_and_connect_ha(
             "browser.ignore_ssl_errors": False,
         }
 
-        await ks_api_client.patch_settings(session, host, token, settings_payload)
-        if not await ks_api_client.check_ha_connection(session, host, token):
+        await ks_api_client.patch_settings(session, host, token, settings_payload, pin=pin)
+        if not await ks_api_client.check_ha_connection(session, host, token, pin=pin):
             _LOGGER.warning("Kiosk Satellite reported the HA connection check failed for %s", host)
     except Exception:
         if created_credential:

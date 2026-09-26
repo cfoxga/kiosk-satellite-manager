@@ -38,11 +38,11 @@ async def test_apply_provisioning_succeeds_when_readback_matches():
     session = _fake_session({"name": "Kitchen Portal"})
     with patch(_PATCH_SETTINGS, new=AsyncMock(return_value={"rejected": []})) as patch_settings:
         result = await apply_provisioning(
-            session, "1.2.3.4", "tok-789", {"device.name": "Kitchen Portal"}
+            session, "1.2.3.4", "tok-789", {"device.name": "Kitchen Portal"}, pin=None,
         )
     assert result == {"name": "Kitchen Portal"}
     patch_settings.assert_awaited_once_with(
-        session, "1.2.3.4", "tok-789", {"device.name": "Kitchen Portal"}
+        session, "1.2.3.4", "tok-789", {"device.name": "Kitchen Portal"}, pin=None
     )
 
 
@@ -50,13 +50,13 @@ async def test_apply_provisioning_raises_on_readback_mismatch():
     session = _fake_session({"name": "Theater Google TV"})
     with patch(_PATCH_SETTINGS, new=AsyncMock(return_value={"rejected": []})):
         with pytest.raises(ProvisioningMismatch):
-            await apply_provisioning(session, "1.2.3.4", "tok-789", {"device.name": "Kitchen Portal"})
+            await apply_provisioning(session, "1.2.3.4", "tok-789", {"device.name": "Kitchen Portal"}, pin=None)
 
 
 async def test_apply_provisioning_ignores_non_verifiable_keys():
     session = _fake_session({"name": "unchanged"})
     with patch(_PATCH_SETTINGS, new=AsyncMock(return_value={"rejected": []})):
-        result = await apply_provisioning(session, "1.2.3.4", "tok-789", {"remote.password": "x"})
+        result = await apply_provisioning(session, "1.2.3.4", "tok-789", {"remote.password": "x"}, pin=None)
     assert result == {"name": "unchanged"}
 
 
@@ -68,5 +68,5 @@ async def test_apply_provisioning_never_reads_back_on_a_rejected_key():
         _PATCH_SETTINGS, new=AsyncMock(side_effect=KsApiError("device rejected settings: ['device.name']"))
     ):
         with pytest.raises(KsApiError, match="device.name"):
-            await apply_provisioning(session, "1.2.3.4", "tok-789", {"device.name": "Kitchen Portal"})
+            await apply_provisioning(session, "1.2.3.4", "tok-789", {"device.name": "Kitchen Portal"}, pin=None)
     session.get.assert_not_called()

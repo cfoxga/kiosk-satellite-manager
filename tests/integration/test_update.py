@@ -55,7 +55,7 @@ def _refuses_adb():
 def _commands(**by_command):
     """run_command stand-in keyed by command name; missing keys are errors."""
 
-    async def fake_run_command(session, host, token, command):
+    async def fake_run_command(session, host, token, command, *, pin=None):
         if command not in by_command:
             raise AssertionError(f"unexpected command: {command}")
         result = by_command[command]
@@ -76,7 +76,7 @@ def _health(*versions):
     """fetch_health stand-in: returns each version in turn, then repeats the last."""
     queue = list(versions)
 
-    async def fake_fetch_health(session, host):
+    async def fake_fetch_health(session, host, *, pin=None):
         version = queue.pop(0) if len(queue) > 1 else queue[0]
         if isinstance(version, Exception):
             raise version
@@ -223,7 +223,7 @@ async def test_update_install_rejects_bad_status_envelope(hass, release_check, s
         ctx = await init_integration(hass)
         entity_id = _entity_id(hass, ctx.entry, "update")
 
-        async def command(session, host, token, name):
+        async def command(session, host, token, name, *, pin=None):
             if name == "checkUpdateNow":
                 return {"ok": True}
             if name == "getUpdateStatus":
@@ -349,7 +349,7 @@ async def test_update_install_poll_last_error_is_failed(hass, release_check):
 
         status_calls = {"n": 0}
 
-        async def fake_run_command(session, host, token, command):
+        async def fake_run_command(session, host, token, command, *, pin=None):
             if command == "checkUpdateNow":
                 return {}
             if command == "getUpdateStatus":

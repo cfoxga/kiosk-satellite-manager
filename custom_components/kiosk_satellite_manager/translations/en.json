@@ -120,5 +120,22 @@
       "adb_unavailable": "Could not connect to ADB at {address}. Enable network ADB on the device (it turns off after a reboot) and try again.",
       "install_in_progress": "A Kiosk Satellite install is running on this device. Try again when it finishes."
     }
+  },
+  "issues": {
+    "tls_certificate_changed": {
+      "title": "{name}: device HTTPS key changed",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Trust the new HTTPS key for {name}?",
+            "description": "Kiosk Satellite at {host} is presenting a different HTTPS key than the one Home Assistant pinned. This is expected after using \"Replace certificate\" in Kiosk Satellite or after a factory reset; otherwise someone may be intercepting the connection. Until you confirm, Home Assistant will not send the device any credentials or settings.\n\nSubmit to trust the key the device is presenting now."
+          }
+        },
+        "abort": {
+          "cannot_connect": "The device did not answer over HTTPS. Check it is online and try again.",
+          "entry_not_found": "This device is no longer configured."
+        }
+      }
+    }
   }
 }

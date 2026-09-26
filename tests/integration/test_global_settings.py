@@ -124,7 +124,7 @@ async def test_update_all_skips_current_and_continues_after_failure(hass, releas
     release_check.return_value = ReleaseInfo("2026.9.2", "https://example.invalid/2", "notes")
     with patch(
         "custom_components.kiosk_satellite_manager.fetch_health",
-        new=AsyncMock(side_effect=lambda session, host: {
+        new=AsyncMock(side_effect=lambda session, host, *, pin=None: {
             "appVersion": "2026.9.2" if host.endswith(".3") else "2026.9.1"
         }),
     ):

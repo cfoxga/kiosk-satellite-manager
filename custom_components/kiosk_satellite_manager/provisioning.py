@@ -21,7 +21,7 @@ import logging
 import aiohttp
 
 from . import ks_api_client
-from .const import HEALTH_PORT, HEALTH_TIMEOUT_S, KS_MAIN_ACTIVITY
+from .const import KS_MAIN_ACTIVITY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,25 +53,21 @@ class ProvisioningMismatch(Exception):
     """The device's /api/health readback didn't match what we tried to set."""
 
 
-async def fetch_health(session: aiohttp.ClientSession, host: str) -> dict:
-    """GET /api/health -- unauthenticated."""
-    async with session.get(
-        f"http://{host}:{HEALTH_PORT}/api/health",
-        timeout=aiohttp.ClientTimeout(total=HEALTH_TIMEOUT_S),
-    ) as resp:
-        resp.raise_for_status()
-        return await resp.json()
+async def fetch_health(session: aiohttp.ClientSession, host: str, *, pin: str | None) -> dict:
+    """GET /api/health -- unauthenticated, pinned HTTPS when the entry has a
+    pin (KSM-BEHAVE-093)."""
+    return await ks_api_client.get_health(session, host, pin=pin)
 
 
 async def apply_provisioning(
-    session: aiohttp.ClientSession, host: str, token: str, payload: dict
+    session: aiohttp.ClientSession, host: str, token: str, payload: dict, *, pin: str | None
 ) -> dict:
     """Apply payload via one PATCH /api/settings (KSM-BEHAVE-083), then
     verify what we can via /api/health. `ks_api_client.patch_settings`
     already raises KsApiError naming any per-key rejection.
     Raises ProvisioningMismatch if a verifiable key didn't take."""
-    await ks_api_client.patch_settings(session, host, token, payload)
-    health = await fetch_health(session, host)
+    await ks_api_client.patch_settings(session, host, token, payload, pin=pin)
+    health = await fetch_health(session, host, pin=pin)
     mismatches = {}
     for key, value in payload.items():
         health_field = _HEALTH_VERIFIABLE.get(key)

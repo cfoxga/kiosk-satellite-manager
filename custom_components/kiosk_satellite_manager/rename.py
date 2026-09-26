@@ -59,7 +59,12 @@ def derive_rename_names(display_name: str) -> RenameNames:
 
 
 async def apply_rename_ks_settings(
-    session: aiohttp.ClientSession, host: str, token: str, names: RenameNames
+    session: aiohttp.ClientSession,
+    host: str,
+    token: str,
+    names: RenameNames,
+    *,
+    pin: str | None,
 ) -> str:
     """KSM-BEHAVE-084: apply the derived settings over the same
     `PATCH /api/settings` + `/api/health` readback path `provision` uses.
@@ -73,10 +78,10 @@ async def apply_rename_ks_settings(
         "device.hostname": names.hostname,
         "esphome.node_name": names.esphome_node_name,
     }
-    current = await get_settings(session, host, token)
+    current = await get_settings(session, host, token, pin=pin)
     if all(current.get(key) == value for key, value in target.items()):
         return "unchanged"
-    await apply_provisioning(session, host, token, target)
+    await apply_provisioning(session, host, token, target, pin=pin)
     return "applied"
 
 
@@ -122,7 +127,12 @@ async def _resolve_host(hass, host: str) -> str | None:
 
 
 async def resolve_and_verify_dns_host(
-    hass, session: aiohttp.ClientSession, current_host: str, candidate_host: str
+    hass,
+    session: aiohttp.ClientSession,
+    current_host: str,
+    candidate_host: str,
+    *,
+    pin: str | None,
 ) -> bool:
     """KSM-BEHAVE-085: True only when `candidate_host` resolves to the same
     IP as `current_host` AND `/api/health` answers there -- never swap the
@@ -133,7 +143,7 @@ async def resolve_and_verify_dns_host(
     if current_ip is None or candidate_ip is None or current_ip != candidate_ip:
         return False
     try:
-        await fetch_health(session, candidate_host)
+        await fetch_health(session, candidate_host, pin=pin)
     except (aiohttp.ClientError, TimeoutError):
         return False
     return True
