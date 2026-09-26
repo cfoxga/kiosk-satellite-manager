@@ -11,6 +11,7 @@ from custom_components.kiosk_satellite_manager import (
     SERVICE_CAPABILITY_REPORT,
     SERVICE_ONBOARDING_PLAN,
     SERVICE_PROVISION,
+    SERVICE_RENAME_DEVICE,
 )
 from custom_components.kiosk_satellite_manager.const import DOMAIN
 
@@ -23,6 +24,7 @@ from .conftest import init_integration
         (SERVICE_PROVISION, {"settings": {"device.name": "x"}}, False),
         (SERVICE_CAPABILITY_REPORT, {}, True),
         (SERVICE_ONBOARDING_PLAN, {}, True),
+        (SERVICE_RENAME_DEVICE, {"name": "Allowed device"}, True),
     ],
 )
 async def test_services_reject_entry_without_active_coordinator_before_adb(
@@ -55,6 +57,7 @@ async def test_services_reject_entry_without_active_coordinator_before_adb(
         (SERVICE_PROVISION, {"settings": {"device.name": "x"}}, False),
         (SERVICE_CAPABILITY_REPORT, {}, True),
         (SERVICE_ONBOARDING_PLAN, {}, True),
+        (SERVICE_RENAME_DEVICE, {"name": "Allowed device"}, True),
     ],
 )
 async def test_services_reject_unknown_or_wrong_domain_targets_before_adb(
