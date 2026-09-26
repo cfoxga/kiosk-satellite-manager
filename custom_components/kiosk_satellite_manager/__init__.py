@@ -5,8 +5,9 @@ Phase 1 lands the real setup: a DataUpdateCoordinator polling the device's
 install button), forwarded to the button/sensor platforms.
 
 Phase 2 adds the `kiosk_satellite_manager.provision` service: apply a
-settings payload via the device's `ks.provision` ADB intent and fail loudly
-if the /api/health read-back doesn't confirm it landed (KSM-BEHAVE-002).
+settings payload via authenticated `PATCH /api/settings` (KSM-BEHAVE-083).
+API per-key failures reject the call; device.name is also verified against
+/api/health. Other accepted keys are not independently health-readback verified.
 
 KSM-BEHAVE-006: the coordinator's first refresh must not gate platform
 forwarding. A freshly-added device has no Kiosk Satellite app installed yet,
@@ -94,7 +95,7 @@ SERVICE_CAPABILITY_REPORT = "capability_report"
 SERVICE_ONBOARDING_PLAN = "onboarding_plan"
 SERVICE_RENAME_DEVICE = "rename_device"
 
-# KSM-BEHAVE-068: the device accepts arbitrary settings through its intent,
+# KSM-BEHAVE-068: the device API exposes more settings than this service,
 # but the public HA service does not. Keep this small enough that every key has
 # an intentional operator-facing use and an exact runtime type.
 PROVISIONING_SETTINGS: dict[str, type] = {
@@ -107,7 +108,7 @@ PROVISIONING_SETTINGS: dict[str, type] = {
 
 
 def _validate_provisioning_settings(settings: dict) -> dict:
-    """Reject unknown, empty, and mistyped service settings before ADB work."""
+    """Reject unknown, empty, and mistyped service settings before management API work."""
     if not settings:
         raise vol.Invalid("settings must contain at least one supported key")
     for key, value in settings.items():

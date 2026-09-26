@@ -1,8 +1,8 @@
 # Kiosk Satellite Manager
 
 A Home Assistant custom integration that provisions [Kiosk Satellite](https://github.com/jxlarrea/kiosk-satellite)
-devices over network ADB — installing the app, granting its permissions, and applying its settings
-in one pass, without a cable or a factory-reset window.
+devices using network ADB for installation and onboarding, then the authenticated Kiosk Satellite
+management API for routine configuration.
 
 ## Three manual steps you can't script away
 
@@ -44,13 +44,17 @@ remotely — do them once per device, in order:
   reachable devices with an unskipped newer version through the same verified install
   path as each device's Install button. A notification names updated, skipped, and failed
   devices. Current devices are skipped.
-- **Provision** — the `kiosk_satellite_manager.provision` service applies a settings payload (device
-  name, Home Assistant URL, dashboard, kiosk lockdown, etc.) in a single ADB intent and reads back
-  `/api/health` to confirm the change actually took, rather than trusting `adb shell`'s exit code.
-- **Credential transport** — KSM sends the device password and HA token to KS's HTTP-only
-  management API on the configured device and refuses redirects. Anyone who can observe that
-  network traffic can read those credentials. Automatic device-name and HA connection sync works
-  with the released KS app; use a trusted management network until KS offers HTTPS.
+- **Provision** — `kiosk_satellite_manager.provision` logs in with the stored device password and
+  sends one `PATCH /api/settings`. It accepts only `device.name`, `device.hostname`,
+  `remote.enabled`, `remote.password`, and `esphome.node_name`, with the types shown in the
+  service form. HA URL, dashboard and kiosk-lockdown keys are not accepted by this service.
+  Per-key API rejection fails the call; `/api/health` additionally verifies `device.name`
+  when supplied. Other accepted keys are not independently health-readback verified.
+- **Credential transport** — management uses pinned HTTPS on `:2324` once KSM has enabled
+  HTTPS and stored the device key (Kiosk Satellite 2026.9.78 or later). A changed key blocks
+  requests until the repair is resolved. Older/unpinned devices use HTTP, so credentials on
+  those connections remain observable on the management network. ADB remains the path for
+  onboarding, Install/Reinstall and Uninstall; the provision service does not use ADB.
 - **Capability report** — the `kiosk_satellite_manager.capability_report` response service gathers a
   versioned, read-only evidence bundle for an unfamiliar Android device. It returns parsed platform,
   management, and Kiosk Satellite facts plus explicit probe status; it never returns raw shell output,

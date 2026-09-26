@@ -1,9 +1,11 @@
 provision:
   name: Provision
   description: >-
-    Apply a settings payload to a Kiosk Satellite device over its
-    ks.provision ADB intent, then verify the change against /api/health.
-    Fails loudly if the read-back doesn't confirm the change landed.
+    Apply the supported settings through authenticated PATCH /api/settings,
+    using pinned HTTPS when the device has a stored key, otherwise HTTP.
+    Requires the stored Kiosk Satellite password. Per-setting API rejections fail the
+    call; device.name is additionally checked against /api/health. Other
+    accepted keys are not independently read-back verified. No ADB is used.
   fields:
     config_entry_id:
       name: Device

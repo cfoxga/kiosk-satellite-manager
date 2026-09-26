@@ -2,9 +2,9 @@
 
 *Superseded 2026-09-24 (`#47`, KSM-BEHAVE-083)*: the `provision` **service**
 now rides one `PATCH /api/settings` over Kiosk Satellite's own `:2324` API
-(via `ks_api_client.patch_settings`, which already raises on a per-key
-rejection) instead of the `ks.provision` ADB intent -- KSM-BEHAVE-081 keeps
-ADB only for onboarding, Install/Reinstall and Uninstall. `build_provision_command`
+(pinned HTTPS when configured; HTTP otherwise). `ks_api_client.patch_settings`
+raises on per-key rejection. This replaces the `ks.provision` ADB intent;
+KSM-BEHAVE-081 keeps ADB only for onboarding, Install/Reinstall and Uninstall. `build_provision_command`
 is still used directly by install.py's onboarding sequence (setting
 `home.enabled` during the Install/Reinstall button's own ADB session, which
 KSM-BEHAVE-081 permits), so it stays here rather than being deleted. The
