@@ -149,3 +149,26 @@ def test_portal_tv_is_recorded_as_launcher_incapable_hardware():
     the model; whether a recipe uses it is recipe behavior."""
     assert get_device_model("portal_tv").home_launcher_capable is False
     assert get_device_model("portal_go").home_launcher_capable is True
+
+
+def test_from_health_maps_kiosk_satellite_self_report_to_catalog_facts():
+    """[KSM-TEST-187] KSM-BEHAVE-096: health reports `model` as
+    "<brand> <model>"; the brand prefix is stripped so the catalog's
+    getprop-shaped model rows match, and a bad sdkInt is missing evidence."""
+    facts = DeviceFacts.from_health(
+        {"brand": "Facebook", "model": "Facebook PortalMini", "sdkInt": 29}
+    )
+    assert (facts.manufacturer, facts.brand, facts.model, facts.sdk) == (
+        "Facebook", "Facebook", "PortalMini", 29
+    )
+    assert match_device_model(facts).model_key == "portal_mini"
+
+    # Case-insensitive prefix; a model without the prefix is left alone.
+    assert DeviceFacts.from_health({"brand": "facebook", "model": "FACEBOOK PortalGo"}).model == "PortalGo"
+    assert DeviceFacts.from_health({"brand": "onn", "model": "Google TV"}).model == "Google TV"
+    # A brand equal to the whole model is not stripped to nothing.
+    assert DeviceFacts.from_health({"brand": "Portal", "model": "Portal"}).model == "Portal"
+
+    for bad in ({}, {"sdkInt": "29"}, {"sdkInt": None}, {"sdkInt": True}):
+        assert DeviceFacts.from_health(bad).sdk == 0
+    assert match_device_model(DeviceFacts.from_health({})) is None

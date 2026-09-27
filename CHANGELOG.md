@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add a device that already runs Kiosk Satellite without enabling ADB (#60). When
+  the address answers Kiosk Satellite's `/api/health`, Add Device reads the model,
+  Android version and name from it and asks only for the device's existing admin
+  password. The password is checked against the device, which is switched to
+  pinned HTTPS when its version supports it. Nothing is installed. ADB is still
+  needed for Install/Reinstall and the other ADB-only actions. Addresses that don't
+  answer as Kiosk Satellite keep the existing ADB setup.
+
 - Talk to Kiosk Satellite devices over HTTPS instead of plain HTTP (#57). On a
   device running Kiosk Satellite 2026.9.78 or later, KSM turns on the device's
   HTTPS setting and remembers the device's key. After that, the admin password

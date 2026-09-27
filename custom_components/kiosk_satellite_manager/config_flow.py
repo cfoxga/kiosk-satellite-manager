@@ -35,6 +35,7 @@ import logging
 from typing import Any
 from urllib.parse import urlsplit
 
+import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components import persistent_notification
@@ -44,7 +45,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.helpers.network import get_url
 
-from . import device_owner
+from . import device_owner, ks_api_client, ks_tls
 from .adb_client import AdbAuthPending, AdbClient, AdbConnectFailed, ensure_adb_key
 from .const import (
     CONF_AREA_ID,
@@ -80,7 +81,7 @@ from .device_catalog import require_recipe, resolve_catalog_entry
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .device_models import DeviceFacts
 from .install import install_and_launch
-from .ks_api_client import login
+from .ks_api_client import KsApiError, login
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -88,6 +89,25 @@ _LOGGER = logging.getLogger(__name__)
 # identify. It grants nothing and provisions nothing -- an unidentified device
 # still gets no recipe (KSM-BEHAVE-048).
 DEFAULT_DEVICE_NAME_COMMAND = "settings get global device_name"
+
+
+async def _async_probe_ks_health(
+    session: aiohttp.ClientSession, host: str
+) -> tuple[str | None, dict] | None:
+    """KSM-BEHAVE-096: (served HTTPS pin or None, health) when Kiosk Satellite
+    answers `/api/health` on `host`, else None. Unauthenticated; no ADB."""
+    probed = await ks_api_client.probe_https(session, host)
+    if probed is not None:
+        pin, health = probed
+    else:
+        pin = None
+        try:
+            health = await ks_api_client.get_health(session, host, pin=None)
+        except (aiohttp.ClientError, TimeoutError, ValueError):
+            return None
+    if not isinstance(health, dict) or not health.get("appVersion"):
+        return None
+    return pin, health
 
 
 async def _collect_identity_facts(client) -> DeviceFacts:
@@ -400,6 +420,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._existing_install_action: str | None = None
         self._install_task: asyncio.Task | None = None
         self._tls_pin: str | None = None
+        self._ks_probe_pin: str | None = None
         self._global: dict | None = None
         self._ha_url: str | None = None
         self._auto_update: bool = False
@@ -442,6 +463,10 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             port = user_input.get(CONF_PORT, DEFAULT_ADB_PORT)
             await self.async_set_unique_id(host)
             self._abort_if_unique_id_configured()
+
+            ks = await _async_probe_ks_health(async_get_clientsession(self.hass), host)
+            if ks is not None:
+                return await self._async_start_ks_device(host, port, *ks)
 
             key_path = await self.hass.async_add_executor_job(
                 ensure_adb_key, self.hass.config.path(DOMAIN)
@@ -651,6 +676,98 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders={
                 "device_model": self._profile_name or "Android Device",
                 "android_version": self._android_version or "Unknown",
+            },
+        )
+
+    async def _async_start_ks_device(
+        self, host: str, port: int, pin: str | None, health: dict
+    ) -> FlowResult:
+        """KSM-BEHAVE-096: Kiosk Satellite already answers on this host, so
+        identify it from its own health report and never open ADB."""
+        # A local key only (no device contact), so the ADB-only buttons work
+        # once the operator enables ADB.
+        self._key_path = await self.hass.async_add_executor_job(
+            ensure_adb_key, self.hass.config.path(DOMAIN)
+        )
+        entry = resolve_catalog_entry(DeviceFacts.from_health(health))
+        self._host = host
+        self._port = port
+        self._ks_probe_pin = pin
+        self._profile_key = entry.model_key
+        self._profile_name = entry.model_name or entry.classification_name
+        release = str(health.get("androidVersion") or "").strip()
+        sdk = health.get("sdkInt")
+        self._android_version = (
+            f"{release} (SDK {sdk})" if release and sdk else release or "Unknown"
+        )
+        name = str(health.get("name") or "").strip()
+        self._discovered_name = name or host
+        self._ks_installed = True
+        self._existing_install_action = EXISTING_INSTALL_REUSE
+        return await self.async_step_ks_device_info()
+
+    async def async_step_ks_device_info(self, user_input: dict | None = None) -> FlowResult:
+        """KSM-BEHAVE-096: verify the existing Kiosk Satellite password over
+        the device's own API (pinned HTTPS when it can), then create the entry."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            password = user_input[CONF_PASSWORD]
+            session = async_get_clientsession(self.hass)
+            pin: str | None = None
+            try:
+                if self._ks_probe_pin is None:
+                    # HTTP device: check the password before the TLS switch,
+                    # which would otherwise report a bad one as a TLS failure.
+                    await login(session, self._host, password, pin=None)
+            except KsApiError:
+                errors["base"] = "invalid_auth"
+            except (aiohttp.ClientError, TimeoutError, ValueError):
+                errors["base"] = "cannot_connect_ks"
+            if not errors:
+                try:
+                    pin = await ks_tls.async_establish_tls(session, self._host, password)
+                except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError) as err:
+                    _LOGGER.warning("Could not switch %s to HTTPS: %s", self._host, err)
+                    errors["base"] = "cannot_connect_ks"
+            if not errors and pin is not None:
+                try:
+                    await login(session, self._host, password, pin=pin)
+                except KsApiError:
+                    errors["base"] = "invalid_auth"
+                except (aiohttp.ClientError, TimeoutError, ValueError):
+                    errors["base"] = "cannot_connect_ks"
+            if not errors:
+                global_opts = self._global or {}
+                data = {
+                    CONF_HOST: self._host,
+                    CONF_PORT: self._port,
+                    CONF_KEY_PATH: self._key_path,
+                    CONF_DEVICE_PROFILE: self._profile_key,
+                    CONF_NAME: self._discovered_name,
+                    CONF_AREA_ID: None,
+                    CONF_PASSWORD: password,
+                    CONF_HA_URL: global_opts.get(CONF_HA_URL),
+                }
+                if pin:
+                    data[CONF_TLS_SPKI] = pin
+                return self.async_create_entry(
+                    title=self._discovered_name,
+                    data=data,
+                    options={CONF_AUTO_UPDATE: global_opts.get(CONF_AUTO_UPDATE, False)},
+                )
+
+        return self.async_show_form(
+            step_id="ks_device_info",
+            data_schema=vol.Schema({
+                vol.Required(CONF_PASSWORD): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                ),
+            }),
+            errors=errors,
+            description_placeholders={
+                "device_model": self._profile_name or "Android Device",
+                "android_version": self._android_version or "Unknown",
+                "name": self._discovered_name,
             },
         )
 

@@ -748,3 +748,192 @@ async def test_user_flow_reinstall_never_uninstalls_a_device_with_no_approved_re
     assert result["data"][CONF_DEVICE_PROFILE] is None
     mock_client.uninstall_ks.assert_not_awaited()
     mock_install.assert_not_awaited()
+
+
+_PIN = "ab" * 32
+_PORTAL_MINI_HEALTH = {
+    "appVersion": "2026.9.84",
+    "brand": "Facebook",
+    "model": "Facebook PortalMini",
+    "androidVersion": "Android 10",
+    "sdkInt": 29,
+    "name": "Great Room Portal",
+}
+
+
+async def _start_ks_flow(hass, host="192.168.40.250"):
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    return await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_HOST: host, "port": 5555}
+    )
+
+
+async def test_ks_running_device_is_added_without_adb(hass, ks_health_probe, tls_migration):
+    """[KSM-TEST-185] KSM-BEHAVE-096: a host whose Kiosk Satellite answers
+    health is added from health + password alone -- no AdbClient at all."""
+    ks_health_probe.return_value = (None, _PORTAL_MINI_HEALTH)
+    tls_migration.return_value = _PIN
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
+    ) as mock_client_cls, patch(
+        "custom_components.kiosk_satellite_manager.config_flow.login",
+        new=AsyncMock(return_value="tok"),
+    ) as mock_login, patch(
+        "custom_components.kiosk_satellite_manager.config_flow.install_and_launch"
+    ) as mock_install, patch(
+        "custom_components.kiosk_satellite_manager.fetch_health",
+        new=AsyncMock(return_value={"appVersion": "2026.9.84"}),
+    ):
+        result = await _start_ks_flow(hass)
+        assert result["type"] == data_entry_flow.FlowResultType.FORM
+        assert result["step_id"] == "ks_device_info"
+        assert {field.schema for field in result["data_schema"].schema} == {CONF_PASSWORD}
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_PASSWORD: "hunter222"}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Great Room Portal"
+    data = result["data"]
+    assert data[CONF_HOST] == "192.168.40.250"
+    assert data[CONF_DEVICE_PROFILE] == "portal_mini"
+    assert data[CONF_PASSWORD] == "hunter222"
+    assert data["tls_spki_sha256"] == _PIN
+    assert data["port"] == 5555 and data["key_path"]
+    assert CONF_HOME_LAUNCHER not in data and CONF_HA_TOKEN not in data
+    mock_client_cls.assert_not_called()
+    mock_install.assert_not_called()
+    tls_migration.assert_awaited_once()
+    assert tls_migration.await_args.args[1:] == ("192.168.40.250", "hunter222")
+    # The password is checked over the pinned channel the TLS step returned.
+    assert mock_login.await_args.kwargs["pin"] == _PIN
+    assert mock_login.await_args.args[1:] == ("192.168.40.250", "hunter222")
+
+
+async def test_host_without_kiosk_satellite_still_uses_adb(hass, ks_health_probe):
+    """[KSM-TEST-185] negative: health does not answer -> the ADB connect
+    path runs exactly as before."""
+    ks_health_probe.return_value = None
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
+    ) as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.connect = AsyncMock(side_effect=AdbConnectFailed("refused"))
+        mock_client.close = AsyncMock()
+        result = await _start_ks_flow(hass, "192.168.50.99")
+
+    ks_health_probe.assert_awaited_once()
+    mock_client.connect.assert_awaited()
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_ks_device_info_rejects_wrong_password_and_tls_failure(
+    hass, ks_health_probe, tls_migration
+):
+    """[KSM-TEST-186] KSM-BEHAVE-096: a rejected login or a failed TLS
+    switch re-shows the form with an error and creates no entry."""
+    from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
+
+    ks_health_probe.return_value = (_PIN, _PORTAL_MINI_HEALTH)
+    tls_migration.return_value = _PIN
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
+    ) as mock_client_cls, patch(
+        "custom_components.kiosk_satellite_manager.config_flow.login",
+        new=AsyncMock(side_effect=KsApiError("invalid password")),
+    ):
+        result = await _start_ks_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_PASSWORD: "wrong"}
+        )
+        assert result["type"] == data_entry_flow.FlowResultType.FORM
+        assert result["step_id"] == "ks_device_info"
+        assert result["errors"] == {"base": "invalid_auth"}
+
+        tls_migration.side_effect = KsApiError("did not answer over HTTPS")
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_PASSWORD: "hunter222"}
+        )
+        assert result["type"] == data_entry_flow.FlowResultType.FORM
+        assert result["errors"] == {"base": "cannot_connect_ks"}
+
+    mock_client_cls.assert_not_called()
+    assert not hass.config_entries.async_entries(DOMAIN)
+
+
+@pytest.mark.parametrize(
+    ("login_effects", "tls_pin", "expected_error", "tls_awaited"),
+    [
+        # HTTP device, wrong password: reported as such, TLS never switched.
+        (["bad"], None, "invalid_auth", False),
+        (["down"], None, "cannot_connect_ks", False),
+        (["tok", "down"], "ab" * 32, "cannot_connect_ks", True),
+    ],
+)
+async def test_ks_device_info_http_device_error_paths(
+    hass, ks_health_probe, tls_migration, login_effects, tls_pin, expected_error, tls_awaited
+):
+    """[KSM-TEST-186] KSM-BEHAVE-096 step 4 on an HTTP-only device (the
+    Master Bedroom Portal's case): the password is checked before the TLS
+    switch, so a wrong one is `invalid_auth`, not a TLS failure."""
+    import aiohttp
+
+    from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
+
+    effects = {
+        "bad": KsApiError("invalid password"),
+        "down": aiohttp.ClientConnectionError("refused"),
+        "tok": "tok",
+    }
+    ks_health_probe.return_value = (None, _PORTAL_MINI_HEALTH)
+    tls_migration.return_value = tls_pin
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.login",
+        new=AsyncMock(side_effect=[effects[e] for e in login_effects]),
+    ):
+        result = await _start_ks_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_PASSWORD: "hunter222"}
+        )
+
+    assert result["errors"] == {"base": expected_error}
+    assert tls_migration.await_count == (1 if tls_awaited else 0)
+    assert not hass.config_entries.async_entries(DOMAIN)
+
+
+async def test_ks_device_on_pre_tls_release_is_added_unpinned(
+    hass, ks_health_probe, tls_migration
+):
+    """[KSM-TEST-185] a Kiosk Satellite too old for HTTPS (establish returns
+    None) is added on HTTP with no pin after one HTTP login; unknown models
+    get no profile (fails closed)."""
+    ks_health_probe.return_value = (
+        None,
+        {"appVersion": "2026.9.50", "brand": "onn", "model": "Mystery Box", "name": ""},
+    )
+    tls_migration.return_value = None
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.login",
+        new=AsyncMock(return_value="tok"),
+    ) as mock_login, patch(
+        "custom_components.kiosk_satellite_manager.fetch_health",
+        new=AsyncMock(return_value={"appVersion": "2026.9.50"}),
+    ):
+        result = await _start_ks_flow(hass, "10.0.0.77")
+        assert result["description_placeholders"]["android_version"] == "Unknown"
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_PASSWORD: "hunter222"}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert result["title"] == "10.0.0.77"
+    assert "tls_spki_sha256" not in result["data"]
+    assert result["data"][CONF_DEVICE_PROFILE] is None
+    assert mock_login.await_count == 1
+    assert mock_login.await_args.kwargs["pin"] is None

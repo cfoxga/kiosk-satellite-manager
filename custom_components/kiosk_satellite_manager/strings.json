@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Add a Kiosk Satellite device",
-        "description": "Choose Configure KSM to set defaults for future devices, or enter a device ADB address to add one.",
+        "description": "Choose Configure KSM to set defaults for future devices, or enter a device address to add one. A device already running Kiosk Satellite is added over its own API; ADB is only needed to install it.",
         "data": {
           "host": "IP address",
           "port": "ADB port",
@@ -45,6 +45,16 @@
           "password": "The existing admin password for Kiosk Satellite's Web UI on port 2324."
         }
       },
+      "ks_device_info": {
+        "title": "Connect Kiosk Satellite Manager",
+        "description": "Kiosk Satellite is already running on this device, so it is added without ADB and its settings are left unchanged.\nDetected device type: {device_model}\nAndroid version: {android_version}\n\nEnter its existing Web UI password. Enable ADB later only if you need Install/Reinstall, Uninstall or Device Owner.",
+        "data": {
+          "password": "Existing Password"
+        },
+        "data_description": {
+          "password": "The existing admin password for Kiosk Satellite's Web UI on port 2324."
+        }
+      },
       "confirm": {
         "title": "Confirm device onboarding",
         "description": "Device: {device}\nInstall action: {action}\nHome launcher: {launcher}\nHome Assistant URL: {ha_url}\n\nConfirm to apply these settings.",
@@ -61,7 +71,9 @@
       "host_required": "Enter an ADB address to add a device",
       "password_required": "Set a Kiosk Satellite password in Configure KSM first",
       "unsupported_device": "This device has no approved install recipe",
-      "invalid_ha_url": "Enter an absolute HTTP or HTTPS URL"
+      "invalid_ha_url": "Enter an absolute HTTP or HTTPS URL",
+      "invalid_auth": "Kiosk Satellite did not accept that password",
+      "cannot_connect_ks": "Could not connect securely to Kiosk Satellite on port 2324"
     },
     "abort": {
       "already_configured": "Device is already configured",

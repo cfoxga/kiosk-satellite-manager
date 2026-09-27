@@ -64,6 +64,19 @@ def adb_probe():
 
 
 @pytest.fixture(autouse=True)
+def ks_health_probe():
+    """KSM-BEHAVE-096: Add Device asks Kiosk Satellite's health endpoint
+    before ADB. Default: nothing answers, so the ADB flow runs as before.
+    ADB-free tests set `ks_health_probe.return_value = (pin, health)`."""
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow._async_probe_ks_health",
+        new=AsyncMock(return_value=None),
+        create=True,
+    ) as mock:
+        yield mock
+
+
+@pytest.fixture(autouse=True)
 def tls_migration():
     """KSM-BEHAVE-094: setup of an unpinned entry with a password switches
     the device to HTTPS in the background. Keep it off the network; a KS that

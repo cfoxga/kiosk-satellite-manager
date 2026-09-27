@@ -83,6 +83,27 @@ class DeviceFacts:
             fingerprint=platform.get("fingerprint") or "",
         )
 
+    @classmethod
+    def from_health(cls, health: Mapping[str, Any]) -> "DeviceFacts":
+        """Build facts from Kiosk Satellite's `/api/health` (KSM-BEHAVE-096).
+
+        Health reports `model` as "<brand> <model>"; the brand prefix is
+        removed so the catalog's getprop-shaped model rows match. Health carries no product/device/
+        board, so those stay empty -- missing evidence, never a wildcard.
+        """
+        brand = str(health.get("brand") or "").strip()
+        model = str(health.get("model") or "").strip()
+        prefix = f"{brand} "
+        if brand and len(model) > len(prefix) and model.lower().startswith(prefix.lower()):
+            model = model[len(prefix):].strip()
+        sdk = health.get("sdkInt")
+        return cls(
+            manufacturer=brand,
+            brand=brand,
+            model=model,
+            sdk=sdk if isinstance(sdk, int) and not isinstance(sdk, bool) else 0,
+        )
+
 
 @dataclass(frozen=True)
 class DeviceModel:
