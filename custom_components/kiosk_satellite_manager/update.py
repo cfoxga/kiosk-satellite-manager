@@ -143,9 +143,11 @@ class KioskSatelliteUpdateEntity(CoordinatorEntity, UpdateEntity):
     async def async_install(self, version: str | None, backup: bool, **kwargs: Any) -> None:
         try:
             outcome = await async_self_update_entry(self.hass, self._entry)
-        except HomeAssistantError:
+        except HomeAssistantError as err:
+            _LOGGER.warning("Kiosk Satellite update install failed on %s: %s", self._entry.title, err)
             raise
         except Exception as err:
+            _LOGGER.warning("Kiosk Satellite update install failed on %s: %s", self._entry.title, err)
             raise HomeAssistantError(
                 f"Kiosk Satellite install failed on {self._entry.title}: {err}"
             ) from err

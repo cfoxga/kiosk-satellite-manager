@@ -17,8 +17,11 @@ from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.kiosk_satellite_manager import ks_update
 from custom_components.kiosk_satellite_manager.const import (
+    CONF_DEVICE_PROFILE,
     CONF_HOST,
+    CONF_KEY_PATH,
     CONF_PASSWORD,
+    CONF_PORT,
     DOMAIN,
     RELEASE_COORDINATOR_KEY,
 )
@@ -82,6 +85,81 @@ async def test_no_usable_release_raises():
     hass.data[RELEASE_COORDINATOR_KEY] = SimpleNamespace(data=None)
     with pytest.raises(HomeAssistantError, match="No usable"):
         await ks_update.async_self_update_entry(hass, _entry())
+
+
+async def test_portal_verifier_failure_remediates_and_retries_once(cached_apk):
+    """[KSM-TEST-229] Only a confirmed Portal verifier rejection opens ADB.
+    The prior value is read and the changed value is verified before retry."""
+    entry = _entry(**{CONF_DEVICE_PROFILE: "portal_gen2", CONF_PORT: 5555,
+                      CONF_KEY_PATH: "/tmp/test-adb-key"})
+    client = SimpleNamespace(connect=AsyncMock(), close=AsyncMock(),
+                             shell=AsyncMock(side_effect=["1", "", "0"]))
+    commands = []
+
+    async def command(session, host, token, name, *, pin=None):
+        commands.append(name)
+        if name == "getDeviceInfo":
+            return {"ok": True, "data": {"abis": ["arm64-v8a"]}}
+        if name == "installUploadedApk":
+            return {"ok": True}
+        return {"ok": True, "data": {
+            "lastError": "INSTALL_FAILED_VERIFICATION_FAILURE"
+            if commands.count("getUpdateStatus") == 1 else None}}
+
+    with patch(_SESSION), patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(
+        _RUN_COMMAND, new=command
+    ), patch(_POLL_HEALTH, new=AsyncMock(side_effect=[{"appVersion": "old"},
+                                                        {"appVersion": "2026.9.77"}])), patch(
+        "custom_components.kiosk_satellite_manager.ks_update.AdbClient", return_value=client
+    ) as adb:
+        assert await ks_update.async_self_update_entry(_hass(), entry) == ks_update.OUTCOME_UPDATED
+
+    adb.assert_called_once_with("192.168.1.50", 5555, "/tmp/test-adb-key")
+    assert [call.args[0] for call in client.shell.await_args_list] == [
+        "settings get global package_verifier_enable",
+        "settings put global package_verifier_enable 0",
+        "settings get global package_verifier_enable",
+    ]
+    assert commands.count("installUploadedApk") == 2
+    client.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("profile", "error"),
+    [(None, "INSTALL_FAILED_VERIFICATION_FAILURE"),
+     ("other_model", "INSTALL_FAILED_VERIFICATION_FAILURE"),
+     ("portal_gen2", "INSTALL_FAILED_INSUFFICIENT_STORAGE")],
+)
+async def test_other_update_failures_never_use_adb(cached_apk, profile, error):
+    """[KSM-TEST-229] Non-Portal or unrelated failures retain API-only behavior."""
+    entry = _entry(**({CONF_DEVICE_PROFILE: profile} if profile else {}))
+    with patch(_SESSION), patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(
+        _RUN_COMMAND, new=_commands(installUploadedApk={"ok": True},
+                                    getUpdateStatus={"lastError": error})
+    ), patch(_POLL_HEALTH, new=AsyncMock(return_value={"appVersion": "old"})), patch(
+        "custom_components.kiosk_satellite_manager.ks_update.AdbClient"
+    ) as adb, patch(
+        "custom_components.kiosk_satellite_manager.ks_update.require_recipe",
+        return_value=SimpleNamespace(verifier_retry_on_failure=False)
+    ) if profile == "other_model" else patch(
+        "custom_components.kiosk_satellite_manager.ks_update.require_recipe",
+        wraps=ks_update.require_recipe
+    ):
+        with pytest.raises(HomeAssistantError, match=error):
+            await ks_update.async_self_update_entry(_hass(), entry)
+    adb.assert_not_called()
+
+
+async def test_portal_verifier_readback_must_confirm_disable():
+    """[KSM-TEST-229] An ADB write reply alone is not recovery evidence."""
+    entry = _entry(**{CONF_PORT: 5555, CONF_KEY_PATH: "/tmp/test-adb-key"})
+    client = SimpleNamespace(connect=AsyncMock(), close=AsyncMock(),
+                             shell=AsyncMock(side_effect=["1", "", "1"]))
+    with patch("custom_components.kiosk_satellite_manager.ks_update.AdbClient",
+               return_value=client):
+        with pytest.raises(HomeAssistantError, match="did not disable"):
+            await ks_update._remediate_verifier(entry)
+    client.close.assert_awaited_once()
 
 
 async def test_no_coordinator_registered_still_completes_and_skips_the_refresh():

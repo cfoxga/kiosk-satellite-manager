@@ -23,14 +23,19 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from . import apk_cache, ks_api_client
+from .adb_client import AdbClient
 from .const import (
+    CONF_DEVICE_PROFILE,
     CONF_HOST,
+    CONF_KEY_PATH,
     CONF_PASSWORD,
+    CONF_PORT,
     CONF_TLS_SPKI,
     DOMAIN,
     SELF_UPDATE_POLL_ATTEMPTS,
     SELF_UPDATE_POLL_DELAY_S,
 )
+from .device_catalog import NoApprovedRecipe, require_recipe
 from .helpers import target_release
 from .ks_api_client import KsApiError
 from .provisioning import fetch_health
@@ -42,6 +47,39 @@ OUTCOME_AWAITING_CONFIRMATION = "awaiting_confirmation"
 
 _TRANSIENT_ERRORS = (KsApiError, aiohttp.ClientError, asyncio.TimeoutError)
 _UPLOAD_CHUNK = 1 << 20
+_VERIFIER_FAILURE = "INSTALL_FAILED_VERIFICATION_FAILURE"
+
+
+def _verifier_retry_allowed(entry: ConfigEntry) -> bool:
+    """Only an exact, approved recipe may opt into ADB remediation."""
+    model = entry.data.get(CONF_DEVICE_PROFILE)
+    if not model:
+        return False
+    try:
+        return require_recipe(model).verifier_retry_on_failure
+    except NoApprovedRecipe:
+        return False
+
+
+async def _remediate_verifier(entry: ConfigEntry) -> None:
+    """Record the previous device-wide value and verify the one allowed write."""
+    client = AdbClient(entry.data[CONF_HOST], entry.data[CONF_PORT], entry.data[CONF_KEY_PATH])
+    try:
+        await client.connect()
+        prior = (await client.shell("settings get global package_verifier_enable")).strip()
+        _LOGGER.warning("Package verifier on %s before update retry: %s", entry.title, prior)
+        if prior != "1":
+            raise HomeAssistantError(
+                f"Package verifier on {entry.title} was {prior!r}; cannot remediate"
+            )
+        await client.shell("settings put global package_verifier_enable 0")
+        after = (await client.shell("settings get global package_verifier_enable")).strip()
+        if after != "0":
+            raise HomeAssistantError(
+                f"Package verifier on {entry.title} did not disable (readback {after!r})"
+            )
+    finally:
+        await client.close()
 
 
 async def _file_chunks(hass: HomeAssistant, path: Path) -> AsyncIterator[bytes]:
@@ -131,43 +169,47 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
                     f"Kiosk Satellite {version} APK unavailable for {entry.title}: {err}"
                 ) from err
             size = await hass.async_add_executor_job(lambda: apk.stat().st_size)
-            _LOGGER.info("Uploading %s to %s", apk.name, entry.title)
-            uploaded = await ks_api_client.upload_update(
-                session, host, token, _file_chunks(hass, apk), size, pin=pin
-            )
-            if uploaded.get("ok") is not True:
-                raise HomeAssistantError(
-                    f"Kiosk Satellite update failed on {entry.title}: "
-                    f"{uploaded.get('error') or 'upload refused'}"
-                )
-            data = uploaded.get("data") or {}
-            if data.get("buildNumber") is not None and data.get("buildNumber") == data.get("currentBuild"):
-                # Kiosk Satellite already runs this build: nothing to install.
-                if coordinator is not None:
-                    await coordinator.async_request_refresh()
-                return OUTCOME_UPDATED
-            result = await ks_api_client.run_command(
-                session, host, token, "installUploadedApk", pin=pin
-            )
+            for attempt in range(2):
+                try:
+                    _LOGGER.info("Uploading %s to %s", apk.name, entry.title)
+                    uploaded = await ks_api_client.upload_update(
+                        session, host, token, _file_chunks(hass, apk), size, pin=pin
+                    )
+                    if uploaded.get("ok") is not True:
+                        raise HomeAssistantError(
+                            f"Kiosk Satellite update failed on {entry.title}: "
+                            f"{uploaded.get('error') or 'upload refused'}"
+                        )
+                    data = uploaded.get("data") or {}
+                    if data.get("buildNumber") is not None and data.get("buildNumber") == data.get("currentBuild"):
+                        if coordinator is not None:
+                            await coordinator.async_request_refresh()
+                        return OUTCOME_UPDATED
+                    result = await ks_api_client.run_command(
+                        session, host, token, "installUploadedApk", pin=pin
+                    )
+                    if not result.get("ok", False):
+                        raise HomeAssistantError(
+                            f"Kiosk Satellite update failed on {entry.title}: "
+                            f"{result.get('error') or 'installUploadedApk rejected'}"
+                        )
+                    outcome = await _poll_until_resolved(session, host, token, version, entry, pin=pin)
+                    if coordinator is not None:
+                        await coordinator.async_request_refresh()
+                    return outcome
+                except HomeAssistantError as err:
+                    if attempt or _VERIFIER_FAILURE not in str(err) or not _verifier_retry_allowed(entry):
+                        raise
+                    try:
+                        await _remediate_verifier(entry)
+                    except Exception as adb_err:
+                        raise HomeAssistantError(
+                            f"{err}; ADB verifier remediation failed: {adb_err}"
+                        ) from adb_err
         except _TRANSIENT_ERRORS as err:
             raise HomeAssistantError(
                 f"Kiosk Satellite update failed on {entry.title}: {err}"
             ) from err
-
-        if not result.get("ok", False):
-            raise HomeAssistantError(
-                f"Kiosk Satellite update failed on {entry.title}: "
-                f"{result.get('error') or 'installUploadedApk rejected'}"
-            )
-
-        outcome = await _poll_until_resolved(session, host, token, version, entry, pin=pin)
-        if coordinator is not None:
-            # The poll above confirmed the new version over its own direct
-            # /api/health call -- refresh the entry's health coordinator too
-            # so installed_version reflects it immediately, not after the
-            # next scheduled poll.
-            await coordinator.async_request_refresh()
-        return outcome
     finally:
         if coordinator is not None:
             coordinator.ksm_installing = False

@@ -155,8 +155,8 @@ async def test_update_entity_is_off_when_current(hass, release_check):
         assert hass.states.get(_entity_id(hass, ctx.entry, "update")).state == "off"
 
 
-async def test_update_install_runs_the_ks_api_self_update_sequence(hass, release_check):
-    """[KSM-TEST-153] update.install goes through
+async def test_update_install_runs_the_ks_api_self_update_sequence(hass, release_check, caplog):
+    """[KSM-TEST-153/227] update.install goes through
     ks_update.async_self_update_entry over the KS API; AdbClient is never
     constructed, and the post-install refresh reports the new version."""
     release_check.return_value = _release("2026.9.77")
@@ -184,6 +184,8 @@ async def test_update_install_runs_the_ks_api_self_update_sequence(hass, release
     assert state.attributes["installed_version"] == "2026.9.77"
     assert state.state == "off"
     assert state.attributes["in_progress"] is False
+    assert not any("Kiosk Satellite update install failed" in r.message
+                   for r in caplog.records if r.levelname == "WARNING")
 
 
 def _recording(**by_command):
@@ -353,10 +355,9 @@ async def test_update_install_reject_response_is_failed(hass, release_check):
     mock_client_cls.assert_not_called()
 
 
-async def test_update_install_poll_last_error_is_failed(hass, release_check):
-    """[KSM-TEST-156] a non-null lastError surfacing from the poll's own
-    getUpdateStatus (after a successful installUploadedApk) yields failed; no
-    AdbClient."""
+async def test_update_install_poll_last_error_is_failed(hass, release_check, caplog):
+    """[KSM-TEST-156/227] A device lastError raises and is logged for the
+    manual install; an ordinary error never opens ADB."""
     release_check.return_value = _release("2026.9.77")
     with patch(_HEALTH, new=_health("2026.9.76")):
         ctx = await init_integration(hass)
@@ -378,6 +379,10 @@ async def test_update_install_poll_last_error_is_failed(hass, release_check):
                 )
 
     mock_client_cls.assert_not_called()
+    warnings = [r.message for r in caplog.records if r.levelname == "WARNING"
+                and "Kiosk Satellite update install failed" in r.message]
+    assert warnings == [f"Kiosk Satellite update install failed on {ctx.entry.title}: "
+                        f"Kiosk Satellite update failed on {ctx.entry.title}: boom"]
 
 
 async def test_update_install_login_failure_is_failed(hass, release_check):

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Meta Portal updates that fail because Android's package verifier rejects the
+  APK now try once more after KSM reads and disables that verifier over ADB
+  (#76). Other devices and failures are unaffected. Manual update failures
+  now write a WARNING with the device's error to Home Assistant's log.
+
 - KSM checks for new Kiosk Satellite releases every 15 minutes (#75). When a
   device entry starts, KSM also asks that device to refresh its update status,
   so an already-known release reaches its ESPHome update entity after a restart.
