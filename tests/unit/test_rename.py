@@ -8,7 +8,7 @@ this only pins the settings-based idempotent skip and delegation.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -20,6 +20,7 @@ from custom_components.kiosk_satellite_manager.rename import (
     resolve_and_verify_dns_host,
     set_android_device_name,
 )
+from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
 
 _FETCH_HEALTH = "custom_components.kiosk_satellite_manager.rename.fetch_health"
 _GET_SETTINGS = "custom_components.kiosk_satellite_manager.rename.get_settings"
@@ -125,6 +126,83 @@ async def test_apply_rename_ks_settings_applies_when_name_or_hostname_differs(ke
 async def test_set_android_device_name_reports_unsupported():
     names = RenameNames("Kitchen Display", "kitchen-display", "kitchen_display")
     assert await set_android_device_name(names) == "unsupported"
+
+
+async def test_portal_name_adb_write_preserves_suffix_and_reads_back():
+    """[KSM-TEST-245] ADB verifies the raw Portal Name and always closes."""
+    client = MagicMock()
+    client.connect = AsyncMock()
+    client.close = AsyncMock()
+    client.get_secure_setting = AsyncMock(side_effect=[
+        "Test Portal Go Portal", "New Room Portal Portal",
+    ])
+    client.shell = AsyncMock()
+    names = derive_rename_names("New Room Portal")
+
+    result = await set_android_device_name(names, client, require_recipe("portal_go"))
+
+    assert result == "applied"
+    client.connect.assert_awaited_once()
+    client.get_secure_setting.assert_has_awaits([
+        call("bluetooth_name"), call("bluetooth_name"),
+    ])
+    client.shell.assert_awaited_once_with(
+        "settings put secure bluetooth_name 'New Room Portal Portal'"
+    )
+    client.close.assert_awaited_once()
+
+
+async def test_portal_name_adb_skips_write_when_already_correct():
+    """[KSM-TEST-245] A retry is idempotent at the Android layer."""
+    client = MagicMock()
+    client.connect = AsyncMock()
+    client.close = AsyncMock()
+    client.get_secure_setting = AsyncMock(return_value="New Room Portal Portal")
+    client.shell = AsyncMock()
+
+    result = await set_android_device_name(
+        derive_rename_names("New Room Portal"), client, require_recipe("portal_go")
+    )
+
+    assert result == "unchanged"
+    client.shell.assert_not_awaited()
+    client.close.assert_awaited_once()
+
+
+async def test_portal_name_adb_mismatch_fails_and_closes():
+    """[KSM-TEST-245] Shell exit zero is not enough to report success."""
+    client = MagicMock()
+    client.connect = AsyncMock()
+    client.close = AsyncMock()
+    client.get_secure_setting = AsyncMock(side_effect=[
+        "Test Portal Go Portal", "Test Portal Go Portal",
+    ])
+    client.shell = AsyncMock()
+
+    result = await set_android_device_name(
+        derive_rename_names("New Room Portal"), client, require_recipe("portal_go")
+    )
+
+    assert result == "failed"
+    client.close.assert_awaited_once()
+
+
+async def test_portal_name_adb_connect_failure_closes_without_write():
+    """[KSM-TEST-245] An unauthorized/unreachable ADB path is one-shot."""
+    client = MagicMock()
+    client.connect = AsyncMock(side_effect=OSError("ADB off"))
+    client.close = AsyncMock()
+    client.get_secure_setting = AsyncMock()
+    client.shell = AsyncMock()
+
+    with pytest.raises(OSError, match="ADB off"):
+        await set_android_device_name(
+            derive_rename_names("New Room Portal"), client, require_recipe("portal_go")
+        )
+
+    client.get_secure_setting.assert_not_awaited()
+    client.shell.assert_not_awaited()
+    client.close.assert_awaited_once()
 
 
 # --- resolve_and_verify_dns_host (KSM-BEHAVE-085) -------------------------

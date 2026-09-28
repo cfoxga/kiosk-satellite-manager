@@ -298,7 +298,7 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
                 if rename is None:
                     return self.async_abort(reason="device_rename_unavailable")
                 try:
-                    result = await rename(self._entry.entry_id, name)
+                    result = await rename(self._entry.entry_id, name, allow_adb=True)
                 except HomeAssistantError:
                     errors["base"] = "device_rename_failed"
                 if errors:

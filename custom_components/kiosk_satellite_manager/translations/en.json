@@ -102,7 +102,7 @@
       },
       "device_rename": {
         "title": "Rename Kiosk Satellite device",
-        "description": "This changes the Kiosk Satellite name, hostname and ESPHome node, then updates the KSM entry. Android's system name may remain unchanged. A DNS hostname changes only after the new name resolves to this device. Review any old ESPHome action callers shown in the result.",
+        "description": "This changes the Kiosk Satellite name, hostname and ESPHome node, then updates the KSM entry. On a Meta Portal it also changes Android's Portal Name over one temporary ADB connection: enable network ADB on the Portal before submitting, then you can turn it off again. A DNS hostname changes only after the new name resolves to this device. Review the result for incomplete layers and old ESPHome action callers.",
         "data": {
           "name": "New device name"
         }
@@ -207,7 +207,7 @@
         },
         "device_rename": {
           "title": "Rename Kiosk Satellite device",
-          "description": "This changes the Kiosk Satellite name, hostname and ESPHome node, then updates the KSM entry. Android's system name may remain unchanged. A DNS hostname changes only after the new name resolves to this device. Review any old ESPHome action callers shown in the result.",
+          "description": "This changes the Kiosk Satellite name, hostname and ESPHome node, then updates the KSM entry. On a Meta Portal it also changes Android's Portal Name over one temporary ADB connection: enable network ADB on the Portal before submitting, then you can turn it off again. A DNS hostname changes only after the new name resolves to this device. Review the result for incomplete layers and old ESPHome action callers.",
           "data": {
             "name": "New device name"
           }

@@ -54,7 +54,7 @@ async def test_device_rename_uses_shared_operation_and_reports_partial_result(ha
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {CONF_NAME: "New Display"}
     )
-    rename.assert_awaited_once_with(device.entry_id, "New Display")
+    rename.assert_awaited_once_with(device.entry_id, "New Display", allow_adb=True)
     assert result["type"] == data_entry_flow.FlowResultType.ABORT
     assert result["reason"] == "device_rename_incomplete"
     summary = result["description_placeholders"]["result"]

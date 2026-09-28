@@ -47,12 +47,14 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .adb_client import AdbClient
 from .capability_report import CapabilityReportCollector
-from .device_catalog import validate_catalog
+from .device_catalog import NoApprovedRecipe, require_recipe, validate_catalog
+from .install_recipes import NAME_SOURCE_SECURE_BLUETOOTH
 from .onboarding_plan import build_onboarding_plan
 from .const import (
     BACKUP_CHECK_INTERVAL_MIN,
     CONF_HOST,
     CONF_ENTRY_TYPE,
+    CONF_DEVICE_PROFILE,
     CONF_NAME,
     ENTRY_TYPE_MANAGER,
     ENTRY_TYPE_UNMANAGED,
@@ -190,7 +192,8 @@ async def _authorize_target(call: ServiceCall, hass: HomeAssistant, target_entry
 
 
 async def _async_rename_entry(
-    hass: HomeAssistant, target_entry: ConfigEntry, target_coordinator: DataUpdateCoordinator, name: str
+    hass: HomeAssistant, target_entry: ConfigEntry, target_coordinator: DataUpdateCoordinator, name: str,
+    *, allow_adb: bool = False,
 ) -> dict:
     """KSM-BEHAVE-084/085/092: the rename operation, shared by the authorized
     service and the in-process callable (KSM-BEHAVE-102). Returns a per-layer
@@ -233,7 +236,29 @@ async def _async_rename_entry(
         result["error"] = f"Kiosk Satellite API error on {target_entry.title}: {err}"
         return result
 
-    result["android"] = await set_android_device_name(names)
+    if allow_adb:
+        try:
+            recipe = require_recipe(target_entry.data.get(CONF_DEVICE_PROFILE))
+        except NoApprovedRecipe:
+            recipe = None
+        if recipe is not None and recipe.device_name_source == NAME_SOURCE_SECURE_BLUETOOTH:
+            try:
+                client = AdbClient(
+                    host, target_entry.data[CONF_PORT], target_entry.data[CONF_KEY_PATH]
+                )
+                result["android"] = await set_android_device_name(names, client, recipe)
+            except Exception:  # noqa: BLE001 -- ADB transport/auth/key errors vary by build
+                result["android"] = "failed"
+                result["error"] = (
+                    "Portal Name could not be verified over ADB. Enable network ADB "
+                    "on the Portal and retry Rename device."
+                )
+        else:
+            result["android"] = "unsupported"
+    else:
+        result["android"] = await set_android_device_name(names)
+    if result["android"] == "failed" and "error" not in result:
+        result["error"] = "Portal Name did not read back as requested; retry Rename device."
 
     if target_entry.title == names.device_name and target_entry.data.get(CONF_NAME) == names.device_name:
         result["entry"] = "unchanged"
@@ -351,10 +376,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """
     fleet.mark_domain_loading(hass)
 
-    async def _trusted_rename(config_entry_id: str, name: str) -> dict:
+    async def _trusted_rename(
+        config_entry_id: str, name: str, *, allow_adb: bool = False
+    ) -> dict:
         """KSM-BEHAVE-102: in-process only; no caller authorization."""
         target_entry, target_coordinator = _active_target(hass, config_entry_id)
-        return await _async_rename_entry(hass, target_entry, target_coordinator, name)
+        return await _async_rename_entry(
+            hass, target_entry, target_coordinator, name, allow_adb=allow_adb
+        )
 
     hass.data[RENAME_API_KEY] = _trusted_rename
 

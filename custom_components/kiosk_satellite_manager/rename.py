@@ -13,6 +13,7 @@ from collections.abc import Callable
 import ipaddress
 import json
 import re
+import shlex
 import socket
 from dataclasses import dataclass
 
@@ -21,6 +22,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
+from .adb_client import AdbClient
+from .install_recipes import InstallRecipe, NAME_SOURCE_SECURE_BLUETOOTH
 from .ks_api_client import KsApiError, get_settings
 from .provisioning import apply_provisioning, fetch_health
 
@@ -88,17 +91,34 @@ async def apply_rename_ks_settings(
     return "applied"
 
 
-async def set_android_device_name(names: RenameNames) -> str:
-    """KSM-BEHAVE-084: set and read back Android's system device name using
-    a verified supported method.
+async def set_android_device_name(
+    names: RenameNames,
+    client: AdbClient | None = None,
+    recipe: InstallRecipe | None = None,
+) -> str:
+    """KSM-BEHAVE-128: one explicit Portal rename over ADB, with readback.
 
-    No non-ADB write/readback method for the Android system device name has
-    been verified (`docs/SPEC/rename.md` Section 7 Open Issues), and KSM
-    `#47` prohibits routine post-onboarding ADB -- there is no supported
-    method to call yet. Always report the honest "unsupported" result rather
-    than a silent no-op that could be read as success; replace this body
-    once a supported method is verified and wired in."""
-    return "unsupported"
+    Automatic callers pass no client and never touch ADB. Portal firmware
+    appends a model suffix to its user label, so preserve the observed suffix
+    instead of writing only the label. Always close the temporary connection.
+    """
+    if client is None or recipe is None or recipe.device_name_source != NAME_SOURCE_SECURE_BLUETOOTH:
+        return "unsupported"
+    try:
+        await client.connect()
+        current = await client.get_secure_setting("bluetooth_name")
+        suffix = next(
+            (suffix for suffix in recipe.redundant_name_suffixes
+             if suffix and current.endswith(suffix) and current[:-len(suffix)].strip()),
+            "",
+        )
+        target = names.device_name + suffix
+        if current == target:
+            return "unchanged"
+        await client.shell("settings put secure bluetooth_name " + shlex.quote(target))
+        return "applied" if await client.get_secure_setting("bluetooth_name") == target else "failed"
+    finally:
+        await client.close()
 
 
 def _is_ip_host(host: str) -> bool:

@@ -11,7 +11,9 @@ from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.kiosk_satellite_manager import SERVICE_RENAME_DEVICE
-from custom_components.kiosk_satellite_manager.const import CONF_HOST, CONF_NAME, DOMAIN
+from custom_components.kiosk_satellite_manager.const import (
+    CONF_DEVICE_PROFILE, CONF_HOST, CONF_NAME, DOMAIN, RENAME_API_KEY,
+)
 from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
 
 from .conftest import admin_context, init_integration
@@ -61,6 +63,62 @@ async def test_rename_device_full_success_updates_entry_and_host(hass):
     assert ctx.entry.title == "Great Room Device"
     assert ctx.entry.data[CONF_NAME] == "Great Room Device"
     assert ctx.entry.data[CONF_HOST] == "great-room-device.devices.example.com"
+
+
+async def test_explicit_portal_rename_uses_adb_without_changing_service_boundary(hass):
+    """[KSM-TEST-245] Only the opt-in Configure path opens ADB."""
+    with patch(_FETCH_HEALTH, new=AsyncMock(return_value={"name": "old"})):
+        ctx = await init_integration(hass, data={CONF_DEVICE_PROFILE: "portal_go"})
+        with patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(
+            _APPLY_KS, new=AsyncMock(return_value="unchanged")
+        ), patch(_ADB_CLIENT) as client_type, patch(
+            "custom_components.kiosk_satellite_manager.set_android_device_name",
+            new=AsyncMock(return_value="applied"),
+        ) as android:
+            result = await hass.data[RENAME_API_KEY](
+                ctx.entry.entry_id, "New Room Portal", allow_adb=True
+            )
+    assert result["android"] == "applied"
+    client_type.assert_called_once_with(
+        ctx.entry.data[CONF_HOST], ctx.entry.data["port"], ctx.entry.data["key_path"]
+    )
+    assert android.await_args.args[0].device_name == "New Room Portal"
+    assert android.await_args.args[1] is client_type.return_value
+    assert android.await_args.args[2].device_name_source == "secure:bluetooth_name"
+
+
+async def test_explicit_portal_rename_adb_failure_keeps_other_layers(hass):
+    """[KSM-TEST-245] ADB off is incomplete; a verified KS rename survives."""
+    with patch(_FETCH_HEALTH, new=AsyncMock(return_value={"name": "old"})):
+        ctx = await init_integration(hass, data={CONF_DEVICE_PROFILE: "portal_go"})
+        with patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(
+            _APPLY_KS, new=AsyncMock(return_value="applied")
+        ), patch(_ADB_CLIENT), patch(
+            "custom_components.kiosk_satellite_manager.set_android_device_name",
+            new=AsyncMock(side_effect=OSError("synthetic private transport detail")),
+        ):
+            result = await hass.data[RENAME_API_KEY](
+                ctx.entry.entry_id, "New Room Portal", allow_adb=True
+            )
+    assert result["ks"] == "applied"
+    assert result["entry"] == "applied"
+    assert result["android"] == "failed"
+    assert "Enable network ADB" in result["error"]
+    assert "synthetic private transport detail" not in str(result)
+
+
+async def test_non_portal_configure_rename_never_opens_adb(hass):
+    """[KSM-TEST-245] An unrecognized model cannot borrow Portal ADB."""
+    with patch(_FETCH_HEALTH, new=AsyncMock(return_value={"name": "old"})):
+        ctx = await init_integration(hass, data={CONF_DEVICE_PROFILE: "unknown"})
+        with patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(
+            _APPLY_KS, new=AsyncMock(return_value="unchanged")
+        ), patch(_ADB_CLIENT) as client_type:
+            result = await hass.data[RENAME_API_KEY](
+                ctx.entry.entry_id, "New Display", allow_adb=True
+            )
+    client_type.assert_not_called()
+    assert result["android"] == "unsupported"
 
 
 async def test_rename_device_repeated_call_is_idempotent(hass):

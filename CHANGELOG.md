@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Explicitly renaming a Meta Portal from KSM Configure now also updates its
+  Android **Portal Name** over one temporary ADB connection (#81). Enable
+  network ADB on the Portal for the action; KSM verifies the Android setting
+  and reports it incomplete if ADB is unavailable. Automatic rename paths do
+  not use ADB.
+
 - KSM now groups kiosks under native Home Assistant fleet entries (#77). It creates an Unmanaged
   entry and a separate entry for each confirmed Kiosk Satellite leader, moves accepted members as
   they join or leave, and shows leader, managed count, reachability and sync status. Existing
