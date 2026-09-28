@@ -1,6 +1,7 @@
 """Manager entry, release status, and fleet update contracts (issue #44)."""
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 from types import SimpleNamespace
 
@@ -146,6 +147,54 @@ async def test_update_all_skips_current_and_continues_after_failure(hass, releas
         message = notify.call_args.kwargs["message"]
         assert "Failed:" in message and "Updated:" in message and "Skipped:" in message
         assert "current, skipped, or unavailable" in message
+
+
+async def test_update_all_installs_on_every_eligible_device_at_once(hass, release_check):
+    """[KSM-TEST-198] KSM-BEHAVE-077 (#68): installs overlap; one notification after all."""
+    release_check.return_value = ReleaseInfo("2026.9.2", "https://example.invalid/2", "notes")
+    with patch(
+        "custom_components.kiosk_satellite_manager.fetch_health",
+        new=AsyncMock(side_effect=lambda session, host, *, pin=None: {
+            "appVersion": "2026.9.2" if host.endswith(".3") else "2026.9.1"
+        }),
+    ):
+        manager = await _manager(hass)
+        await init_integration(hass, data={"host": "192.168.99.1"})
+        await init_integration(hass, data={"host": "192.168.99.2"})
+        await init_integration(hass, data={"host": "192.168.99.3"})
+        in_flight, peak, hosts = 0, 0, []
+        both_started = asyncio.Event()
+
+        async def fake_install(hass_, entry):
+            nonlocal in_flight, peak
+            hosts.append(entry.data[CONF_HOST])
+            in_flight += 1
+            peak = max(peak, in_flight)
+            if in_flight == 2:
+                both_started.set()
+            try:
+                # Sequential installs never overlap, so this times out.
+                await asyncio.wait_for(both_started.wait(), 1)
+                if entry.data[CONF_HOST].endswith(".1"):
+                    raise RuntimeError("boom")
+            finally:
+                in_flight -= 1
+
+        with patch(
+            "custom_components.kiosk_satellite_manager.button.async_self_update_entry",
+            new=fake_install,
+        ), patch(
+            "custom_components.kiosk_satellite_manager.button.persistent_notification.async_create"
+        ) as notify:
+            await hass.services.async_call(
+                "button", "press", {"entity_id": _entity(hass, manager, "update_all")}, blocking=True
+            )
+        assert peak == 2
+        assert sorted(hosts) == ["192.168.99.1", "192.168.99.2"]
+        notify.assert_called_once()
+        message = notify.call_args.kwargs["message"]
+        assert "Updated: Mock Title\n" in message
+        assert "Failed: Mock Title: boom" in message
 
 
 async def test_update_all_refuses_overlap_and_unknown_release(hass, release_check):

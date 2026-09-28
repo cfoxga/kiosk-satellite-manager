@@ -275,21 +275,25 @@ class KioskSatelliteUpdateAllButton(ButtonEntity):
                 if entry.data.get(CONF_ENTRY_TYPE) != ENTRY_TYPE_MANAGER
                 and entry.entry_id in self.hass.data.get(DOMAIN, {})
             ]
+            eligible = []
             for entry in entries:
                 reason = self._eligibility(entry, version)
                 if reason:
                     skipped.append(f"{entry.title}: {reason}")
-                    continue
-                # Rechecked for each entry after all earlier installs complete.
-                # async_self_update_entry marks this device installing before
-                # yielding, closing the same-device race with other actions.
-                # KSM-BEHAVE-081: over the Kiosk Satellite API -- never ADB.
-                try:
-                    outcome = await async_self_update_entry(self.hass, entry)
-                except Exception as err:  # continue with the next device
-                    failed.append(f"{entry.title}: {err}")
-                    continue
-                if outcome == OUTCOME_AWAITING_CONFIRMATION:
+                else:
+                    eligible.append(entry)
+            # KSM-BEHAVE-077 (#68): every eligible device at once. Each
+            # install marks its device installing before yielding, so a
+            # device another action started since the snapshot is refused
+            # and lands under Failed. KSM-BEHAVE-081: API only, never ADB.
+            outcomes = await asyncio.gather(
+                *(async_self_update_entry(self.hass, entry) for entry in eligible),
+                return_exceptions=True,
+            )
+            for entry, outcome in zip(eligible, outcomes):
+                if isinstance(outcome, BaseException):
+                    failed.append(f"{entry.title}: {outcome}")
+                elif outcome == OUTCOME_AWAITING_CONFIRMATION:
                     awaiting.append(entry.title)
                 else:
                     updated.append(entry.title)

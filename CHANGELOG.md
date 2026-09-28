@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Update all** now updates every eligible kiosk at the same time instead of
+  one after another (#68). A kiosk that fails doesn't stop or cancel the
+  others, and the summary notification still arrives once they have all
+  finished.
+
 - The Kiosk Satellite Manager entry now has a **Check for updates** button
   (#66). Pressing it checks GitHub for a new Kiosk Satellite release right
   away instead of waiting for the hourly check. Whenever KSM sees a release it
