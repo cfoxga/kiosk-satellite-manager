@@ -31,7 +31,7 @@ async def test_setup_entry_starts_coordinator_and_platforms(hass):
     ent_reg = er.async_get(hass)
     entries = er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)
     domains = {e.domain for e in entries}
-    assert domains == {"sensor", "binary_sensor", "button", "switch", "update"}
+    assert domains == {"sensor", "binary_sensor", "button", "select", "switch", "update"}
 
     sensor_entry = next(e for e in entries if e.unique_id == f"{ctx.entry.entry_id}_version")
     sensor_state = hass.states.get(sensor_entry.entity_id)
@@ -151,7 +151,7 @@ async def test_setup_entry_succeeds_when_device_unprovisioned(hass):
     ent_reg = er.async_get(hass)
     entries = er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)
     domains = {e.domain for e in entries}
-    assert domains == {"sensor", "binary_sensor", "button", "switch", "update"}
+    assert domains == {"sensor", "binary_sensor", "button", "select", "switch", "update"}
 
     button_entry = next(e for e in entries if e.domain == "button")
     button_state = hass.states.get(button_entry.entity_id)

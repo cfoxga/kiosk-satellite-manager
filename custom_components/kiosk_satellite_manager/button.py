@@ -19,6 +19,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.const import EntityCategory
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import entity_registry as er
@@ -47,6 +48,7 @@ from .const import (
     INSTALL_LAUNCH_POLL_DELAY_S,
     TOKEN_MODE_AUTO,
 )
+from . import config_backup
 from .credentials import TokenCredential, async_replace_entry_credential
 
 from .helpers import resolve_area_name, target_release
@@ -83,6 +85,8 @@ async def async_setup_entry(
         [
             KioskSatelliteInstallButton(hass, entry),
             KioskSatelliteUninstallButton(hass, entry),
+            KioskSatelliteBackupConfigButton(hass, entry),
+            KioskSatelliteRestoreConfigButton(hass, entry),
         ]
     )
 
@@ -222,6 +226,51 @@ class KioskSatelliteUninstallButton(ButtonEntity):
             await client.uninstall_ks()
         finally:
             await client.close()
+
+
+class KioskSatelliteBackupConfigButton(ButtonEntity):
+    """KSM-BEHAVE-104: save this device's Kiosk Satellite configuration now."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Back up configuration"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        self.hass = hass
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_backup_config"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.title,
+            suggested_area=resolve_area_name(hass, entry.data.get(CONF_AREA_ID)),
+        )
+
+    async def async_press(self) -> None:
+        await config_backup.async_backup_entry(self.hass, self._entry)
+
+
+class KioskSatelliteRestoreConfigButton(ButtonEntity):
+    """KSM-BEHAVE-106: restore the backup chosen in the Configuration backup
+    select (the newest when none is chosen)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Restore configuration"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        self.hass = hass
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_restore_config"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.title,
+            suggested_area=resolve_area_name(hass, entry.data.get(CONF_AREA_ID)),
+        )
+
+    async def async_press(self) -> None:
+        await config_backup.async_restore_entry(
+            self.hass, self._entry, config_backup.selected_backup(self.hass, self._entry)
+        )
 
 
 class KioskSatelliteUpdateAllButton(ButtonEntity):

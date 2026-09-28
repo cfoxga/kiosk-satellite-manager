@@ -401,3 +401,43 @@ async def test_upload_update_raises_on_a_server_error():
     session = _fake_session(post=_fake_response({"ok": False}, ok=False, status=500))
     with pytest.raises(KsApiError, match="HTTP 500"):
         await ks_api_client.upload_update(session, "192.168.1.50", "tok", b"", 1, pin=None)
+
+
+async def test_export_config_gets_bearer_export_without_redirects():
+    """[KSM-TEST-199] KSM-BEHAVE-104: KS's own whole-device export endpoint."""
+    payload = {"kind": "kiosk-satellite-config", "settings": {"a": 1}}
+    session = _fake_session(get=_fake_response(payload))
+    assert await ks_api_client.export_config(session, "192.168.1.50", "tok", pin=None) == payload
+    call = session.get.call_args
+    assert call.args[0] == "http://192.168.1.50:2324/api/config/export"
+    assert call.kwargs["headers"] == {"Authorization": "Bearer tok"}
+    assert call.kwargs["allow_redirects"] is False
+
+
+async def test_export_config_raises_on_error_status():
+    """[KSM-TEST-199] A KS error reply is a KsApiError, never a payload."""
+    session = _fake_session(get=_fake_response({"error": "denied"}, ok=False, status=401))
+    with pytest.raises(KsApiError, match="denied"):
+        await ks_api_client.export_config(session, "192.168.1.50", "tok", pin=None)
+
+
+async def test_import_config_posts_replace_this_device_import():
+    """[KSM-TEST-204] KSM-BEHAVE-106: adoptIdentity=1&importLocalStorage=1, JSON body."""
+    payload = {"kind": "kiosk-satellite-config", "settings": {"a": 1}}
+    session = _fake_session(post=_fake_response({"ok": True, "data": {"applied": 1}}))
+    result = await ks_api_client.import_config(session, "192.168.1.50", "tok", payload, pin=None)
+    assert result == {"ok": True, "data": {"applied": 1}}
+    call = session.post.call_args
+    assert call.args[0] == (
+        "http://192.168.1.50:2324/api/config/import?adoptIdentity=1&importLocalStorage=1"
+    )
+    assert call.kwargs["json"] == payload
+    assert call.kwargs["headers"] == {"Authorization": "Bearer tok"}
+    assert call.kwargs["allow_redirects"] is False
+
+
+async def test_import_config_raises_on_rejection():
+    """[KSM-TEST-205] A non-OK import reply is a KsApiError carrying KS's reason."""
+    session = _fake_session(post=_fake_response({"error": "bad file"}, ok=False, status=400))
+    with pytest.raises(KsApiError, match="bad file"):
+        await ks_api_client.import_config(session, "192.168.1.50", "tok", {}, pin=None)

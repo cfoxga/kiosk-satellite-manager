@@ -60,6 +60,19 @@
   before the oldest of those, and the newest three. The copies live in
   `/config/.cache`, which backups skip.
 
+- Each kiosk can now back up and restore its Kiosk Satellite configuration
+  (#69). **Back up configuration** saves the kiosk's full settings to a dated
+  file under `config/kiosk_satellite_manager/backups/`. Backups also run
+  automatically every 24 hours by default; set the period, or 0 to turn them
+  off, in the Kiosk Satellite Manager entry's options. The same options set
+  how many backups to keep per kiosk (default 10). A backup identical to the
+  previous one replaces it, so every kept file is different. To restore, pick
+  a file in **Configuration backup** and press **Restore configuration**. KSM
+  first backs up the current settings, then keeps the kiosk's current
+  password and Home Assistant token so the restore can't lock KSM out. The
+  files contain the kiosk's passwords and token, so treat them as secrets.
+  They can also be imported through Kiosk Satellite's own Settings page.
+
 - **Update all** now updates every eligible kiosk at the same time instead of
   one after another (#68). A kiosk that fails doesn't stop or cancel the
   others, and the summary notification still arrives once they have all

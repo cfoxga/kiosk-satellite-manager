@@ -80,7 +80,7 @@ KS_HOME_ACTIVITY: Final = f"{KS_PACKAGE}/.HomeAlias"
 KS_APK_REMOTE_PATH: Final = "/data/local/tmp/kiosk-satellite.apk"
 KS_GITHUB_REPO: Final = "jxlarrea/kiosk-satellite"
 
-PLATFORMS: Final = ["binary_sensor", "button", "sensor", "switch", "update"]
+PLATFORMS: Final = ["binary_sensor", "button", "select", "sensor", "switch", "update"]
 MANAGER_PLATFORMS: Final = ["button", "sensor", "switch"]
 # KSM-BEHAVE-080: sent when the manager's Auto-update all switch changes so
 # every device's update entity re-evaluates its auto-update rules.
@@ -127,3 +127,12 @@ HA_TOKEN_LIFESPAN_DAYS: Final = 90
 # prompt) -- 120 * 5s = 10 minutes, matching the design doc's default.
 SELF_UPDATE_POLL_ATTEMPTS: Final = 120
 SELF_UPDATE_POLL_DELAY_S: Final = 5
+
+# KSM-BEHAVE-104/105: manager-entry options for device configuration backups.
+# Period 0 disables scheduled backups; keep is the per-device retained count.
+CONF_BACKUP_INTERVAL_HOURS: Final = "backup_interval_hours"
+CONF_BACKUP_KEEP: Final = "backup_keep"
+DEFAULT_BACKUP_INTERVAL_HOURS: Final = 24
+DEFAULT_BACKUP_KEEP: Final = 10
+BACKUP_CHECK_INTERVAL_MIN: Final = 15
+SIGNAL_BACKUPS_CHANGED: Final = f"{DOMAIN}_backups_changed"

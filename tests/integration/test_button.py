@@ -489,7 +489,7 @@ async def test_uninstall_button_press_uninstalls_ks(hass):
 
         ent_reg = er.async_get(hass)
         entries = er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)
-        assert len([e for e in entries if e.domain == "button"]) == 2
+        assert len([e for e in entries if e.domain == "button"]) == 4  # install, uninstall, backup, restore
         uninstall_entry = next(
             e for e in entries if e.unique_id == f"{ctx.entry.entry_id}_uninstall"
         )

@@ -248,6 +248,47 @@ async def patch_settings(
         return data
 
 
+async def export_config(
+    session: aiohttp.ClientSession, host: str, token: str, *, pin: str | None
+) -> dict:
+    """`GET /api/config/export`, Bearer token -> KS's whole-device export
+    {kind, version, deviceName, exportedAt, settings, localStorage}, the same
+    payload Settings -> Export configuration downloads (KSM-BEHAVE-104).
+    Unlike `GET /api/settings`, secrets come back unmasked."""
+    async with session.get(
+        _credential_url(host, "/api/config/export", pin),
+        headers={"Authorization": f"Bearer {token}"},
+        allow_redirects=False,
+        ssl=_ssl(pin),
+        timeout=aiohttp.ClientTimeout(total=HEALTH_TIMEOUT_S),
+    ) as resp:
+        data = await resp.json(content_type=None)
+        if not resp.ok:
+            raise KsApiError(data.get("error") or f"HTTP {resp.status}")
+        return data
+
+
+async def import_config(
+    session: aiohttp.ClientSession, host: str, token: str, payload: dict,
+    *, pin: str | None,
+) -> dict:
+    """`POST /api/config/import` with an export payload -- KS's own "replace
+    this device" import, keeping the backup's identity and page storage
+    (KSM-BEHAVE-106). KS reloads itself afterwards."""
+    async with session.post(
+        _credential_url(host, "/api/config/import?adoptIdentity=1&importLocalStorage=1", pin),
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+        allow_redirects=False,
+        ssl=_ssl(pin),
+        timeout=aiohttp.ClientTimeout(total=HEALTH_TIMEOUT_S),
+    ) as resp:
+        data = await resp.json(content_type=None)
+        if not resp.ok:
+            raise KsApiError(data.get("error") or f"HTTP {resp.status}")
+        return data
+
+
 async def run_command(
     session: aiohttp.ClientSession, host: str, token: str, command: str,
     *, pin: str | None,

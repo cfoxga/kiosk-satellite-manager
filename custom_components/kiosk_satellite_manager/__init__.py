@@ -40,6 +40,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -48,6 +49,7 @@ from .capability_report import CapabilityReportCollector
 from .device_catalog import validate_catalog
 from .onboarding_plan import build_onboarding_plan
 from .const import (
+    BACKUP_CHECK_INTERVAL_MIN,
     CONF_HOST,
     CONF_ENTRY_TYPE,
     CONF_NAME,
@@ -66,7 +68,7 @@ from .const import (
     RENAME_API_KEY,
     SIGNAL_MANAGER_OPTIONS_UPDATED,
 )
-from . import ks_tls
+from . import config_backup, ks_tls
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .ks_api import latest_release_info
 from .ks_update import async_check_devices_for_update
@@ -367,6 +369,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await _async_ensure_release_coordinator(hass)
         entry.async_on_unload(entry.add_update_listener(_async_manager_options_updated))
         await hass.config_entries.async_forward_entry_setups(entry, MANAGER_PLATFORMS)
+
+        async def _backup_tick(_now) -> None:
+            # KSM-BEHAVE-105: filename dates decide what is due, not this timer.
+            await config_backup.async_run_due_backups(hass)
+
+        entry.async_on_unload(
+            async_track_time_interval(
+                hass, _backup_tick, timedelta(minutes=BACKUP_CHECK_INTERVAL_MIN),
+                name=f"{DOMAIN}_config_backup",
+            )
+        )
         return True
 
     session = async_get_clientsession(hass)

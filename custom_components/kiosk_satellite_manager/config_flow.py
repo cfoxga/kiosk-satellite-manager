@@ -57,6 +57,8 @@ from .const import (
     TARGET_VERSION_LATEST,
     CONF_TLS_SPKI,
     CONF_DEVICE_PROFILE,
+    CONF_BACKUP_INTERVAL_HOURS,
+    CONF_BACKUP_KEEP,
     CONF_ENABLE_DEVICE_OWNER,
     CONF_ENTRY_TYPE,
     CONF_EXISTING_INSTALL_ACTION,
@@ -73,6 +75,8 @@ from .const import (
     CONNECT_RETRY_ATTEMPTS,
     CONNECT_RETRY_DELAY_S,
     DEFAULT_ADB_PORT,
+    DEFAULT_BACKUP_INTERVAL_HOURS,
+    DEFAULT_BACKUP_KEEP,
     DOMAIN,
     ENTRY_TYPE_MANAGER,
     MANAGER_UNIQUE_ID,
@@ -256,6 +260,13 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             vol.Required(CONF_ONBOARDING_MODE, default=saved.get(
                 CONF_ONBOARDING_MODE, ONBOARDING_REVIEW
             )): vol.In([ONBOARDING_REVIEW, ONBOARDING_AUTOMATIC]),
+            # KSM-BEHAVE-105: unlike the fields above, these apply to every device.
+            vol.Required(CONF_BACKUP_INTERVAL_HOURS, default=saved.get(
+                CONF_BACKUP_INTERVAL_HOURS, DEFAULT_BACKUP_INTERVAL_HOURS
+            )): vol.All(vol.Coerce(int), vol.Range(min=0, max=8760)),
+            vol.Required(CONF_BACKUP_KEEP, default=saved.get(
+                CONF_BACKUP_KEEP, DEFAULT_BACKUP_KEEP
+            )): vol.All(vol.Coerce(int), vol.Range(min=1, max=1000)),
         }
         return self.async_show_form(step_id="init", data_schema=vol.Schema(fields), errors=errors)
 
