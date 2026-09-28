@@ -1003,3 +1003,55 @@ async def test_ks_device_on_pre_tls_release_is_added_unpinned(
     assert result["data"][CONF_DEVICE_PROFILE] is None
     assert mock_login.await_count == 1
     assert mock_login.await_args.kwargs["pin"] is None
+
+
+async def test_ks_device_awaiting_first_run_setup_gets_the_submitted_password(
+    hass, ks_health_probe, tls_migration, ks_setup_status
+):
+    """[KSM-TEST-255] A KS that answers health but reports passwordNeeded (freshly
+    installed or cleared) is given the submitted password as its first admin
+    password before login; a device that already has one never gets the call."""
+    ks_health_probe.return_value = (None, _PORTAL_MINI_HEALTH)
+    tls_migration.return_value = None
+    ks_setup_status.return_value = {"setupNeeded": True, "passwordNeeded": True}
+    with patch(
+        "custom_components.kiosk_satellite_manager.ks_api_client.setup_password",
+        new=AsyncMock(return_value="tok"),
+    ) as mock_setup, patch(
+        "custom_components.kiosk_satellite_manager.config_flow.login",
+        new=AsyncMock(return_value="tok"),
+    ), patch(
+        "custom_components.kiosk_satellite_manager.fetch_health",
+        new=AsyncMock(return_value={"appVersion": "2026.9.50"}),
+    ):
+        result = await _start_ks_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_PASSWORD: "hunter222"}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert mock_setup.await_args.args[2] == "hunter222"
+
+
+async def test_ks_device_with_a_password_is_never_first_run_setup(
+    hass, ks_health_probe, tls_migration
+):
+    """[KSM-TEST-255] negative control: passwordNeeded false means no setup call."""
+    ks_health_probe.return_value = (None, _PORTAL_MINI_HEALTH)
+    tls_migration.return_value = None
+    with patch(
+        "custom_components.kiosk_satellite_manager.ks_api_client.setup_password",
+        new=AsyncMock(return_value="tok"),
+    ) as mock_setup, patch(
+        "custom_components.kiosk_satellite_manager.config_flow.login",
+        new=AsyncMock(return_value="tok"),
+    ), patch(
+        "custom_components.kiosk_satellite_manager.fetch_health",
+        new=AsyncMock(return_value={"appVersion": "2026.9.50"}),
+    ):
+        result = await _start_ks_flow(hass)
+        await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "hunter222"})
+        await hass.async_block_till_done()
+
+    mock_setup.assert_not_awaited()

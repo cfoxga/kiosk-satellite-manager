@@ -137,6 +137,20 @@ def ks_health_probe():
 
 
 @pytest.fixture(autouse=True)
+def ks_setup_status():
+    """Keep the first-run password probe off the network: by default the
+    device already has an admin password."""
+    with patch(
+        "custom_components.kiosk_satellite_manager.ks_api_client.get_setup_status",
+        new=AsyncMock(return_value={"setupNeeded": False, "passwordNeeded": False}),
+    ) as status, patch(
+        "custom_components.kiosk_satellite_manager.ks_api_client.setup_password",
+        new=AsyncMock(return_value="tok"),
+    ):
+        yield status
+
+
+@pytest.fixture(autouse=True)
 def tls_migration():
     """KSM-BEHAVE-094: setup of an unpinned entry with a password switches
     the device to HTTPS in the background. Keep it off the network; a KS that

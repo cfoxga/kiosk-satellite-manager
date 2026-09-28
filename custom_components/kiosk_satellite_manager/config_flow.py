@@ -1102,6 +1102,16 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             pin: str | None = None
             try:
                 if self._ks_probe_pin is None:
+                    # A freshly installed or reset KS answers health but has no
+                    # admin password yet: the submitted one becomes its first.
+                    try:
+                        status = await ks_api_client.get_setup_status(session, self._host, pin=None)
+                    except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError):
+                        status = {}
+                    if status.get("passwordNeeded"):
+                        await ks_api_client.setup_password(
+                            session, self._host, password, self._discovered_name, pin=None
+                        )
                     # HTTP device: check the password before the TLS switch,
                     # which would otherwise report a bad one as a TLS failure.
                     await login(session, self._host, password, pin=None)
