@@ -278,12 +278,12 @@ async def _async_ensure_release_coordinator(hass: HomeAssistant) -> None:
         except Exception as err:  # network, HTTP status, no usable release
             raise UpdateFailed(f"Kiosk Satellite release check failed: {err}") from err
         coordinator.ksm_last_success = datetime.now(timezone.utc)
-        # KSM-BEHAVE-103: the first check is only a baseline -- device
-        # entries are still loading at startup. A different version later
-        # tells every device to check GitHub itself now.
+        # KSM-BEHAVE-103/119: a newly seen version tells already loaded
+        # devices to check now, including the first successful check. Device
+        # entries that load afterward check individually (KSM-BEHAVE-117).
         announced = coordinator.ksm_announced_version
         coordinator.ksm_announced_version = release.version
-        if announced is not None and release.version != announced:
+        if release.version != announced and hass.data.get(DOMAIN):
             hass.async_create_background_task(
                 async_check_devices_for_update(hass), f"{DOMAIN}_device_update_check"
             )
