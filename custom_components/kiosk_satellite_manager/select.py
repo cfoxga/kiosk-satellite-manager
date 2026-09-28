@@ -14,7 +14,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import config_backup
+from . import config_backup, fleet
 from .const import CONF_AREA_ID, CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_MANAGER, SIGNAL_BACKUPS_CHANGED
 from .helpers import resolve_area_name
 
@@ -24,7 +24,8 @@ async def async_setup_entry(
 ) -> None:
     if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
         return
-    async_add_entities([KioskSatelliteConfigBackupSelect(hass, entry)])
+    for device in fleet.platform_devices(hass, entry):
+        fleet.add_entities(async_add_entities, device, [KioskSatelliteConfigBackupSelect(hass, device)])
 
 
 class KioskSatelliteConfigBackupSelect(SelectEntity):

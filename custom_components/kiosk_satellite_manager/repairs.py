@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from . import ks_api_client
+from . import ks_api_client, fleet
 from .const import CONF_HOST, CONF_TLS_SPKI
 
 
@@ -24,7 +24,7 @@ class TlsCertificateChangedFlow(RepairsFlow):
         return await self.async_step_confirm()
 
     async def async_step_confirm(self, user_input: dict | None = None) -> FlowResult:
-        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        entry = fleet.resolve_device(self.hass, self._entry_id)
         if entry is None:
             return self.async_abort(reason="entry_not_found")
         if user_input is None:
@@ -38,9 +38,7 @@ class TlsCertificateChangedFlow(RepairsFlow):
         )
         if probed is None:
             return self.async_abort(reason="cannot_connect")
-        self.hass.config_entries.async_update_entry(
-            entry, data={**entry.data, CONF_TLS_SPKI: probed[0]}
-        )
+        fleet.update_device(self.hass, entry, data={**entry.data, CONF_TLS_SPKI: probed[0]})
         coordinator = self.hass.data.get(entry.domain, {}).get(entry.entry_id)
         if coordinator is not None:
             await coordinator.async_request_refresh()

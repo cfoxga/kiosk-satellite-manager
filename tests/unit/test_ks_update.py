@@ -247,7 +247,7 @@ async def test_check_devices_for_update_asks_each_device_and_skips_the_rest():
     devices are never logged into."""
     def entry(entry_id, title, host, **extra):
         data = {CONF_HOST: host, CONF_PASSWORD: "secret", **extra}
-        return SimpleNamespace(entry_id=entry_id, title=title, data=data)
+        return SimpleNamespace(entry_id=entry_id, title=title, data=data, domain=DOMAIN)
 
     entries = {
         "a": entry("a", "Failing", "192.168.1.1"),

@@ -230,7 +230,8 @@ async def async_run_due_backups(hass: HomeAssistant) -> None:
     cutoff = _now() - timedelta(hours=hours)
     due = []
     for entry_id, coordinator in list(hass.data.get(DOMAIN, {}).items()):
-        entry = hass.config_entries.async_get_entry(entry_id)
+        from . import fleet
+        entry = fleet.resolve_device(hass, entry_id)
         # An offline device would otherwise log a warning on every tick; it
         # is picked up on the first tick after health sees it again.
         if entry is None or not coordinator.last_update_success:

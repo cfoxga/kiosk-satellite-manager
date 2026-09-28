@@ -45,7 +45,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.helpers.network import get_url
 
-from . import apk_cache, device_owner, ks_api_client, ks_tls, meta_setup
+from . import apk_cache, device_owner, fleet, ks_api_client, ks_tls, meta_setup
 from .helpers import recent_releases
 from .adb_client import AdbAuthPending, AdbClient, AdbConnectFailed, ensure_adb_key
 from .const import (
@@ -79,7 +79,10 @@ from .const import (
     DEFAULT_BACKUP_KEEP,
     DOMAIN,
     ENTRY_TYPE_MANAGER,
+    ENTRY_TYPE_UNMANAGED,
+    ENTRY_TYPE_FLEET,
     MANAGER_UNIQUE_ID,
+    UNMANAGED_UNIQUE_ID,
     ONBOARDING_AUTOMATIC,
     ONBOARDING_REVIEW,
     EXISTING_INSTALL_REINSTALL,
@@ -194,6 +197,8 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
         self._entry = entry
 
     async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
+        if self._entry.data.get(CONF_ENTRY_TYPE) in (ENTRY_TYPE_UNMANAGED, ENTRY_TYPE_FLEET):
+            return self.async_abort(reason="not_supported")
         if self._entry.data.get(CONF_ENTRY_TYPE) != ENTRY_TYPE_MANAGER:
             return await self.async_step_device_menu()
         saved = self._entry.options
@@ -450,6 +455,55 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
         )
 
 
+class KioskSatelliteDeviceSubentryFlow(
+    config_entries.ConfigSubentryFlow, KioskSatelliteManagerOptionsFlow
+):
+    """Expose existing per-device controls on HA's native subentry Configure."""
+
+    def __init__(self) -> None:
+        self._entry: fleet.DeviceEntry | None = None
+
+    async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
+        return self.async_abort(reason="not_supported")
+
+    async def async_step_reconfigure(self, user_input: dict | None = None) -> FlowResult:
+        parent = self._get_entry()
+        subentry = self._get_reconfigure_subentry()
+        self._entry = fleet.DeviceEntry(self.hass, parent, subentry)
+        return await self.async_step_device_menu()
+
+    async def async_step_device_password(self, user_input: dict | None = None) -> FlowResult:
+        """Verify a replacement secret and update the physical subentry."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            candidate = user_input.get(CONF_PASSWORD, "")
+            if not candidate:
+                errors[CONF_PASSWORD] = "password_required"
+            else:
+                try:
+                    await login(
+                        async_get_clientsession(self.hass),
+                        self._entry.data[CONF_HOST], candidate,
+                        pin=self._entry.data.get(CONF_TLS_SPKI),
+                    )
+                except Exception:
+                    errors[CONF_PASSWORD] = "password_verification_failed"
+                else:
+                    return self.async_update_and_abort(
+                        self._get_entry(), self._get_reconfigure_subentry(),
+                        data_updates={CONF_PASSWORD: candidate},
+                    )
+        return self.async_show_form(
+            step_id="device_password",
+            data_schema=vol.Schema({
+                vol.Required(CONF_PASSWORD): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                ),
+            }),
+            errors=errors,
+        )
+
+
 async def _start_meta_setup(
     hass, target: "meta_setup.Target", client
 ) -> str | None:
@@ -525,6 +579,14 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    @classmethod
+    def async_get_supported_subentry_types(
+        cls, config_entry: config_entries.ConfigEntry
+    ) -> dict[str, type[config_entries.ConfigSubentryFlow]]:
+        if config_entry.data.get(CONF_ENTRY_TYPE) in (ENTRY_TYPE_UNMANAGED, ENTRY_TYPE_FLEET):
+            return {"device": KioskSatelliteDeviceSubentryFlow}
+        return {}
+
     def __init__(self) -> None:
         self._host: str | None = None
         self._port: int | None = None
@@ -562,6 +624,20 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         choice in `async_step_user`, so this can never create a second
         manager entry alongside one a user already created by hand.
         """
+        if user_input and user_input.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_UNMANAGED:
+            await self.async_set_unique_id(UNMANAGED_UNIQUE_ID)
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(
+                title="Unmanaged", data={CONF_ENTRY_TYPE: ENTRY_TYPE_UNMANAGED}
+            )
+        if user_input and user_input.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_FLEET:
+            leader_id = user_input["leader_id"]
+            await self.async_set_unique_id(f"ksm_fleet:{leader_id}")
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(
+                title=f"Fleet - {user_input['leader_name']}",
+                data={CONF_ENTRY_TYPE: ENTRY_TYPE_FLEET, "leader_id": leader_id},
+            )
         await self.async_set_unique_id(MANAGER_UNIQUE_ID)
         self._abort_if_unique_id_configured()
         return self.async_create_entry(
@@ -587,6 +663,8 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
             host = user_input[CONF_HOST]
             port = user_input.get(CONF_PORT, DEFAULT_ADB_PORT)
+            if any(device.data.get(CONF_HOST) == host for device in fleet.device_entries(self.hass)):
+                return self.async_abort(reason="already_configured")
             await self.async_set_unique_id(host)
             self._abort_if_unique_id_configured()
 

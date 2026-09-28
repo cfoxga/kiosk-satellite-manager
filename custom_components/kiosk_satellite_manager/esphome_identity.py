@@ -67,6 +67,7 @@ async def async_ensure_esphome_identity(hass: HomeAssistant, entry: ConfigEntry)
         return
     if pending:
         data = {k: v for k, v in entry.data.items() if k != CONF_ESPHOME_ENABLE_PENDING}
-        hass.config_entries.async_update_entry(entry, data=data)
+        from . import fleet
+        fleet.update_device(hass, entry, data=data)
     if payload:
         _LOGGER.info("Kiosk Satellite %s ESPHome settings applied: %s", name, sorted(payload))

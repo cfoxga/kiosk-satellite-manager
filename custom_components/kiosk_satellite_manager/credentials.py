@@ -63,4 +63,5 @@ async def async_replace_entry_credential(hass, entry, credential: TokenCredentia
         data.pop(CONF_HA_TOKEN_OWNED, None)
     if credential.refresh_token_id is None:
         data.pop(CONF_HA_REFRESH_TOKEN_ID, None)
-    hass.config_entries.async_update_entry(entry, data=data)
+    from . import fleet
+    fleet.update_device(hass, entry, data=data)

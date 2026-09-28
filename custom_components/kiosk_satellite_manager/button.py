@@ -48,7 +48,7 @@ from .const import (
     INSTALL_LAUNCH_POLL_DELAY_S,
     TOKEN_MODE_AUTO,
 )
-from . import config_backup
+from . import config_backup, fleet
 from .credentials import TokenCredential, async_replace_entry_credential
 
 from .helpers import resolve_area_name, target_release
@@ -81,20 +81,19 @@ async def async_setup_entry(
             ]
         )
         return
-    async_add_entities(
-        [
-            KioskSatelliteInstallButton(hass, entry),
-            KioskSatelliteUninstallButton(hass, entry),
-            KioskSatelliteBackupConfigButton(hass, entry),
-            KioskSatelliteRestoreConfigButton(hass, entry),
-        ]
-    )
+    for device in fleet.platform_devices(hass, entry):
+        fleet.add_entities(async_add_entities, device, [
+            KioskSatelliteInstallButton(hass, device),
+            KioskSatelliteUninstallButton(hass, device),
+            KioskSatelliteBackupConfigButton(hass, device),
+            KioskSatelliteRestoreConfigButton(hass, device),
+        ])
 
 
 def _store_tls_pin(hass: HomeAssistant, entry: ConfigEntry, pin: str) -> None:
     """KSM-BEHAVE-094: Install is an operator trust event -- persist the key
     it just pinned and clear any certificate-changed repair it resolves."""
-    hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_TLS_SPKI: pin})
+    fleet.update_device(hass, entry, data={**entry.data, CONF_TLS_SPKI: pin})
     ir.async_delete_issue(hass, DOMAIN, f"tls_certificate_changed_{entry.entry_id}")
 
 
@@ -294,8 +293,12 @@ class KioskSatelliteUpdateAllButton(ButtonEntity):
             return "install in progress"
         registry = er.async_get(self.hass)
         update = next(
-            (item for item in er.async_entries_for_config_entry(registry, entry.entry_id)
-             if item.domain == "update" and item.unique_id == f"{entry.entry_id}_update"),
+            (item for item in er.async_entries_for_config_entry(
+                registry, entry.parent.entry_id if isinstance(entry, fleet.DeviceEntry)
+                else entry.entry_id,
+            ) if item.domain == "update" and item.unique_id == f"{entry.entry_id}_update"
+             and (not isinstance(entry, fleet.DeviceEntry)
+                  or item.config_subentry_id == entry.subentry_id)),
             None,
         )
         state = self.hass.states.get(update.entity_id) if update else None
@@ -321,9 +324,11 @@ class KioskSatelliteUpdateAllButton(ButtonEntity):
         version = release.version
         try:
             entries = [
-                entry for entry in self.hass.config_entries.async_entries(DOMAIN)
-                if entry.data.get(CONF_ENTRY_TYPE) != ENTRY_TYPE_MANAGER
-                and entry.entry_id in self.hass.data.get(DOMAIN, {})
+                entry for entry in [*fleet.device_entries(self.hass), *(
+                    item for item in self.hass.config_entries.async_entries(DOMAIN)
+                    if not item.data.get(CONF_ENTRY_TYPE)
+                )]
+                if entry.entry_id in self.hass.data.get(DOMAIN, {})
             ]
             eligible = []
             for entry in entries:

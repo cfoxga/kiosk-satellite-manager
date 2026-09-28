@@ -16,11 +16,18 @@ remotely — do them once per device, in order:
    The integration reuses one persistent ADB key across devices, so this is a true one-time tap per
    device, not a per-session prompt.
 3. **Tap Accept on-device if the device is joining a Kiosk Satellite fleet.** Fleet invitations are
-   answered on the kiosk screen only — this integration does not attempt fleet attach at all (see
-   Non-goals in the design doc).
+   answered on the kiosk screen only. KSM reads accepted membership to organize Home Assistant;
+   it does not send or accept invitations.
 
 ## What it does
 
+- **Native fleets** — Home Assistant shows a global KSM entry, one Unmanaged entry, and one entry
+  per Kiosk Satellite fleet leader. Managed kiosks appear as device subentries under their confirmed
+  leader, or under Unmanaged until they join a managed fleet. KSM reads authenticated `fleetStatus`
+  during health checks; failed reads keep the last confirmed placement. Fleet entries show the
+  leader, managed count, reachability and sync status. Existing device entries migrate in place:
+  their entity IDs, areas, options, service target IDs and backup paths remain usable. Configure a
+  physical kiosk from its device subentry to update its password or enable Device Owner.
 - **Install** — connects over ADB, detects the device type (Meta Portal vs. Android TV stick, etc.),
   fetches the matching Kiosk Satellite APK for the device's ABI from the project's GitHub releases,
   and installs it. A `button` entity (Install/Reinstall) and a `sensor` entity (installed KS version)
@@ -38,8 +45,8 @@ remotely — do them once per device, in order:
   URL, and a dedicated device token or an existing token ID. The manager stores no token
   value. Review mode lets you override defaults per device. Automatic mode still requires
   an ADB address, on-device authorization, and a confirmation of the selected actions.
-  Changing manager settings does not rewrite existing device entries.
-- **Fleet release and updates** — the manager device exposes the latest usable Kiosk
+  Changing manager settings does not rewrite existing device settings.
+- **Fleet release and updates** — the manager entry exposes the latest usable Kiosk
   Satellite release and check status, plus Update all. The button visits managed,
   reachable devices with an unskipped newer version through the same verified install
   path as each device's Install button. A notification names updated, skipped, and failed
@@ -78,7 +85,7 @@ repo's `kiosk-satellite-manager/` silo (`docs/SPEC/provisioning.md`).
 
 ## Installation
 
-This repo lives on Gitea (`git.cfoxga.com`), not GitHub, so it is **not HACS-installable** — HACS
+This repo lives on OneDev (`onedev.cfoxga.com`), not GitHub, so it is **not HACS-installable** — HACS
 only adds repositories hosted on GitHub. Install manually: copy
 `custom_components/kiosk_satellite_manager/` into your Home Assistant config's
 `custom_components/` directory, then restart Home Assistant.

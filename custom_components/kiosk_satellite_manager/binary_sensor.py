@@ -21,6 +21,7 @@ from .const import (
     DEFAULT_ADB_PORT, DOMAIN, ENTRY_TYPE_MANAGER,
 )
 from .helpers import resolve_area_name
+from . import fleet
 
 SCAN_INTERVAL = timedelta(minutes=ADB_PROBE_INTERVAL_MIN)
 
@@ -30,7 +31,9 @@ async def async_setup_entry(
 ) -> None:
     if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
         return
-    async_add_entities([KioskSatelliteAdbEnabledSensor(hass, entry)], update_before_add=True)
+    for device in fleet.platform_devices(hass, entry):
+        fleet.add_entities(async_add_entities, device,
+                           [KioskSatelliteAdbEnabledSensor(hass, device)], update_before_add=True)
 
 
 class KioskSatelliteAdbEnabledSensor(BinarySensorEntity):

@@ -23,6 +23,7 @@ from .const import (
     ENTRY_TYPE_MANAGER, SIGNAL_AUTO_UPDATE_ALL,
 )
 from .helpers import resolve_area_name
+from . import fleet
 
 
 async def async_setup_entry(
@@ -31,7 +32,8 @@ async def async_setup_entry(
     if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
         async_add_entities([KioskSatelliteAutoUpdateAllSwitch(hass, entry)])
         return
-    async_add_entities([KioskSatelliteAutoUpdateSwitch(hass, entry)])
+    for device in fleet.platform_devices(hass, entry):
+        fleet.add_entities(async_add_entities, device, [KioskSatelliteAutoUpdateSwitch(hass, device)])
 
 
 class KioskSatelliteAutoUpdateSwitch(SwitchEntity):
@@ -62,9 +64,8 @@ class KioskSatelliteAutoUpdateSwitch(SwitchEntity):
         self._set(False)
 
     def _set(self, value: bool) -> None:
-        self.hass.config_entries.async_update_entry(
-            self._entry, options={**self._entry.options, CONF_AUTO_UPDATE: value}
-        )
+        fleet.update_device(self.hass, self._entry,
+                            options={**self._entry.options, CONF_AUTO_UPDATE: value})
         self.async_write_ha_state()
 
 

@@ -270,10 +270,12 @@ async def async_check_devices_for_update(hass: HomeAssistant) -> dict[str, str]:
     Concurrent, API-only (KSM-BEHAVE-081), installs nothing. Returns an
     outcome per device title; a failure is logged and never stops the rest.
     """
+    from . import fleet
+
     checks = [
         (entry, coordinator)
         for entry_id, coordinator in list(hass.data.get(DOMAIN, {}).items())
-        if (entry := hass.config_entries.async_get_entry(entry_id)) is not None
+        if (entry := fleet.resolve_device(hass, entry_id)) is not None
     ]
     outcomes = await asyncio.gather(
         *(async_check_device_for_update(hass, entry, coordinator) for entry, coordinator in checks)

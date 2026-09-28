@@ -40,6 +40,21 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 
 
 @pytest.fixture(autouse=True)
+def legacy_entry_suite_compat(request):
+    """Keep pre-fleet tests on their original per-entry setup contract.
+
+    test_fleet_entries.py exercises the real migration and native ownership.
+    The older tests remain valuable for each physical device's behavior.
+    """
+    if request.node.path.name == "test_fleet_entries.py":
+        yield
+        return
+    with patch("custom_components.kiosk_satellite_manager.fleet.async_migrate_legacy_device",
+               new=AsyncMock()):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def release_check():
     """KSM-BEHAVE-071: every entry setup starts the shared GitHub release
     check. Keep it off the network (phacc blocks sockets) and let a test

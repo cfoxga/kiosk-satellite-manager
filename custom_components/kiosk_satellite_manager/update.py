@@ -38,6 +38,7 @@ from .const import (
 )
 from .helpers import auto_update_all_enabled, resolve_area_name, target_release
 from .ks_update import OUTCOME_AWAITING_CONFIRMATION, async_self_update_entry
+from . import fleet
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,16 +48,10 @@ async def async_setup_entry(
 ) -> None:
     if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
         return
-    async_add_entities(
-        [
-            KioskSatelliteUpdateEntity(
-                hass,
-                hass.data[DOMAIN][entry.entry_id],
-                hass.data[RELEASE_COORDINATOR_KEY],
-                entry,
-            )
-        ]
-    )
+    for device in fleet.platform_devices(hass, entry):
+        fleet.add_entities(async_add_entities, device, [KioskSatelliteUpdateEntity(
+            hass, hass.data[DOMAIN][device.entry_id], hass.data[RELEASE_COORDINATOR_KEY], device,
+        )])
 
 
 class KioskSatelliteUpdateEntity(CoordinatorEntity, UpdateEntity):

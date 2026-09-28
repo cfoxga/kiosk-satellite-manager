@@ -28,11 +28,12 @@ duration of an install so the version sensor can show a transitional
 from __future__ import annotations
 
 import logging
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
 import voluptuous as vol
-from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
+from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.auth.permissions.const import POLICY_CONTROL
@@ -54,6 +55,7 @@ from .const import (
     CONF_ENTRY_TYPE,
     CONF_NAME,
     ENTRY_TYPE_MANAGER,
+    ENTRY_TYPE_UNMANAGED,
     CONF_KEY_PATH,
     CONF_PASSWORD,
     CONF_PORT,
@@ -68,7 +70,7 @@ from .const import (
     RENAME_API_KEY,
     SIGNAL_MANAGER_OPTIONS_UPDATED,
 )
-from . import config_backup, ks_tls
+from . import config_backup, fleet, ks_tls
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .ks_api import latest_release_info
 from .ks_update import async_check_device_for_update, async_check_devices_for_update
@@ -145,9 +147,9 @@ RENAME_DEVICE_SCHEMA = vol.Schema(
 )
 
 
-def _active_target(hass: HomeAssistant, config_entry_id: str) -> tuple[ConfigEntry, DataUpdateCoordinator]:
+def _active_target(hass: HomeAssistant, config_entry_id: str) -> tuple[ConfigEntry | fleet.DeviceEntry, DataUpdateCoordinator]:
     """Return an active KSM target, rejecting stale config entries before ADB."""
-    target_entry = hass.config_entries.async_get_entry(config_entry_id)
+    target_entry = fleet.resolve_device(hass, config_entry_id)
     target_coordinator = hass.data.get(DOMAIN, {}).get(config_entry_id)
     if target_entry is None or target_entry.domain != DOMAIN or target_coordinator is None:
         raise ServiceValidationError(f"Unknown or not active {DOMAIN} config entry: {config_entry_id}")
@@ -173,8 +175,14 @@ async def _authorize_target(call: ServiceCall, hass: HomeAssistant, target_entry
     entity_registry = er.async_get(hass)
     target_buttons = (
         entity.entity_id
-        for entity in er.async_entries_for_config_entry(entity_registry, target_entry.entry_id)
-        if entity.domain == "button"
+        for entity in er.async_entries_for_config_entry(
+            entity_registry, target_entry.parent.entry_id if isinstance(target_entry, fleet.DeviceEntry)
+            else target_entry.entry_id
+        )
+        if entity.domain == "button" and (
+            not isinstance(target_entry, fleet.DeviceEntry)
+            or entity.config_subentry_id == target_entry.subentry_id
+        )
     )
     if any(user.permissions.check_entity(entity_id, POLICY_CONTROL) for entity_id in target_buttons):
         return
@@ -230,8 +238,8 @@ async def _async_rename_entry(
     if target_entry.title == names.device_name and target_entry.data.get(CONF_NAME) == names.device_name:
         result["entry"] = "unchanged"
     else:
-        hass.config_entries.async_update_entry(
-            target_entry,
+        fleet.update_device(
+            hass, target_entry,
             title=names.device_name,
             data={**target_entry.data, CONF_NAME: names.device_name},
         )
@@ -241,8 +249,8 @@ async def _async_rename_entry(
     if candidate_host is None or candidate_host == host:
         result["host"] = "unchanged"
     elif await resolve_and_verify_dns_host(hass, session, host, candidate_host, pin=pin):
-        hass.config_entries.async_update_entry(
-            target_entry, data={**target_entry.data, CONF_HOST: candidate_host}
+        fleet.update_device(
+            hass, target_entry, data={**target_entry.data, CONF_HOST: candidate_host}
         )
         result["host"] = "applied"
     else:
@@ -258,6 +266,8 @@ async def _async_rename_entry(
             result["esphome_actions"] = esphome_actions
 
     await target_coordinator.async_request_refresh()
+    if isinstance(target_entry, fleet.DeviceEntry):
+        await fleet.async_reconcile(hass)
     return result
 
 
@@ -320,7 +330,7 @@ async def _async_migrate_tls(hass: HomeAssistant, entry: ConfigEntry) -> None:
         return
     if pin is None:
         return
-    hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_TLS_SPKI: pin})
+    fleet.update_device(hass, entry, data={**entry.data, CONF_TLS_SPKI: pin})
     _LOGGER.info("Kiosk Satellite %s now managed over pinned HTTPS", host)
 
 
@@ -339,6 +349,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     deadlock waiting on the setup lock this function's own caller
     (async_setup_component) is still holding open.
     """
+    fleet.mark_domain_loading(hass)
+
     async def _trusted_rename(config_entry_id: str, name: str) -> dict:
         """KSM-BEHAVE-102: in-process only; no caller authorization."""
         target_entry, target_coordinator = _active_target(hass, config_entry_id)
@@ -361,27 +373,8 @@ async def _async_manager_options_updated(hass: HomeAssistant, entry: ConfigEntry
     async_dispatcher_send(hass, SIGNAL_MANAGER_OPTIONS_UPDATED)
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up a config entry: start the health-poll coordinator, then the
-    button/sensor/switch/update platforms."""
-    if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
-        hass.data[MANAGER_ENTRY_KEY] = entry.entry_id
-        await _async_ensure_release_coordinator(hass)
-        entry.async_on_unload(entry.add_update_listener(_async_manager_options_updated))
-        await hass.config_entries.async_forward_entry_setups(entry, MANAGER_PLATFORMS)
-
-        async def _backup_tick(_now) -> None:
-            # KSM-BEHAVE-105: filename dates decide what is due, not this timer.
-            await config_backup.async_run_due_backups(hass)
-
-        entry.async_on_unload(
-            async_track_time_interval(
-                hass, _backup_tick, timedelta(minutes=BACKUP_CHECK_INTERVAL_MIN),
-                name=f"{DOMAIN}_config_backup",
-            )
-        )
-        return True
-
+async def _async_setup_device(hass: HomeAssistant, entry: ConfigEntry | fleet.DeviceEntry) -> None:
+    """Start one physical device regardless of its HA parent."""
     session = async_get_clientsession(hass)
     host = entry.data[CONF_HOST]
 
@@ -417,9 +410,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator.ksm_installing = False
     await coordinator.async_refresh()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
-    await _async_ensure_release_coordinator(hass)
-
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    if isinstance(entry, fleet.DeviceEntry):
+        entry.async_on_unload(coordinator.async_add_listener(
+            lambda: hass.async_create_task(fleet.async_poll_device(hass, entry.entry_id))
+        ))
 
     async def _post_setup() -> None:
         if entry.data.get(CONF_PASSWORD) and not entry.data.get(CONF_TLS_SPKI):
@@ -435,6 +429,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.warning("Kiosk Satellite startup update check failed on %s: %s", entry.title, err)
 
     entry.async_create_background_task(hass, _post_setup(), f"{DOMAIN}_post_setup_{host}")
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up a config entry: start the health-poll coordinator, then the
+    button/sensor/switch/update platforms."""
+    if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
+        if not any(
+            other.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_UNMANAGED
+            for other in hass.config_entries.async_entries(DOMAIN)
+        ):
+            hass.async_create_task(hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": SOURCE_IMPORT},
+                data={CONF_ENTRY_TYPE: ENTRY_TYPE_UNMANAGED},
+            ))
+        hass.data[MANAGER_ENTRY_KEY] = entry.entry_id
+        await _async_ensure_release_coordinator(hass)
+        entry.async_on_unload(entry.add_update_listener(_async_manager_options_updated))
+        await hass.config_entries.async_forward_entry_setups(entry, MANAGER_PLATFORMS)
+
+        async def _backup_tick(_now) -> None:
+            # KSM-BEHAVE-105: filename dates decide what is due, not this timer.
+            await config_backup.async_run_due_backups(hass)
+
+        entry.async_on_unload(
+            async_track_time_interval(
+                hass, _backup_tick, timedelta(minutes=BACKUP_CHECK_INTERVAL_MIN),
+                name=f"{DOMAIN}_config_backup",
+            )
+        )
+        return True
+
+    devices = (fleet.device_entries(hass, entry) if entry.data.get(CONF_ENTRY_TYPE)
+               in (ENTRY_TYPE_UNMANAGED, "fleet") else [entry])
+    if entry.data.get(CONF_ENTRY_TYPE) in (ENTRY_TYPE_UNMANAGED, "fleet"):
+        fleet.ensure_removal_listener(hass, entry)
+    await _async_ensure_release_coordinator(hass)
+    for device in devices:
+        await _async_setup_device(hass, device)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     if not hass.services.has_service(DOMAIN, SERVICE_PROVISION):
 
@@ -525,18 +558,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             schema=RENAME_DEVICE_SCHEMA, supports_response=SupportsResponse.ONLY,
         )
 
+    if entry.data.get(CONF_ENTRY_TYPE) in (ENTRY_TYPE_UNMANAGED, "fleet"):
+        async def _poll_after_setup() -> None:
+            await asyncio.sleep(0)
+            if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_UNMANAGED:
+                for old in list(hass.config_entries.async_entries(DOMAIN)):
+                    if (not old.data.get(CONF_ENTRY_TYPE)
+                            and old.state == ConfigEntryState.LOADED):
+                        fleet.schedule_migration(hass, old, entry)
+            for device in fleet.device_entries(hass, entry):
+                await fleet.async_poll_device(hass, device.entry_id)
+
+        hass.async_create_task(_poll_after_setup())
+
+    target = fleet.unmanaged_entry(hass) if not entry.data.get(CONF_ENTRY_TYPE) else None
+    if target is not None:
+        fleet.schedule_migration(hass, entry, target)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     manager = entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER
+    grouping = entry.data.get(CONF_ENTRY_TYPE) in (ENTRY_TYPE_UNMANAGED, "fleet")
     unloaded = await hass.config_entries.async_unload_platforms(
         entry, MANAGER_PLATFORMS if manager else PLATFORMS
     )
     if unloaded:
         if manager:
             hass.data.pop(MANAGER_ENTRY_KEY, None)
+        elif grouping:
+            for device in fleet.device_entries(hass, entry):
+                hass.data.get(DOMAIN, {}).pop(device.entry_id, None)
         else:
             hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
         if not hass.data.get(DOMAIN) and MANAGER_ENTRY_KEY not in hass.data:
@@ -555,4 +608,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Revoke a credential that KSM itself created when its entry is removed."""
+    if fleet.migration_in_progress(hass, entry.entry_id):
+        return
     await async_revoke_owned_credential(hass, TokenCredential.from_entry_data(entry.data))
