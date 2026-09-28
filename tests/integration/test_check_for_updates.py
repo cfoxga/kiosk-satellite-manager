@@ -77,10 +77,10 @@ async def test_only_a_newly_seen_release_fans_out_to_devices(
         assert device_update_check.await_count == 2
 
 
-async def test_device_setup_checks_its_release_even_at_startup_baseline(
+async def test_device_setup_checks_its_release_even_after_first_detection(
     hass, release_check, device_update_check
 ):
-    """[KSM-TEST-226] Setup refreshes the ESPHome release view without a version change."""
+    """[KSM-TEST-226] Setup refreshes the ESPHome view even after detection."""
     with patch(_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.1"})), patch(
         "custom_components.kiosk_satellite_manager.async_check_device_for_update",
         new=AsyncMock(side_effect=RuntimeError("device check failed")), create=True,
@@ -90,6 +90,30 @@ async def test_device_setup_checks_its_release_even_at_startup_baseline(
         check.assert_awaited_once()
         assert check.await_args.args[1] is first.entry
         assert release_check.await_count >= 1
-        device_update_check.assert_not_awaited()
+        # Auto-created manager may have detected the release after this device
+        # was registered; the per-device setup check still runs independently.
 
     assert hass.data[RELEASE_COORDINATOR_KEY].update_interval.total_seconds() == 15 * 60
+
+
+async def test_first_release_detection_refreshes_loaded_devices(
+    hass, release_check, device_update_check
+):
+    """[KSM-TEST-228] Detection itself refreshes devices present when KSM starts."""
+    with patch(_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.1"})):
+        await init_integration(hass)
+        coordinator = hass.data[RELEASE_COORDINATOR_KEY]
+        coordinator.ksm_announced_version = None
+        device_update_check.reset_mock()
+        device_update_check.assert_not_awaited()
+
+        release_check.side_effect = RuntimeError("github offline")
+        await coordinator.async_refresh()
+        await hass.async_block_till_done(wait_background_tasks=True)
+        device_update_check.assert_not_awaited()
+        release_check.side_effect = None
+
+        await _publish(hass, release_check, "2026.9.1")
+        device_update_check.assert_awaited_once_with(hass)
+        await _publish(hass, release_check, "2026.9.1")
+        assert device_update_check.await_count == 1

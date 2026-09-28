@@ -7,9 +7,10 @@
   (#76). Other devices and failures are unaffected. Manual update failures
   now write a WARNING with the device's error to Home Assistant's log.
 
-- KSM checks for new Kiosk Satellite releases every 15 minutes (#75). When a
-  device entry starts, KSM also asks that device to refresh its update status,
-  so an already-known release reaches its ESPHome update entity after a restart.
+- KSM checks for new Kiosk Satellite releases every 15 minutes (#75). When it
+  detects a new version, including its first successful check, it asks every
+  loaded device to refresh its update status. A device that loads later also
+  checks after setup, so its ESPHome update entity can see that release.
 
 - The global **Install version** list now always offers at least five versions
   (#74): every downloaded version, marked "(downloaded)", plus the newest
