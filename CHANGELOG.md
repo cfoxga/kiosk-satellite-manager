@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Renaming a Kiosk Satellite device from Home Assistant or HAM now carries
+  through to the kiosk (#64). HAM asks KSM to rename the device, and KSM
+  pushes the new name, hostname and ESPHome node name to Kiosk Satellite. When
+  the Voice Satellite entity is renamed, KSM points Kiosk Satellite's
+  `ha.satellite_entity` at the new ID so voice keeps working.
+
 - KSM now manages each kiosk's Voice Satellite entry (#65). When a device is
   set up, KSM reuses the Voice Satellite entry with the device's name, or
   creates one, and points Kiosk Satellite at its satellite entity. A kiosk

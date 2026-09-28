@@ -43,6 +43,9 @@ ONBOARDING_REVIEW: Final = "review"
 ONBOARDING_AUTOMATIC: Final = "automatic"
 MANAGER_UPDATE_RUNNING_KEY: Final = f"{DOMAIN}_update_all_running"
 MANAGER_ENTRY_KEY: Final = f"{DOMAIN}_manager_entry"
+# KSM-BEHAVE-102: the in-process rename callable other integrations use when
+# no user context exists (a registry event); never a service or WS command.
+RENAME_API_KEY: Final = f"{DOMAIN}_rename"
 
 # KSM-BEHAVE-021: an already-installed device is detected during the flow and
 # the user chooses whether to keep the existing install or replace it.

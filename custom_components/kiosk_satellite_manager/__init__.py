@@ -33,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 import aiohttp
 import voluptuous as vol
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.core import Event, HomeAssistant, ServiceCall, SupportsResponse, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -62,6 +62,7 @@ from .const import (
     RELEASE_CHECK_INTERVAL_MIN,
     RELEASE_COORDINATOR_KEY,
     MANAGER_ENTRY_KEY,
+    RENAME_API_KEY,
 )
 from . import ks_tls
 from .credentials import TokenCredential, async_revoke_owned_credential
@@ -72,6 +73,7 @@ from .ks_api_client import login as ks_api_login
 from .provisioning import ProvisioningMismatch, apply_provisioning, fetch_health
 from .rename import (
     apply_rename_ks_settings,
+    async_follow_satellite_entity_rename,
     derive_dns_host,
     derive_rename_names,
     find_esphome_link,
@@ -175,6 +177,86 @@ async def _authorize_target(call: ServiceCall, hass: HomeAssistant, target_entry
     raise ServiceValidationError("Caller is not authorized to manage this KSM device")
 
 
+async def _async_rename_entry(
+    hass: HomeAssistant, target_entry: ConfigEntry, target_coordinator: DataUpdateCoordinator, name: str
+) -> dict:
+    """KSM-BEHAVE-084/085/092: the rename operation, shared by the authorized
+    service and the in-process callable (KSM-BEHAVE-102). Returns a per-layer
+    result rather than raising once device I/O has started, so a partial
+    failure is legible instead of an opaque exception."""
+    try:
+        names = derive_rename_names(name)
+    except ValueError as err:
+        raise ServiceValidationError(str(err)) from err
+    password = target_entry.data.get(CONF_PASSWORD)
+    if not password:
+        raise ServiceValidationError(
+            f"no Kiosk Satellite password stored for {target_entry.title}"
+        )
+
+    session = async_get_clientsession(hass)
+    host = target_entry.data[CONF_HOST]
+    result: dict = {
+        "ks": "failed",
+        "android": "unsupported",
+        "entry": "failed",
+        "host": "unchanged",
+        "esphome": "unchanged",
+    }
+    # KSM-BEHAVE-092: locate the ESPHome entry and snapshot its
+    # actions before the PATCH -- HA rewrites the stored node name
+    # as soon as KS reconnects under the new one.
+    esphome_link = await find_esphome_link(hass, host)
+    pin = target_entry.data.get(CONF_TLS_SPKI)
+    try:
+        token = await ks_api_login(session, host, password, pin=pin)
+        result["ks"] = await apply_rename_ks_settings(session, host, token, names, pin=pin)
+    except ProvisioningMismatch as err:
+        result["error"] = str(err)
+        return result
+    except aiohttp.ServerFingerprintMismatch:
+        result["error"] = f"{target_entry.title} presented a TLS key that does not match its pin"
+        return result
+    except KsApiError as err:
+        result["error"] = f"Kiosk Satellite API error on {target_entry.title}: {err}"
+        return result
+
+    result["android"] = await set_android_device_name(names)
+
+    if target_entry.title == names.device_name and target_entry.data.get(CONF_NAME) == names.device_name:
+        result["entry"] = "unchanged"
+    else:
+        hass.config_entries.async_update_entry(
+            target_entry,
+            title=names.device_name,
+            data={**target_entry.data, CONF_NAME: names.device_name},
+        )
+        result["entry"] = "applied"
+
+    candidate_host = derive_dns_host(host, names.hostname)
+    if candidate_host is None or candidate_host == host:
+        result["host"] = "unchanged"
+    elif await resolve_and_verify_dns_host(hass, session, host, candidate_host, pin=pin):
+        hass.config_entries.async_update_entry(
+            target_entry, data={**target_entry.data, CONF_HOST: candidate_host}
+        )
+        result["host"] = "applied"
+    else:
+        result["host"] = "pending"
+
+    if esphome_link is None:
+        result["esphome"] = "not_found"
+    else:
+        result["esphome"], esphome_actions = await rename_esphome_actions(
+            hass, esphome_link, names.esphome_node_name
+        )
+        if esphome_actions is not None:
+            result["esphome_actions"] = esphome_actions
+
+    await target_coordinator.async_request_refresh()
+    return result
+
+
 async def _async_ensure_release_coordinator(hass: HomeAssistant) -> None:
     """KSM-BEHAVE-071: create the shared release check on first entry setup.
 
@@ -243,6 +325,34 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     deadlock waiting on the setup lock this function's own caller
     (async_setup_component) is still holding open.
     """
+    async def _trusted_rename(config_entry_id: str, name: str) -> dict:
+        """KSM-BEHAVE-102: in-process only; no caller authorization."""
+        target_entry, target_coordinator = _active_target(hass, config_entry_id)
+        return await _async_rename_entry(hass, target_entry, target_coordinator, name)
+
+    hass.data[RENAME_API_KEY] = _trusted_rename
+
+    @callback
+    def _on_entity_registry_updated(event: Event) -> None:
+        """KSM-BEHAVE-099: KS's satellite entity follows an HA rename."""
+        old_entity_id = event.data.get("old_entity_id")
+        if event.data.get("action") != "update" or not str(old_entity_id or "").startswith(
+            "assist_satellite."
+        ):
+            return
+        entries = [
+            entry for entry_id in hass.data.get(DOMAIN, {})
+            if (entry := hass.config_entries.async_get_entry(entry_id)) is not None
+        ]
+        hass.async_create_task(
+            async_follow_satellite_entity_rename(
+                hass, entries, old_entity_id, event.data["entity_id"]
+            ),
+            f"{DOMAIN}_satellite_entity_rename",
+        )
+
+    hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, _on_entity_registry_updated)
+
     if not any(
         entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER
         for entry in hass.config_entries.async_entries(DOMAIN)
@@ -388,82 +498,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async def _handle_rename_device(call: ServiceCall) -> dict:
             """KSM-BEHAVE-084/085: rename a device's KS identity, Android
             system name (when a supported method exists), and KSM entry/DNS
-            host. Returns a per-layer result rather than raising once device
-            I/O has started, so a partial failure is legible instead of an
-            opaque exception."""
+            host, for an authorized caller."""
             target_entry, target_coordinator = _active_target(hass, call.data["config_entry_id"])
             await _authorize_target(call, hass, target_entry)
-            try:
-                names = derive_rename_names(call.data["name"])
-            except ValueError as err:
-                raise ServiceValidationError(str(err)) from err
-            password = target_entry.data.get(CONF_PASSWORD)
-            if not password:
-                raise ServiceValidationError(
-                    f"no Kiosk Satellite password stored for {target_entry.title}"
-                )
-
-            session = async_get_clientsession(hass)
-            host = target_entry.data[CONF_HOST]
-            result: dict = {
-                "ks": "failed",
-                "android": "unsupported",
-                "entry": "failed",
-                "host": "unchanged",
-                "esphome": "unchanged",
-            }
-            # KSM-BEHAVE-092: locate the ESPHome entry and snapshot its
-            # actions before the PATCH -- HA rewrites the stored node name
-            # as soon as KS reconnects under the new one.
-            esphome_link = await find_esphome_link(hass, host)
-            pin = target_entry.data.get(CONF_TLS_SPKI)
-            try:
-                token = await ks_api_login(session, host, password, pin=pin)
-                result["ks"] = await apply_rename_ks_settings(session, host, token, names, pin=pin)
-            except ProvisioningMismatch as err:
-                result["error"] = str(err)
-                return result
-            except aiohttp.ServerFingerprintMismatch:
-                result["error"] = f"{target_entry.title} presented a TLS key that does not match its pin"
-                return result
-            except KsApiError as err:
-                result["error"] = f"Kiosk Satellite API error on {target_entry.title}: {err}"
-                return result
-
-            result["android"] = await set_android_device_name(names)
-
-            if target_entry.title == names.device_name and target_entry.data.get(CONF_NAME) == names.device_name:
-                result["entry"] = "unchanged"
-            else:
-                hass.config_entries.async_update_entry(
-                    target_entry,
-                    title=names.device_name,
-                    data={**target_entry.data, CONF_NAME: names.device_name},
-                )
-                result["entry"] = "applied"
-
-            candidate_host = derive_dns_host(host, names.hostname)
-            if candidate_host is None or candidate_host == host:
-                result["host"] = "unchanged"
-            elif await resolve_and_verify_dns_host(hass, session, host, candidate_host, pin=pin):
-                hass.config_entries.async_update_entry(
-                    target_entry, data={**target_entry.data, CONF_HOST: candidate_host}
-                )
-                result["host"] = "applied"
-            else:
-                result["host"] = "pending"
-
-            if esphome_link is None:
-                result["esphome"] = "not_found"
-            else:
-                result["esphome"], esphome_actions = await rename_esphome_actions(
-                    hass, esphome_link, names.esphome_node_name
-                )
-                if esphome_actions is not None:
-                    result["esphome_actions"] = esphome_actions
-
-            await target_coordinator.async_request_refresh()
-            return result
+            return await _async_rename_entry(hass, target_entry, target_coordinator, call.data["name"])
 
         hass.services.async_register(
             DOMAIN, SERVICE_RENAME_DEVICE, _handle_rename_device,
