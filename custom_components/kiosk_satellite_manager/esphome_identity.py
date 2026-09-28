@@ -1,9 +1,9 @@
 """KSM-BEHAVE-110 (#67): each managed kiosk's ESPHome identity.
 
 A kiosk KSM adopts keeps Kiosk Satellite's defaults, which leave
-`esphome.node_name` empty. On each device setup KSM fills an empty node name
-with the KSM-BEHAVE-084 slug of the device's name; a name the device already
-has is never overwritten. ESPHome itself is turned on only for a device added
+`esphome.node_name` empty (or, once ESPHome runs, KS's generated
+`kiosk-satellite-<6 hex>`). On each device setup KSM replaces either with the
+KSM-BEHAVE-084 slug of the device's name; any other name is never overwritten. ESPHome itself is turned on only for a device added
 while the manager's "ESPHome on new devices" option was on, and only once --
 after that the operator's choice on the device stands. Failures are logged
 and never fail the entry.
@@ -11,6 +11,7 @@ and never fail the entry.
 from __future__ import annotations
 
 import logging
+import re
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -32,6 +33,13 @@ _LOGGER = logging.getLogger(__name__)
 
 NODE_NAME_SETTING = "esphome.node_name"
 ENABLED_SETTING = "esphome.enabled"
+# Once its ESPHome server runs, Kiosk Satellite fills a blank node name with
+# this generated default (seen live on dev, KS 2026.9.88); nobody chose it.
+_KS_GENERATED_NODE_NAME = re.compile(r"kiosk-satellite-[0-9a-f]{6}")
+
+
+def _node_name_unset(value: str | None) -> bool:
+    return not value or bool(_KS_GENERATED_NODE_NAME.fullmatch(value))
 
 
 async def async_ensure_esphome_identity(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -48,7 +56,7 @@ async def async_ensure_esphome_identity(hass: HomeAssistant, entry: ConfigEntry)
         token = await ks_api_client.login(session, host, password, pin=pin)
         current = await ks_api_client.get_settings(session, host, token, pin=pin)
         payload: dict = {}
-        if not current.get(NODE_NAME_SETTING):
+        if _node_name_unset(current.get(NODE_NAME_SETTING)):
             payload[NODE_NAME_SETTING] = node_name
         if pending and not current.get(ENABLED_SETTING):
             payload[ENABLED_SETTING] = True

@@ -66,12 +66,24 @@ async def test_empty_node_name_is_set_from_the_device_name(hass, ks_api):
     assert _esphome_patches(patch_settings) == [{"esphome.node_name": "great-room-kiosk"}]
 
 
-async def test_existing_node_name_and_disabled_esphome_are_left_alone(hass, ks_api):
+@pytest.mark.parametrize("generated", ["kiosk-satellite-838f3d", "kiosk-satellite-00ab12"])
+async def test_ks_generated_node_name_is_replaced(hass, ks_api, generated):
+    """[KSM-TEST-212] Kiosk Satellite fills a blank node name with its own
+    `kiosk-satellite-<6 hex>` once ESPHome runs (seen live on dev); that is
+    not a name anyone chose, so KSM replaces it."""
+    settings, patch_settings = ks_api
+    settings["esphome.node_name"] = generated
+    await _add_device(hass)
+    assert _esphome_patches(patch_settings) == [{"esphome.node_name": "great-room-kiosk"}]
+
+
+@pytest.mark.parametrize("chosen", ["custom-node", "kiosk-satellite-den", "kiosk-satellite-838f3d0"])
+async def test_existing_node_name_and_disabled_esphome_are_left_alone(hass, ks_api, chosen):
     """[KSM-TEST-212] Negative: a node name the device already has is never
     overwritten, and without the pending flag a disabled ESPHome is never
     turned on."""
     settings, patch_settings = ks_api
-    settings["esphome.node_name"] = "custom-node"
+    settings["esphome.node_name"] = chosen
     await _add_device(hass)
     assert _esphome_patches(patch_settings) == []
 
