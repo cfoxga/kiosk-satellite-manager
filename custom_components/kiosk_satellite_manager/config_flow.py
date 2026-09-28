@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -98,9 +99,11 @@ from .credentials import TokenCredential, async_revoke_owned_credential
 from .device_models import DeviceFacts
 from .install import install_and_launch
 from .ks_api_client import KsApiError, login
+from .provisioning import fetch_health
 from .rename import derive_rename_names
 
 _LOGGER = logging.getLogger(__name__)
+_HOST_FORBIDDEN = re.compile(r"[\s/@?#]")
 
 # Read-only, and used only to *read a label* off a device the catalog could not
 # identify. It grants nothing and provisions nothing -- an unidentified device
@@ -354,8 +357,41 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_device_menu(self, user_input: dict | None = None) -> FlowResult:
         """KSM-BEHAVE-088: a device entry's Configure is a menu."""
         return self.async_show_menu(
-            step_id="device_menu", menu_options=["device_rename", "device_password", "device_owner"]
+            step_id="device_menu", menu_options=["device_rename", "device_password", "device_host", "device_owner"]
         )
+
+    async def async_step_device_host(self, user_input: dict | None = None) -> FlowResult:
+        """KSM-BEHAVE-130: change where KSM reaches this device, verified under its pin."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            host = user_input.get(CONF_HOST, "").strip()
+            if not host or _HOST_FORBIDDEN.search(host):
+                errors[CONF_HOST] = "invalid_host"
+            else:
+                try:
+                    await fetch_health(
+                        async_get_clientsession(self.hass), host,
+                        pin=self._entry.data.get(CONF_TLS_SPKI),
+                    )
+                except aiohttp.ServerFingerprintMismatch:
+                    errors[CONF_HOST] = "host_key_mismatch"
+                except (aiohttp.ClientError, TimeoutError, KsApiError):
+                    errors[CONF_HOST] = "cannot_connect"
+                else:
+                    return self._save_host(host)
+        return self.async_show_form(
+            step_id="device_host",
+            data_schema=vol.Schema({
+                vol.Required(CONF_HOST, default=self._entry.data[CONF_HOST]): str,
+            }),
+            errors=errors,
+        )
+
+    def _save_host(self, host: str) -> FlowResult:
+        self.hass.config_entries.async_update_entry(
+            self._entry, data={**self._entry.data, CONF_HOST: host}
+        )
+        return self.async_create_entry(title="", data=dict(self._entry.options))
 
     async def async_step_device_rename(self, user_input: dict | None = None) -> FlowResult:
         """KSM-BEHAVE-127: expose the existing verified rename operation."""
@@ -596,6 +632,12 @@ class KioskSatelliteDeviceSubentryFlow(
         subentry = self._get_reconfigure_subentry()
         self._entry = fleet.DeviceEntry(self.hass, parent, subentry)
         return await self.async_step_device_menu()
+
+    def _save_host(self, host: str) -> FlowResult:
+        return self.async_update_and_abort(
+            self._get_entry(), self._get_reconfigure_subentry(),
+            data_updates={CONF_HOST: host},
+        )
 
     async def async_step_device_password(self, user_input: dict | None = None) -> FlowResult:
         """Verify a replacement secret and update the physical subentry."""

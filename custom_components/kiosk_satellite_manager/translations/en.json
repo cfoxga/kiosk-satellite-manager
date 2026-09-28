@@ -103,6 +103,13 @@
           "password": "Current Kiosk Satellite password"
         }
       },
+      "device_host": {
+        "title": "Change how KSM reaches this device",
+        "description": "Enter the new DNS name or IP address, without https:// or a port. KSM checks that Kiosk Satellite answers there with this device's saved key, and changes nothing if it does not. Use an IP address if the device's DNS name points at a reverse proxy: KSM must reach the device directly.",
+        "data": {
+          "host": "New host"
+        }
+      },
       "device_rename": {
         "title": "Rename Kiosk Satellite device",
         "description": "This changes the Kiosk Satellite name, hostname and ESPHome node, then updates the KSM entry. On a Meta Portal it also changes Android's Portal Name over one temporary ADB connection: enable network ADB on the Portal before submitting, then you can turn it off again. A DNS hostname changes only after the new name resolves to this device. Review the result for incomplete layers and old ESPHome action callers.",
@@ -135,6 +142,7 @@
         "menu_options": {
           "device_rename": "Rename device",
           "device_password": "Update Kiosk Satellite password",
+          "device_host": "Change host (DNS name or IP address)",
           "device_owner": "Enable Device Owner (advanced)"
         }
       },
@@ -158,6 +166,9 @@
       "device_rename_failed": "Could not start the rename. Check the device connection and stored password.",
       "password_required": "Enter the device password",
       "password_verification_failed": "The device did not accept the password or could not be reached",
+      "invalid_host": "Enter a DNS name or IP address only, with no https://, path or spaces",
+      "host_key_mismatch": "Something answered at that host with a different key than this device. It may be another device or a proxy, so KSM did not change anything",
+      "cannot_connect": "Kiosk Satellite did not answer over HTTPS on port 2324 at that host",
       "token_not_found": "Selected token is unavailable",
       "invalid_ha_url": "Enter an absolute HTTP or HTTPS URL",
       "confirm_required": "Tick the box to confirm, or close this dialog to cancel"
@@ -205,7 +216,15 @@
           "menu_options": {
             "device_rename": "Rename device",
             "device_password": "Update Kiosk Satellite password",
+            "device_host": "Change host (DNS name or IP address)",
             "device_owner": "Enable Device Owner (advanced)"
+          }
+        },
+        "device_host": {
+          "title": "Change how KSM reaches this device",
+          "description": "Enter the new DNS name or IP address, without https:// or a port. KSM checks that Kiosk Satellite answers there with this device's saved key, and changes nothing if it does not. Use an IP address if the device's DNS name points at a reverse proxy: KSM must reach the device directly.",
+          "data": {
+            "host": "New host"
           }
         },
         "device_rename": {
@@ -242,6 +261,9 @@
         "device_rename_failed": "Could not start the rename. Check the device connection and stored password.",
         "password_required": "Enter the device password",
         "password_verification_failed": "The device did not accept the password or could not be reached",
+        "invalid_host": "Enter a DNS name or IP address only, with no https://, path or spaces",
+        "host_key_mismatch": "Something answered at that host with a different key than this device. It may be another device or a proxy, so KSM did not change anything",
+        "cannot_connect": "Kiosk Satellite did not answer over HTTPS on port 2324 at that host",
         "token_not_found": "Selected token is unavailable",
         "invalid_ha_url": "Enter an absolute HTTP or HTTPS URL",
         "confirm_required": "Tick the box to confirm, or close this dialog to cancel"

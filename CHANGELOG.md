@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A device's Configure menu has **Change host** (#93). Enter a DNS name or IP address; KSM
+  checks that Kiosk Satellite answers there under the device's saved key and changes nothing
+  otherwise, so a name that now points at a reverse proxy is refused rather than trusted. Use
+  it to point KSM at a device's IP when its DNS name moves to a proxy that fronts the web UI.
+
 - The Add device form can select an existing Kiosk Satellite Fleet (#92). KSM asks its leader
   to invite the new kiosk after KS is running and its local admin connection is ready, before
   writing Home Assistant settings. Accept the invitation on the new kiosk; HA placement follows
