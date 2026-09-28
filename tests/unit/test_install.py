@@ -230,59 +230,78 @@ async def test_launcher_selection_uses_adb_only_and_verifies_home_resolver():
     client.resolved_home_activity.assert_awaited_once_with()
 
 
-async def test_launcher_selection_rejects_rival_home_resolver():
-    """[KSM-TEST-125] A Meta resolver is the independently failing control."""
+_NOTIFY = "custom_components.kiosk_satellite_manager.install.persistent_notification.async_create"
+_SYNC = "custom_components.kiosk_satellite_manager.install._sync_device_and_connect_ha"
+
+
+async def _install_with_resolver(resolver: str, *, password=None):
+    """Run a launcher-capable install whose HOME resolver reads `resolver`;
+    return (notify mock, sync mock)."""
     hass = _FakeHass()
     client = _fake_client()
-    client.resolved_home_activity = AsyncMock(
-        return_value="com.facebook.alohaapps.launcher/.HomeActivity"
-    )
-    session = _fake_session()
-
+    client.resolved_home_activity = AsyncMock(return_value=resolver)
     with patch(
         "custom_components.kiosk_satellite_manager.install.latest_release",
         new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ), patch(
         "custom_components.kiosk_satellite_manager.install.asyncio.sleep",
         new=AsyncMock(),
-    ):
-        with pytest.raises(KsInstallVerificationFailed, match="HOME resolver"):
-            await install_and_launch(
-                hass,
-                client,
-                session,
-                host="192.168.1.50",
-                password=None,
-                home_launcher=True,
-                device_model="portal_mini",
-            )
+    ), patch(_NOTIFY) as notify, patch(_SYNC, new=AsyncMock(return_value=None)) as sync:
+        await install_and_launch(
+            hass,
+            client,
+            _fake_session(),
+            host="192.168.1.50",
+            password=password,
+            device_name="Great Room Portal",
+            home_launcher=True,
+            device_model="portal_mini",
+        )
+    return notify, sync
+
+
+async def test_launcher_selection_reports_rival_home_resolver():
+    """[KSM-TEST-125][KSM-TEST-188] A Meta resolver is the independently
+    failing control: reported by name, never treated as success."""
+    rival = "com.facebook.alohaapps.launcher/.HomeActivity"
+    notify, _ = await _install_with_resolver(rival)
+    notify.assert_called_once()
+    assert rival in notify.call_args.kwargs["message"]
 
 
 async def test_launcher_selection_rejects_a_different_ks_activity():
     """[KSM-TEST-125] Only HomeAlias satisfies the resolver postcondition."""
-    hass = _FakeHass()
-    client = _fake_client()
-    client.resolved_home_activity = AsyncMock(
-        return_value="me.jxl.kiosk_satellite/.MainActivity"
-    )
+    notify, _ = await _install_with_resolver("me.jxl.kiosk_satellite/.MainActivity")
+    notify.assert_called_once()
 
-    with patch(
-        "custom_components.kiosk_satellite_manager.install.latest_release",
-        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
-    ), patch(
-        "custom_components.kiosk_satellite_manager.install.asyncio.sleep",
-        new=AsyncMock(),
-    ):
-        with pytest.raises(KsInstallVerificationFailed, match="HOME resolver"):
-            await install_and_launch(
-                hass,
-                client,
-                _fake_session(),
-                host="192.168.1.50",
-                password=None,
-                home_launcher=True,
-                device_model="portal_mini",
-            )
+
+async def test_launcher_miss_still_configures_the_device():
+    """[KSM-TEST-188] #61: a rival HOME resolver must not skip the device
+    name / password / HA connection sync that follows it."""
+    notify, sync = await _install_with_resolver(
+        "com.facebook.alohaapps.launcher/.HomeActivity", password="pw"
+    )
+    notify.assert_called_once()
+    sync.assert_awaited_once()
+    assert sync.await_args.args[4] == "pw"
+
+
+async def test_launcher_hit_raises_no_notification():
+    """[KSM-TEST-188] Negative control: HomeAlias resolving is silent."""
+    notify, sync = await _install_with_resolver(
+        "me.jxl.kiosk_satellite/.HomeAlias", password="pw"
+    )
+    notify.assert_not_called()
+    sync.assert_awaited_once()
+
+
+def test_portal_gen2_is_launcher_free():
+    """[KSM-TEST-188] #61 live evidence: Gen 2 keeps Meta's launcher."""
+    from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
+
+    recipe = require_recipe("portal_gen2")
+    assert (recipe.recipe_key, recipe.version) == ("meta_portal_standard", "v3")
+    assert recipe.home_launcher_supported is False
 
 
 async def test_launcher_selection_skips_disabled_and_incapable_recipes():

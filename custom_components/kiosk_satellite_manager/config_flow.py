@@ -52,6 +52,7 @@ from .const import (
     CONF_AUTO_UPDATE,
     CONF_TLS_SPKI,
     CONF_DEVICE_PROFILE,
+    CONF_ENABLE_DEVICE_OWNER,
     CONF_ENTRY_TYPE,
     CONF_EXISTING_INSTALL_ACTION,
     CONF_HA_URL,
@@ -424,6 +425,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._global: dict | None = None
         self._ha_url: str | None = None
         self._auto_update: bool = False
+        self._want_device_owner: bool = False
 
     @staticmethod
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
@@ -641,6 +643,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._auto_update = user_input.get(
                     CONF_AUTO_UPDATE, self._global.get(CONF_AUTO_UPDATE, False)
                 )
+                self._want_device_owner = bool(user_input.get(CONF_ENABLE_DEVICE_OWNER, False))
                 return await self.async_step_install()
 
         fields: dict[vol.Marker, Any] = {
@@ -668,6 +671,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if self._global:
             fields[vol.Optional(CONF_HA_URL, default=self._global.get(CONF_HA_URL, ""))] = str
             fields[vol.Required(CONF_AUTO_UPDATE, default=self._global.get(CONF_AUTO_UPDATE, False))] = bool
+        fields[vol.Required(CONF_ENABLE_DEVICE_OWNER, default=False)] = selector.BooleanSelector()
 
         return self.async_show_form(
             step_id="device_info",
@@ -843,6 +847,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._home_launcher = bool(
                 self._home_launcher_supported and self._global.get(CONF_HOME_LAUNCHER, True)
             )
+            self._want_device_owner = bool(user_input.get(CONF_ENABLE_DEVICE_OWNER, False))
             return await self.async_step_install()
 
         fields = {
@@ -860,6 +865,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 ))
             )
+        fields[vol.Required(CONF_ENABLE_DEVICE_OWNER, default=False)] = selector.BooleanSelector()
         return self.async_show_form(
             step_id="existing_device_info",
             data_schema=vol.Schema(fields),
@@ -947,6 +953,79 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._tls_pin = pin
 
     async def async_step_install_done(self, user_input: dict | None = None) -> FlowResult:
+        if self._want_device_owner:
+            return await self.async_step_onboard_device_owner()
+        return self._async_create_device_entry()
+
+    async def async_step_onboard_device_owner(
+        self, user_input: dict | None = None
+    ) -> FlowResult:
+        """KSM-BEHAVE-098: the add form's Device Owner opt-in. Same preflight,
+        confirmation and enrollment as the device entry's Configure step
+        (KSM-BEHAVE-088..090), but every outcome still creates the entry."""
+        address = f"{self._host}:{self._port}"
+        unreachable = (
+            f"ADB at {address} could not be reached. Device Owner was not enabled; "
+            "use the device's Configure → Enable Device Owner to retry."
+        )
+        client = AdbClient(self._host, self._port, self._key_path)
+        if user_input is not None:
+            if not user_input.get("confirm"):
+                return self._async_create_device_entry()
+            try:
+                await client.connect()
+                await device_owner.enable_device_owner(client, self._profile_key)
+            except (AdbAuthPending, AdbConnectFailed, OSError):
+                self._owner_notice(unreachable)
+            except device_owner.DeviceOwnerError as err:
+                _LOGGER.warning("Device Owner enrollment failed on %s: %s", address, err)
+                self._owner_notice(f"Device Owner was not enabled: {_owner_failure_text(err)}")
+            except Exception as err:  # noqa: BLE001 -- ADB transport drop mid-run
+                _LOGGER.warning("Device Owner enrollment error on %s: %s", address, err)
+                self._owner_notice(
+                    "Device Owner was not enabled: the ADB connection failed mid-run."
+                )
+            else:
+                self._owner_notice("Kiosk Satellite is now Device Owner on this device.")
+            finally:
+                await client.close()
+            return self._async_create_device_entry()
+
+        try:
+            await client.connect()
+            pre = await device_owner.run_preflight(client, self._profile_key)
+        except (AdbAuthPending, AdbConnectFailed, OSError):
+            self._owner_notice(unreachable)
+            return self._async_create_device_entry()
+        finally:
+            await client.close()
+
+        if device_owner.BLOCKER_ALREADY_OWNER in pre.blockers:
+            self._owner_notice(
+                "Kiosk Satellite is already Device Owner on this device. Nothing was changed."
+            )
+            return self._async_create_device_entry()
+        if pre.blockers:
+            self._owner_notice(
+                f"Device Owner cannot be enabled because {_owner_blocker_text(pre)}. "
+                "Nothing was changed."
+            )
+            return self._async_create_device_entry()
+        return self.async_show_form(
+            step_id="onboard_device_owner",
+            data_schema=vol.Schema({vol.Required("confirm", default=False): bool}),
+            description_placeholders={"accounts": _owner_accounts_text(pre)},
+        )
+
+    def _owner_notice(self, message: str) -> None:
+        persistent_notification.async_create(
+            self.hass,
+            message=f"{self._name or self._host}: {message}",
+            title="Kiosk Satellite Device Owner",
+            notification_id=f"{DOMAIN}_device_owner_{self._host}",
+        )
+
+    def _async_create_device_entry(self) -> FlowResult:
         data = {
             CONF_HOST: self._host,
             CONF_PORT: self._port,

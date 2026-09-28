@@ -23,6 +23,7 @@ from custom_components.kiosk_satellite_manager.adb_client import (
 from custom_components.kiosk_satellite_manager.const import (
     CONF_AREA_ID,
     CONF_DEVICE_PROFILE,
+    CONF_ENABLE_DEVICE_OWNER,
     CONF_EXISTING_INSTALL_ACTION,
     CONF_HA_TOKEN,
     CONF_HOME_LAUNCHER,
@@ -606,7 +607,8 @@ async def test_user_flow_kept_install_collects_only_existing_connection_details(
         assert result["type"] == data_entry_flow.FlowResultType.FORM
         assert result["step_id"] == "existing_device_info"
         schema_fields = {field.schema for field in result["data_schema"].schema}
-        assert schema_fields == {CONF_PASSWORD}
+        # KSM-BEHAVE-098 (#62): the Device Owner opt-in is the one addition.
+        assert schema_fields == {CONF_PASSWORD, CONF_ENABLE_DEVICE_OWNER}
 
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],

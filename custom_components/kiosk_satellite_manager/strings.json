@@ -18,11 +18,13 @@
           "home_launcher": "Enable as Default Launcher",
           "token_mode": "Home Assistant access token",
           "ha_url": "Home Assistant URL",
-          "auto_update": "Auto-update on this device"
+          "auto_update": "Auto-update on this device",
+          "enable_device_owner": "Enable Device Owner (advanced)"
         },
         "data_description": {
           "password": "Admin password for Kiosk Satellite's Web UI.",
-          "home_launcher": "Important: Enabling Kiosk Satellite as the default launcher requires selecting it on the device screen when prompted (or in Android Settings -> Default apps)."
+          "home_launcher": "Important: Enabling Kiosk Satellite as the default launcher requires selecting it on the device screen when prompted (or in Android Settings -> Default apps).",
+          "enable_device_owner": "Off by default. After installing, check whether Kiosk Satellite can become Device Owner and ask you to confirm before anything changes. Device Owner lets it make itself the Home screen and update silently, but can only be undone by a factory reset."
         }
       },
       "existing_install": {
@@ -39,10 +41,12 @@
           "password": "Existing Password",
           "ha_url": "Home Assistant URL",
           "auto_update": "Auto-update on this device",
-          "token_mode": "Home Assistant access token"
+          "token_mode": "Home Assistant access token",
+          "enable_device_owner": "Enable Device Owner (advanced)"
         },
         "data_description": {
-          "password": "The existing admin password for Kiosk Satellite's Web UI on port 2324."
+          "password": "The existing admin password for Kiosk Satellite's Web UI on port 2324.",
+          "enable_device_owner": "Off by default. After installing, check whether Kiosk Satellite can become Device Owner and ask you to confirm before anything changes. Device Owner lets it make itself the Home screen and update silently, but can only be undone by a factory reset."
         }
       },
       "ks_device_info": {
@@ -59,6 +63,13 @@
         "title": "Confirm device onboarding",
         "description": "Device: {device}\nInstall action: {action}\nHome launcher: {launcher}\nHome Assistant URL: {ha_url}\n\nConfirm to apply these settings.",
         "data": {}
+      },
+      "onboard_device_owner": {
+        "title": "Enable Device Owner for Kiosk Satellite",
+        "description": "Device Owner gives Kiosk Satellite full control of this device.\n\n**Benefits**\n- Kiosk Satellite updates install silently, with no on-screen prompt.\n- True kiosk lock: the app can pin itself so users cannot leave it.\n- Kiosk Satellite can make itself the home app without a prompt.\n- Remote reboot from Home Assistant.\n- The real Wi-Fi MAC address is readable.\n\n**Side effects**\n- It cannot be undone except by a factory reset. Kiosk Satellite cannot be uninstalled normally while it is Device Owner.\n- To enroll, the accounts below are removed from the device. Their app is removed for a moment and then reinstalled. You sign in again afterwards if you still need them.\n- Some OEM features that need an account (for example Meta's calling and apps) may stop working until you sign in again.\n\n**Accounts on this device**\n{accounts}\n\nTick the box and submit to proceed. Nothing on the device changes until you do. Leave it unticked to skip Device Owner; the device is added either way.",
+        "data": {
+          "confirm": "I understand this cannot be undone without a factory reset"
+        }
       }
     },
     "progress": {

@@ -264,10 +264,14 @@ RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
     RecipeAssignment(
         model_key="portal_gen2",
         recipe_key="meta_portal_standard",
-        recipe_version="v2",
+        recipe_version="v3",
         state=ASSIGNMENT_APPROVED,
-        effective_date="2026-09-20",
-        rationale="Behavior migrated verbatim from the portal_gen2 DeviceProfile.",
+        effective_date="2026-09-27",
+        rationale=(
+            "Great Room Portal (prod, 2026-09-27): after set-home-activity the "
+            "HOME resolver stayed com.facebook.alohaapps.launcher, as on Portal "
+            "Go. v3 removes launcher takeover for this exact model (#61)."
+        ),
     ),
     RecipeAssignment(
         model_key="portal_plus_gen1",

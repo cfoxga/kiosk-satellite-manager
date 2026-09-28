@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Adding a Portal no longer stops half-way when Android keeps its own Home screen
+  (#61). Install/Reinstall used to fail before it set the device name, admin
+  password and Home Assistant connection whenever the Portal's launcher stayed
+  Home. Now it finishes the setup and raises a notification that Kiosk Satellite
+  isn't the Home screen. Portal (2nd gen) no longer tries to take over Home at
+  all, the same as Portal Go.
+
+- Add Device can enable Device Owner (#62). Tick **Enable Device Owner
+  (advanced)** when adding a device. After install, KSM runs the same read-only
+  check and confirmation as the Configure menu. The device is added whatever
+  happens, and a notification reports whether Device Owner was enabled, skipped
+  or blocked, and why. Default is off.
+
 - Add a device that already runs Kiosk Satellite without enabling ADB (#60). When
   the address answers Kiosk Satellite's `/api/health`, Add Device reads the model,
   Android version and name from it and asks only for the device's existing admin

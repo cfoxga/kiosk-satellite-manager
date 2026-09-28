@@ -43,6 +43,7 @@ from datetime import timedelta
 import aiohttp
 from homeassistant.auth.const import GROUP_ID_READ_ONLY
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
+from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.network import get_url
 
@@ -53,6 +54,7 @@ from . import ks_api_client, ks_tls
 from .adb_client import AdbClient
 from .apk_signing import verify_ks_apk_signer
 from .const import (
+    DOMAIN,
     HA_TOKEN_LIFESPAN_DAYS,
     KS_APK_REMOTE_PATH,
     KS_HOME_ACTIVITY,
@@ -400,8 +402,22 @@ async def install_and_launch(
     # the authenticated ADB intent, select the fixed alias, then trust only
     # Android's resolver readback. Caller preference cannot override recipe
     # capability.
+    # KSM-BEHAVE-097 (#61): a resolver miss is reported, never fatal -- the
+    # device-name/password/HA sync below must still run.
     if home_launcher and recipe.home_launcher_supported:
-        await _select_home_launcher(client)
+        try:
+            await _select_home_launcher(client)
+        except KsInstallVerificationFailed as err:
+            _LOGGER.warning("home launcher not selected on %s: %s", host, err)
+            persistent_notification.async_create(
+                hass,
+                message=(
+                    f"Kiosk Satellite was installed and configured on {host}, but "
+                    f"Android kept another app as the Home screen. {err}"
+                ),
+                title="Kiosk Satellite is not the Home screen",
+                notification_id=f"{DOMAIN}_home_launcher_{host}",
+            )
 
     if password is None or host is None:
         _LOGGER.debug(
