@@ -363,3 +363,41 @@ async def test_get_settings_raises_on_rejected_token():
     session = _fake_session(get=_fake_response({"error": "unauthorized"}, ok=False, status=401))
     with pytest.raises(KsApiError, match="unauthorized"):
         await ks_api_client.get_settings(session, "host", "bad-token", pin=None)
+
+
+async def test_upload_update_posts_the_raw_apk_to_the_pinned_origin():
+    """[KSM-TEST-210] KSM-BEHAVE-108: POST /api/update/upload on the entry's
+    pinned origin, Bearer auth, explicit Content-Length, no redirects."""
+    body = object()
+    session = _fake_session(post=_fake_response({"ok": True, "data": {"buildNumber": 2}}))
+    pin = "ab" * 32
+
+    result = await ks_api_client.upload_update(session, "192.168.1.50", "tok", body, 1234, pin=pin)
+
+    assert result == {"ok": True, "data": {"buildNumber": 2}}
+    args, kwargs = session.post.call_args
+    assert args[0] == "https://192.168.1.50:2324/api/update/upload"
+    assert kwargs["data"] is body
+    assert kwargs["headers"]["Authorization"] == "Bearer tok"
+    assert kwargs["headers"]["Content-Length"] == "1234"
+    assert kwargs["allow_redirects"] is False
+    assert isinstance(kwargs["ssl"], ks_api_client.SpkiPin)
+    assert kwargs["timeout"].total > 60
+
+
+async def test_upload_update_returns_a_refusal_envelope_for_the_caller():
+    """[KSM-TEST-210] A 400 {ok:false, error} comes back as the envelope so
+    the caller can report Kiosk Satellite's own text."""
+    session = _fake_session(
+        post=_fake_response({"ok": False, "error": "Downgrades are refused"}, ok=False, status=400)
+    )
+    result = await ks_api_client.upload_update(session, "192.168.1.50", "tok", b"", 1, pin=None)
+    assert result == {"ok": False, "error": "Downgrades are refused"}
+
+
+async def test_upload_update_raises_on_a_server_error():
+    """[KSM-TEST-210] negative case: a 5xx (envelope or not) is an error, never
+    a success the caller could mistake for an accepted upload."""
+    session = _fake_session(post=_fake_response({"ok": False}, ok=False, status=500))
+    with pytest.raises(KsApiError, match="HTTP 500"):
+        await ks_api_client.upload_update(session, "192.168.1.50", "tok", b"", 1, pin=None)

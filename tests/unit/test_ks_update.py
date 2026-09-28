@@ -7,6 +7,7 @@ fakes, since async_self_update_entry only reads hass.data and entry.data/title.
 """
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -21,6 +22,7 @@ from custom_components.kiosk_satellite_manager.const import (
     DOMAIN,
     RELEASE_COORDINATOR_KEY,
 )
+from custom_components.kiosk_satellite_manager.ks_api import ApkAssetNotFound
 from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
 
 _SESSION = "custom_components.kiosk_satellite_manager.ks_update.async_get_clientsession"
@@ -41,13 +43,35 @@ def _hass(release_version="2026.9.77", coordinator=None):
     data = {RELEASE_COORDINATOR_KEY: SimpleNamespace(data=SimpleNamespace(version=release_version))}
     if coordinator is not None:
         data[DOMAIN] = {"entry-1": coordinator}
-    return SimpleNamespace(data=data)
+
+    async def async_add_executor_job(func, *args):
+        return await asyncio.to_thread(func, *args)
+
+    return SimpleNamespace(data=data, async_add_executor_job=async_add_executor_job)
+
+
+@pytest.fixture(autouse=True)
+def cached_apk(tmp_path):
+    """KSM-BEHAVE-107/108: a real small cached file, an accepting upload."""
+    apk = tmp_path / "ks.apk"
+    apk.write_bytes(b"apk")
+
+    async def upload(session, host, token, body, size, *, pin=None):
+        async for _ in body:
+            pass
+        return {"ok": True, "data": {"buildNumber": 2, "currentBuild": 1}}
+
+    prefix = "custom_components.kiosk_satellite_manager.ks_update."
+    with patch(prefix + "apk_cache.async_release_apk", new=AsyncMock(return_value=apk)), patch(
+        prefix + "apk_cache.async_prune", new=AsyncMock(return_value=[])
+    ), patch(prefix + "ks_api_client.upload_update", new=AsyncMock(side_effect=upload)):
+        yield apk
 
 
 def _commands(**by_command):
     async def fake_run_command(session, host, token, command, *, pin=None):
         value = by_command[command]
-        if command == "getUpdateStatus":
+        if command in ("getUpdateStatus", "getDeviceInfo"):
             return {"ok": True, "data": value}
         return value
     return fake_run_command
@@ -70,10 +94,9 @@ async def test_no_coordinator_registered_still_completes_and_skips_the_refresh()
     ), patch(
         _RUN_COMMAND,
         new=_commands(
-            checkUpdateNow={},
-            getUpdateStatus={"availableVersion": "2026.9.77"},
-            getUpdateInstallerStatus={},
-            installUpdate={"ok": True},
+            getDeviceInfo={"abis": []},
+            getUpdateStatus={},
+            installUploadedApk={"ok": True},
         ),
     ):
         outcome = await ks_update.async_self_update_entry(hass, _entry())
@@ -81,18 +104,14 @@ async def test_no_coordinator_registered_still_completes_and_skips_the_refresh()
 
 
 async def test_install_update_transient_failure_is_reported_as_failed():
-    """[KSM-TEST-156] A transient error on installUpdate itself (not just
-    login/checkUpdateNow) fails loudly, naming the entry."""
+    """[KSM-TEST-156] A transient error on installUploadedApk itself (not
+    just login/upload) fails loudly, naming the entry."""
     hass = _hass()
 
     async def fake_run_command(session, host, token, command, *, pin=None):
-        if command == "installUpdate":
+        if command == "installUploadedApk":
             raise KsApiError("connection reset")
-        return {
-            "checkUpdateNow": {},
-            "getUpdateStatus": {"ok": True, "data": {"availableVersion": "2026.9.77"}},
-            "getUpdateInstallerStatus": {},
-        }[command]
+        return {"getDeviceInfo": {"ok": True, "data": {"abis": []}}}[command]
 
     with patch(_SESSION), patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(
         _RUN_COMMAND, new=fake_run_command
@@ -191,3 +210,26 @@ async def test_check_devices_for_update_asks_each_device_and_skips_the_rest():
     assert results["Failing"].startswith("failed") and "401" in results["Failing"]
     assert results["No password"] == "skipped: no password stored"
     assert results["Busy"] == "skipped: install in progress"
+
+
+async def test_apk_unavailable_fails_before_any_upload(cached_apk):
+    """[KSM-TEST-209] no usable asset (or a download/signer failure) is a
+    failed update naming the entry; nothing is uploaded or installed."""
+    hass = _hass()
+    sent = []
+
+    async def fake_run_command(session, host, token, command, *, pin=None):
+        sent.append(command)
+        return {"ok": True, "data": {"abis": ["mips"]}}
+
+    prefix = "custom_components.kiosk_satellite_manager.ks_update."
+    with patch(_SESSION), patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(
+        _RUN_COMMAND, new=fake_run_command
+    ), patch(
+        prefix + "apk_cache.async_release_apk",
+        new=AsyncMock(side_effect=ApkAssetNotFound("no asset for mips")),
+    ), patch(prefix + "ks_api_client.upload_update", new=AsyncMock()) as upload:
+        with pytest.raises(HomeAssistantError, match="APK unavailable for Test Device"):
+            await ks_update.async_self_update_entry(hass, _entry())
+    upload.assert_not_awaited()
+    assert sent == ["getDeviceInfo"]

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- KSM now downloads each Kiosk Satellite release **once**, keeps it on the
+  Home Assistant server, and sends it to your kiosks itself (#70). The update
+  entity, auto-update and **Update all** all upload KSM's copy over the
+  kiosk's own API, so kiosks no longer each fetch the release from GitHub.
+  The Install/Reinstall button uses the same copy. Every copy is checked
+  against KSM's trusted signer before it is kept. Old copies are cleaned up
+  automatically. KSM keeps the version each kiosk runs, the release just
+  before the oldest of those, and the newest three. The copies live in
+  `/config/.cache`, which backups skip.
+
 - **Update all** now updates every eligible kiosk at the same time instead of
   one after another (#68). A kiosk that fails doesn't stop or cancel the
   others, and the summary notification still arrives once they have all

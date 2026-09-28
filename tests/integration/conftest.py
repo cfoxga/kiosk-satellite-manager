@@ -9,6 +9,7 @@ pytest_plugins = ["pytest_homeassistant_custom_component"]
 import os
 import sys
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 from unittest.mock import AsyncMock, patch
@@ -48,6 +49,36 @@ def release_check():
     )
     with patch("custom_components.kiosk_satellite_manager.latest_release_info", new=mock):
         yield mock
+
+
+@pytest.fixture(autouse=True)
+def apk_upload(tmp_path):
+    """KSM-BEHAVE-107/108: a self-update takes the APK from KSM's cache and
+    uploads it. The cache hands back a real small file (no GitHub), and the
+    upload stub drains the streamed body into `received` so a test sees what
+    the device would have been sent. Override `upload.return_value`-style via
+    `apk_upload.reply`."""
+    apk = tmp_path / "kiosk-satellite-2026.9.77.arm64-v8a.apk"
+    apk.write_bytes(b"cached-apk-" * 1000)
+    state = SimpleNamespace(
+        path=apk,
+        received=[],
+        reply={"ok": True, "data": {"buildNumber": 2, "currentBuild": 1}},
+    )
+
+    async def upload(session, host, token, body, size, *, pin=None):
+        data = b"".join([chunk async for chunk in body])
+        state.received.append({"host": host, "token": token, "size": size, "body": data})
+        return state.reply
+
+    state.release_apk = AsyncMock(return_value=apk)
+    state.upload = AsyncMock(side_effect=upload)
+    state.prune = AsyncMock(return_value=[])
+    prefix = "custom_components.kiosk_satellite_manager.ks_update."
+    with patch(prefix + "apk_cache.async_release_apk", new=state.release_apk), patch(
+        prefix + "apk_cache.async_prune", new=state.prune
+    ), patch(prefix + "ks_api_client.upload_update", new=state.upload):
+        yield state
 
 
 @pytest.fixture(autouse=True)

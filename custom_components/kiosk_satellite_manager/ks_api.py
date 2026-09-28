@@ -9,6 +9,7 @@ falling back to the universal build for anything unmatched.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import aiohttp
@@ -26,10 +27,42 @@ class ReleaseInfo:
     version: str
     url: str | None
     notes: str | None
+    # KSM-BEHAVE-107: (filename, download URL) of every .apk asset, for the
+    # APK cache to pick a device's split from without a second lookup.
+    assets: tuple[tuple[str, str], ...] = ()
 
 
 class ApkAssetNotFound(Exception):
     """No usable .apk asset on the latest release."""
+
+
+# Kiosk Satellite publishes splits for exactly these (release_apk.dart).
+_SPLIT_ABIS = ("arm64-v8a", "armeabi-v7a", "x86_64")
+
+
+def select_release_apk(
+    assets: Iterable[tuple[str, str]], version: str, abis: Iterable[str]
+) -> tuple[str, str]:
+    """KSM-BEHAVE-107: (name, url) of the asset Kiosk Satellite's own updater
+    would pick -- the first of the device's ABIs, in its order, with a split
+    named for this version, else the universal build."""
+    by_name = dict(assets)
+    abis = list(abis)
+    version = version.removeprefix("v")
+    prefixes = (f"kiosk-satellite-v{version}", f"kiosk-satellite-{version}")
+
+    def named(suffix: str) -> tuple[str, str] | None:
+        for prefix in prefixes:
+            if (url := by_name.get(prefix + suffix)):
+                return prefix + suffix, url
+        return None
+
+    for abi in abis:
+        if abi in _SPLIT_ABIS and (split := named(f".{abi}.apk")):
+            return split
+    if universal := named(".apk"):
+        return universal
+    raise ApkAssetNotFound(f"release {version} has no APK for ABIs {abis!r}")
 
 
 def select_apk_asset(assets: list[tuple[str, str]], abi: str) -> str:
@@ -101,9 +134,11 @@ async def latest_release(session: aiohttp.ClientSession, abi: str) -> tuple[str,
 async def latest_release_info(session: aiohttp.ClientSession) -> ReleaseInfo:
     """KSM-BEHAVE-071: version, page URL and notes of the latest usable
     release. ABI-independent -- one lookup serves every managed device."""
-    release, _ = await _latest_usable_release(session)
+    release, assets = await _latest_usable_release(session)
     return ReleaseInfo(
         version=release.get("tag_name") or "",
         url=release.get("html_url"),
         notes=release.get("body"),
+        assets=tuple(assets),
     )
+

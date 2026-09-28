@@ -56,6 +56,12 @@ EXISTING_INSTALL_REINSTALL: Final = "reinstall"
 DEFAULT_ADB_PORT: Final = 5555
 HEALTH_PORT: Final = 2324
 HEALTH_TIMEOUT_S: Final = 5
+# KSM-BEHAVE-107/108 (#70): a ~100-200 MB APK from GitHub to HA, then from HA
+# to a kiosk over Wi-Fi. Generous but bounded -- a stalled transfer fails.
+APK_DOWNLOAD_TIMEOUT_S: Final = 600
+APK_UPLOAD_TIMEOUT_S: Final = 900
+# KSM-BEHAVE-109: rule 3 of the cache retention -- the newest N versions.
+APK_CACHE_KEEP_LATEST: Final = 3
 HEALTH_SCAN_INTERVAL_MIN: Final = 5
 
 KS_PACKAGE: Final = "me.jxl.kiosk_satellite"

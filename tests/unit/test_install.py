@@ -69,6 +69,7 @@ class _FakeHass:
         self.auth.async_create_access_token = MagicMock(return_value="minted-ha-token")
         self.auth.async_get_refresh_token = MagicMock(return_value=SimpleNamespace(id="the-refresh-token"))
         self.auth.async_remove_refresh_token = MagicMock()
+        self.data: dict = {}
 
     async def async_add_executor_job(self, func, *args):
         return func(*args)
@@ -161,12 +162,43 @@ def _ks_without_tls(monkeypatch):
     )
 
 
+_APK_CACHE = "custom_components.kiosk_satellite_manager.apk_cache."
+
+
 @pytest.fixture(autouse=True)
-def _accept_fake_apk_artifacts(monkeypatch):
-    """Existing install-flow tests use arbitrary bytes, not signed APK files."""
-    monkeypatch.setattr(
-        "custom_components.kiosk_satellite_manager.install.verify_ks_apk_signer", MagicMock()
-    )
+def apk_cache_dir(monkeypatch, tmp_path):
+    """Existing install-flow tests use arbitrary bytes, not signed APK files.
+    KSM-BEHAVE-107: the ADB path goes through KSM's APK cache, kept here in
+    a per-test directory."""
+    monkeypatch.setattr(_APK_CACHE + "verify_ks_apk_signer", MagicMock())
+    monkeypatch.setattr(_APK_CACHE + "cache_root", lambda hass: tmp_path / "apks")
+    return tmp_path / "apks"
+
+
+async def test_install_and_launch_pushes_the_cached_apk_and_keeps_it(apk_cache_dir):
+    """[KSM-TEST-207] KSM-BEHAVE-107: Install/Reinstall downloads into the
+    same cache the API update path uploads from, pushes that file, and
+    leaves it cached -- a second press downloads nothing."""
+    session = _fake_session()
+    target = apk_cache_dir / _TARGET_VERSION / "kiosk-satellite-2026.9.99.arm64-v8a.apk"
+    for _ in range(2):
+        client = _fake_client()
+        client.installed_version = AsyncMock(side_effect=[None, _TARGET_VERSION])
+        with patch(
+            "custom_components.kiosk_satellite_manager.install.latest_release",
+            new=AsyncMock(
+                return_value=(
+                    "https://example.invalid/dl/kiosk-satellite-2026.9.99.arm64-v8a.apk",
+                    _TARGET_VERSION,
+                )
+            ),
+        ):
+            await install_and_launch(_FakeHass(), client, session, device_model="portal_go")
+        client.push.assert_awaited_once_with(str(target), client.install_apk.await_args.args[0])
+
+    assert target.read_bytes() == b"fake-apk-bytes"
+    apk_gets = [c for c in session.get.call_args_list if c.args[0].endswith(".apk")]
+    assert len(apk_gets) == 1
 
 
 async def test_install_and_launch_runs_expected_shell_sequence():
@@ -813,7 +845,7 @@ async def test_install_and_launch_rejects_untrusted_apk_before_device_mutation()
         "custom_components.kiosk_satellite_manager.install.latest_release",
         new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
     ), patch(
-        "custom_components.kiosk_satellite_manager.install.verify_ks_apk_signer",
+        _APK_CACHE + "verify_ks_apk_signer",
         side_effect=ApkSignerVerificationFailed("APK signer is not trusted by KSM policy"),
     ) as verify:
         with pytest.raises(ApkSignerVerificationFailed, match="not trusted"):

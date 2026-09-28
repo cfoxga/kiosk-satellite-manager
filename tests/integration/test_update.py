@@ -55,13 +55,15 @@ def _refuses_adb():
 def _commands(**by_command):
     """run_command stand-in keyed by command name; missing keys are errors."""
 
+    by_command.setdefault("getDeviceInfo", {"abis": ["arm64-v8a", "armeabi-v7a"]})
+
     async def fake_run_command(session, host, token, command, *, pin=None):
         if command not in by_command:
             raise AssertionError(f"unexpected command: {command}")
         result = by_command[command]
         if isinstance(result, Exception):
             raise result
-        if command == "getUpdateStatus":
+        if command in ("getUpdateStatus", "getDeviceInfo"):
             return {"ok": True, "data": result}
         return result
 
@@ -171,10 +173,8 @@ async def test_update_install_runs_the_ks_api_self_update_sequence(hass, release
         ), patch(
             _RUN_COMMAND,
             new=_commands(
-                checkUpdateNow={},
-                getUpdateStatus={"availableVersion": "2026.9.77"},
-                getUpdateInstallerStatus={},
-                installUpdate={"ok": True},
+                getUpdateStatus={},
+                installUploadedApk={"ok": True},
             ),
         ):
             await hass.services.async_call(
@@ -188,57 +188,81 @@ async def test_update_install_runs_the_ks_api_self_update_sequence(hass, release
     assert state.attributes["in_progress"] is False
 
 
-async def test_update_install_not_offered_raises_naming_the_version(hass, release_check):
-    """[KSM-TEST-154] getUpdateStatus.availableVersion != V after
-    checkUpdateNow -> installUpdate is never called, HomeAssistantError
-    names V."""
+def _recording(**by_command):
+    """_commands, plus the ordered list of command names sent."""
+    sent: list[str] = []
+    inner = _commands(**by_command)
+
+    async def fake_run_command(session, host, token, command, *, pin=None):
+        sent.append(command)
+        return await inner(session, host, token, command, pin=pin)
+
+    return fake_run_command, sent
+
+
+async def test_update_install_uploads_the_cached_apk(hass, release_check, apk_upload):
+    """[KSM-TEST-209] KSM-BEHAVE-082/107/108: getDeviceInfo's ABIs pick the
+    cached APK, its bytes are uploaded, then installUploadedApk -- never the
+    device's own GitHub download, never ADB. The cache is pruned afterwards."""
     release_check.return_value = _release("2026.9.77")
-    with patch(_HEALTH, new=_health("2026.9.76")):
+    with patch(_HEALTH, new=_health("2026.9.76", "2026.9.77")):
         ctx = await init_integration(hass)
         entity_id = _entity_id(hass, ctx.entry, "update")
-
-        with _refuses_adb() as mock_client_cls, patch(
-            _LOGIN, new=AsyncMock(return_value="device-token")
-        ), patch(
-            _RUN_COMMAND,
-            new=_commands(checkUpdateNow={}, getUpdateStatus={"availableVersion": "2026.9.76"}),
-        ):
-            with pytest.raises(HomeAssistantError, match="2026.9.77"):
-                await hass.services.async_call(
-                    "update", "install", {"entity_id": entity_id}, blocking=True
-                )
-
-    mock_client_cls.assert_not_called()
-    assert hass.data[DOMAIN][ctx.entry.entry_id].ksm_installing is False
-
-
-@pytest.mark.parametrize("status", [
-    {"ok": False, "data": {"availableVersion": "2026.9.77"}},
-    {"ok": True},
-])
-async def test_update_install_rejects_bad_status_envelope(hass, release_check, status):
-    """[KSM-TEST-154] A failed or missing status body cannot authorize install."""
-    release_check.return_value = _release("2026.9.77")
-    with patch(_HEALTH, new=_health("2026.9.76")):
-        ctx = await init_integration(hass)
-        entity_id = _entity_id(hass, ctx.entry, "update")
-
-        async def command(session, host, token, name, *, pin=None):
-            if name == "checkUpdateNow":
-                return {"ok": True}
-            if name == "getUpdateStatus":
-                return status
-            raise AssertionError(f"unexpected command: {name}")
-
+        run, sent = _recording(
+            getDeviceInfo={"abis": ["armeabi-v7a", "arm64-v8a"]},
+            getUpdateStatus={},
+            installUploadedApk={"ok": True},
+        )
         with _refuses_adb() as adb, patch(
-            _LOGIN, new=AsyncMock(return_value="device-token")
-        ), patch(_RUN_COMMAND, new=command):
-            with pytest.raises(HomeAssistantError, match="status"):
-                await hass.services.async_call(
-                    "update", "install", {"entity_id": entity_id}, blocking=True
-                )
+            _POLL_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.77"})
+        ), patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(_RUN_COMMAND, new=run):
+            await hass.services.async_call("update", "install", {"entity_id": entity_id}, blocking=True)
+
     adb.assert_not_called()
+    release, abis = apk_upload.release_apk.await_args.args[1:]
+    assert release.version == "2026.9.77"
+    assert abis == ["armeabi-v7a", "arm64-v8a"]
+    [upload] = apk_upload.received
+    assert upload["token"] == "device-token"
+    assert upload["body"] == apk_upload.path.read_bytes()
+    assert upload["size"] == apk_upload.path.stat().st_size
+    assert sent[0] == "getDeviceInfo" and "installUploadedApk" in sent
+    assert "checkUpdateNow" not in sent and "installUpdate" not in sent
+    apk_upload.prune.assert_awaited()
+    assert hass.states.get(entity_id).state == "off"
+
+
+async def test_update_install_refused_upload_is_failed(hass, release_check, apk_upload):
+    """[KSM-TEST-209] negative case: the device refuses the upload -> failed
+    with its own text; installUploadedApk is never sent."""
+    release_check.return_value = _release("2026.9.77")
+    apk_upload.reply = {"ok": False, "error": "Not enough free space"}
+    with patch(_HEALTH, new=_health("2026.9.76")):
+        ctx = await init_integration(hass)
+        entity_id = _entity_id(hass, ctx.entry, "update")
+        run, sent = _recording()
+        with _refuses_adb(), patch(_LOGIN, new=AsyncMock(return_value="t")), patch(_RUN_COMMAND, new=run):
+            with pytest.raises(HomeAssistantError, match="Not enough free space"):
+                await hass.services.async_call("update", "install", {"entity_id": entity_id}, blocking=True)
+
+    assert "installUploadedApk" not in sent
     assert hass.data[DOMAIN][ctx.entry.entry_id].ksm_installing is False
+
+
+async def test_update_install_already_running_build_installs_nothing(hass, release_check, apk_upload):
+    """[KSM-TEST-209] negative case: the upload shows the build already
+    running -> updated, and installUploadedApk is never sent."""
+    release_check.return_value = _release("2026.9.77")
+    apk_upload.reply = {"ok": True, "data": {"buildNumber": 5, "currentBuild": 5}}
+    with patch(_HEALTH, new=_health("2026.9.76")):
+        ctx = await init_integration(hass)
+        entity_id = _entity_id(hass, ctx.entry, "update")
+        run, sent = _recording()
+        with _refuses_adb(), patch(_LOGIN, new=AsyncMock(return_value="t")), patch(_RUN_COMMAND, new=run):
+            await hass.services.async_call("update", "install", {"entity_id": entity_id}, blocking=True)
+
+    assert sent == ["getDeviceInfo"]
+    assert len(apk_upload.received) == 1
 
 
 async def test_update_install_awaiting_confirmation_sets_the_attribute(hass, release_check):
@@ -259,10 +283,8 @@ async def test_update_install_awaiting_confirmation_sets_the_attribute(hass, rel
         ), patch(
             _RUN_COMMAND,
             new=_commands(
-                checkUpdateNow={},
-                getUpdateStatus={"availableVersion": "2026.9.77", "lastOutcome": "confirm"},
-                getUpdateInstallerStatus={},
-                installUpdate={"ok": True},
+                getUpdateStatus={"lastOutcome": "confirm"},
+                installUploadedApk={"ok": True},
             ),
         ):
             await hass.services.async_call(
@@ -296,10 +318,8 @@ async def test_update_install_silent_outcome_is_failed_not_awaiting(hass, releas
         ), patch(
             _RUN_COMMAND,
             new=_commands(
-                checkUpdateNow={},
-                getUpdateStatus={"availableVersion": "2026.9.77", "lastOutcome": "silent"},
-                getUpdateInstallerStatus={},
-                installUpdate={"ok": True},
+                getUpdateStatus={"lastOutcome": "silent"},
+                installUploadedApk={"ok": True},
             ),
         ):
             with pytest.raises(HomeAssistantError, match="did not complete"):
@@ -312,7 +332,7 @@ async def test_update_install_silent_outcome_is_failed_not_awaiting(hass, releas
 
 
 async def test_update_install_reject_response_is_failed(hass, release_check):
-    """[KSM-TEST-156] installUpdate {ok:false} yields failed with the
+    """[KSM-TEST-156] installUploadedApk {ok:false} yields failed with the
     device's own error text; no AdbClient."""
     release_check.return_value = _release("2026.9.77")
     with patch(_HEALTH, new=_health("2026.9.76")):
@@ -324,10 +344,7 @@ async def test_update_install_reject_response_is_failed(hass, release_check):
         ), patch(
             _RUN_COMMAND,
             new=_commands(
-                checkUpdateNow={},
-                getUpdateStatus={"availableVersion": "2026.9.77"},
-                getUpdateInstallerStatus={},
-                installUpdate={"ok": False, "error": "no space"},
+                installUploadedApk={"ok": False, "error": "no space"},
             ),
         ):
             with pytest.raises(HomeAssistantError, match="no space"):
@@ -340,28 +357,17 @@ async def test_update_install_reject_response_is_failed(hass, release_check):
 
 async def test_update_install_poll_last_error_is_failed(hass, release_check):
     """[KSM-TEST-156] a non-null lastError surfacing from the poll's own
-    getUpdateStatus (after a successful installUpdate) yields failed; no
+    getUpdateStatus (after a successful installUploadedApk) yields failed; no
     AdbClient."""
     release_check.return_value = _release("2026.9.77")
     with patch(_HEALTH, new=_health("2026.9.76")):
         ctx = await init_integration(hass)
         entity_id = _entity_id(hass, ctx.entry, "update")
 
-        status_calls = {"n": 0}
-
-        async def fake_run_command(session, host, token, command, *, pin=None):
-            if command == "checkUpdateNow":
-                return {}
-            if command == "getUpdateStatus":
-                status_calls["n"] += 1
-                if status_calls["n"] == 1:
-                    return {"ok": True, "data": {"availableVersion": "2026.9.77"}}
-                return {"ok": True, "data": {"availableVersion": "2026.9.77", "lastError": "boom"}}
-            if command == "getUpdateInstallerStatus":
-                return {}
-            if command == "installUpdate":
-                return {"ok": True}
-            raise AssertionError(f"unexpected command: {command}")
+        fake_run_command = _commands(
+            getUpdateStatus={"lastError": "boom"},
+            installUploadedApk={"ok": True},
+        )
 
         with _refuses_adb() as mock_client_cls, patch(
             _POLL_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.76"})

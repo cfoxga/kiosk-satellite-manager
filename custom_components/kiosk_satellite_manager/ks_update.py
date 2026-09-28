@@ -1,9 +1,10 @@
-"""Kiosk Satellite self-update sequence (KSM-BEHAVE-082, #47).
+"""Kiosk Satellite self-update sequence (KSM-BEHAVE-082, #47, #70).
 
-Updates run over Kiosk Satellite's own `:2324` API -- the same mechanism
-ESPHome's Kiosk Satellite update entity uses -- so an install works even
+Updates run over Kiosk Satellite's own `:2324` API, so an install works even
 when ADB is disabled after onboarding (KSM-BEHAVE-081). ADB stays only
 behind the explicit Install/Reinstall and Uninstall buttons in button.py.
+Since #70 the device no longer downloads from GitHub itself: KSM uploads its
+cached, signer-verified copy (KSM-BEHAVE-107/108).
 
 Shared by the update entity's Install, per-device auto-update and the
 manager's Update all -- one verified sequence, not three copies.
@@ -11,7 +12,9 @@ manager's Update all -- one verified sequence, not three copies.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 import logging
+from pathlib import Path
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -19,7 +22,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from . import ks_api_client
+from . import apk_cache, ks_api_client
 from .const import (
     CONF_HOST,
     CONF_PASSWORD,
@@ -38,6 +41,25 @@ OUTCOME_UPDATED = "updated"
 OUTCOME_AWAITING_CONFIRMATION = "awaiting_confirmation"
 
 _TRANSIENT_ERRORS = (KsApiError, aiohttp.ClientError, asyncio.TimeoutError)
+_UPLOAD_CHUNK = 1 << 20
+
+
+async def _file_chunks(hass: HomeAssistant, path: Path) -> AsyncIterator[bytes]:
+    """KSM-BEHAVE-108: stream the cached APK without blocking the loop or
+    holding the whole file in memory per device."""
+    handle = await hass.async_add_executor_job(path.open, "rb")
+    try:
+        while chunk := await hass.async_add_executor_job(handle.read, _UPLOAD_CHUNK):
+            yield chunk
+    finally:
+        await hass.async_add_executor_job(handle.close)
+
+
+def _device_abis(response: dict) -> list[str]:
+    """getDeviceInfo's `data.abis`; anything unusable means "universal"."""
+    data = response.get("data") if isinstance(response, dict) and response.get("ok") is True else None
+    abis = data.get("abis") if isinstance(data, dict) else None
+    return [abi for abi in abis if isinstance(abi, str)] if isinstance(abis, list) else []
 
 
 def _status_data(response: dict, entry: ConfigEntry) -> dict:
@@ -58,7 +80,7 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
     latest version over its own API.
 
     Returns OUTCOME_UPDATED or OUTCOME_AWAITING_CONFIRMATION. Raises
-    HomeAssistantError for the "not offered" and "failed" outcomes -- never
+    HomeAssistantError for the "failed" outcome -- never
     constructs an AdbClient.
     """
     coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
@@ -70,7 +92,8 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
     release = hass.data.get(RELEASE_COORDINATOR_KEY)
     if release is None or release.data is None:
         raise HomeAssistantError("No usable Kiosk Satellite release is known")
-    version = release.data.version
+    release_info = release.data
+    version = release_info.version
 
     host = entry.data[CONF_HOST]
     password = entry.data.get(CONF_PASSWORD)
@@ -87,33 +110,34 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
     try:
         try:
             token = await ks_api_client.login(session, host, password, pin=pin)
-            await ks_api_client.run_command(session, host, token, "checkUpdateNow", pin=pin)
-            status = _status_data(
-                await ks_api_client.run_command(session, host, token, "getUpdateStatus", pin=pin),
-                entry,
+            abis = _device_abis(
+                await ks_api_client.run_command(session, host, token, "getDeviceInfo", pin=pin)
             )
-        except _TRANSIENT_ERRORS as err:
-            raise HomeAssistantError(
-                f"Kiosk Satellite update failed on {entry.title}: {err}"
-            ) from err
-
-        if status.get("availableVersion") != version:
-            raise HomeAssistantError(
-                f"Kiosk Satellite on {entry.title} does not yet see {version}"
+            try:
+                apk = await apk_cache.async_release_apk(hass, release_info, abis)
+            except Exception as err:  # no asset, download, signer pin
+                raise HomeAssistantError(
+                    f"Kiosk Satellite {version} APK unavailable for {entry.title}: {err}"
+                ) from err
+            size = await hass.async_add_executor_job(lambda: apk.stat().st_size)
+            _LOGGER.info("Uploading %s to %s", apk.name, entry.title)
+            uploaded = await ks_api_client.upload_update(
+                session, host, token, _file_chunks(hass, apk), size, pin=pin
             )
-
-        try:
-            # Diagnostics only (nativeSilent/helper/shizukuReady) -- not
-            # used to gate the install, just logged for support.
-            installer_status = await ks_api_client.run_command(
-                session, host, token, "getUpdateInstallerStatus", pin=pin
+            if uploaded.get("ok") is not True:
+                raise HomeAssistantError(
+                    f"Kiosk Satellite update failed on {entry.title}: "
+                    f"{uploaded.get('error') or 'upload refused'}"
+                )
+            data = uploaded.get("data") or {}
+            if data.get("buildNumber") is not None and data.get("buildNumber") == data.get("currentBuild"):
+                # Kiosk Satellite already runs this build: nothing to install.
+                if coordinator is not None:
+                    await coordinator.async_request_refresh()
+                return OUTCOME_UPDATED
+            result = await ks_api_client.run_command(
+                session, host, token, "installUploadedApk", pin=pin
             )
-            _LOGGER.debug(
-                "Kiosk Satellite update installer status on %s: %s",
-                entry.title,
-                installer_status,
-            )
-            result = await ks_api_client.run_command(session, host, token, "installUpdate", pin=pin)
         except _TRANSIENT_ERRORS as err:
             raise HomeAssistantError(
                 f"Kiosk Satellite update failed on {entry.title}: {err}"
@@ -122,7 +146,7 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
         if not result.get("ok", False):
             raise HomeAssistantError(
                 f"Kiosk Satellite update failed on {entry.title}: "
-                f"{result.get('error') or 'installUpdate rejected'}"
+                f"{result.get('error') or 'installUploadedApk rejected'}"
             )
 
         outcome = await _poll_until_resolved(session, host, token, version, entry, pin=pin)
@@ -137,6 +161,8 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
         if coordinator is not None:
             coordinator.ksm_installing = False
             coordinator.async_update_listeners()
+        # KSM-BEHAVE-109: this device's version may have changed.
+        await apk_cache.async_prune(hass)
 
 
 async def _poll_until_resolved(

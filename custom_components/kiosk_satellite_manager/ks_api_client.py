@@ -35,7 +35,7 @@ import aiohttp
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
-from .const import HEALTH_PORT, HEALTH_TIMEOUT_S
+from .const import APK_UPLOAD_TIMEOUT_S, HEALTH_PORT, HEALTH_TIMEOUT_S
 
 
 class KsApiError(Exception):
@@ -269,6 +269,36 @@ async def run_command(
         return data
 
 
+async def upload_update(
+    session: aiohttp.ClientSession, host: str, token: str, body, size: int,
+    *, pin: str | None,
+) -> dict:
+    """KSM-BEHAVE-108: `POST /api/update/upload` with the raw APK as the body
+    (bytes or an async iterable of chunks). The explicit Content-Length lets
+    Kiosk Satellite check free space first and reject a short transfer.
+
+    Returns the command envelope -- `{ok: true, data: {version, buildNumber,
+    currentBuild, ...}}`, or Kiosk Satellite's own `{ok: false, error}`
+    refusal (HTTP 400) for the caller to report. Anything else raises."""
+    async with session.post(
+        _credential_url(host, "/api/update/upload", pin),
+        data=body,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/vnd.android.package-archive",
+            "Content-Length": str(size),
+        },
+        allow_redirects=False,
+        ssl=_ssl(pin),
+        timeout=aiohttp.ClientTimeout(total=APK_UPLOAD_TIMEOUT_S, sock_connect=HEALTH_TIMEOUT_S),
+    ) as resp:
+        data = await resp.json(content_type=None)
+        if isinstance(data, dict) and "ok" in data and (resp.ok or resp.status == 400):
+            return data
+        error = data.get("error") if isinstance(data, dict) else None
+        raise KsApiError(error or f"HTTP {resp.status}")
+
+
 async def check_ha_connection(
     session: aiohttp.ClientSession, host: str, token: str, *, pin: str | None
 ) -> bool:
@@ -282,3 +312,4 @@ async def check_ha_connection(
     ) as resp:
         data = await resp.json()
         return bool(data.get("ok"))
+

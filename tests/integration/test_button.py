@@ -82,7 +82,7 @@ def _fake_health_response(app_version):
     return cm
 
 
-async def test_press_installs_launches_grants_and_refreshes_version(hass):
+async def test_press_installs_launches_grants_and_refreshes_version(hass, tmp_path):
     # fetch_health is called once by the coordinator's first refresh during
     # setup, and again by the bounded post-install poll -- both must stay
     # mocked for the whole test, or phacc's pytest-socket blocks the real
@@ -143,7 +143,10 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass):
             "custom_components.kiosk_satellite_manager.install.latest_release",
             new=AsyncMock(return_value=("https://example.invalid/ks.apk", "new")),
         ), patch(
-            "custom_components.kiosk_satellite_manager.install.verify_ks_apk_signer"
+            "custom_components.kiosk_satellite_manager.apk_cache.verify_ks_apk_signer"
+        ), patch(
+            "custom_components.kiosk_satellite_manager.apk_cache.cache_root",
+            return_value=tmp_path / "apks",
         ), patch(
             "custom_components.kiosk_satellite_manager.button.async_get_clientsession",
             return_value=fake_session,
@@ -633,17 +636,12 @@ async def test_update_all_updates_two_devices_over_the_ks_api(hass, release_chec
 
         def fake_run_command(session, host, token, command, *, pin=None):
             responses = {
-                "checkUpdateNow": {},
+                "getDeviceInfo": {"ok": True, "data": {"abis": ["arm64-v8a"]}},
                 "getUpdateStatus": {
                     "ok": True,
-                    "data": (
-                        {"availableVersion": "2026.9.77", "lastOutcome": "confirm"}
-                        if host == "192.168.99.98"
-                        else {"availableVersion": "2026.9.77"}
-                    ),
+                    "data": {"lastOutcome": "confirm"} if host == "192.168.99.98" else {},
                 },
-                "getUpdateInstallerStatus": {},
-                "installUpdate": {"ok": True},
+                "installUploadedApk": {"ok": True},
             }
             return responses[command]
 

@@ -34,8 +34,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
@@ -50,9 +48,8 @@ from homeassistant.helpers.network import get_url
 from collections.abc import Callable
 from typing import Any, Final
 
-from . import ks_api_client, ks_tls
+from . import apk_cache, ks_api_client, ks_tls
 from .adb_client import AdbClient
-from .apk_signing import verify_ks_apk_signer
 from .const import (
     DOMAIN,
     HA_TOKEN_LIFESPAN_DAYS,
@@ -298,13 +295,6 @@ async def verify_functional_capabilities(
     return result
 
 
-def _write_temp_apk(data: bytes) -> str:
-    fd, path = tempfile.mkstemp(suffix=".apk")
-    with os.fdopen(fd, "wb") as fh:
-        fh.write(data)
-    return path
-
-
 async def install_and_launch(
     hass: HomeAssistant,
     client: AdbClient,
@@ -352,26 +342,24 @@ async def install_and_launch(
             "kiosk satellite on %s already at %s; preserving install", host, target_version
         )
     else:
-        async with session.get(apk_url) as resp:
-            resp.raise_for_status()
-            data = await resp.read()
-        # KSM-BEHAVE-063: this pin check must precede push/install and, in
-        # particular, any recovery action. Android validates the signature
-        # itself at install time; KSM establishes that the identity being
-        # validated is one the integration has independently trusted.
-        await hass.async_add_executor_job(verify_ks_apk_signer, data)
-        tmp_path = await hass.async_add_executor_job(_write_temp_apk, data)
+        # KSM-BEHAVE-107: the same verified cache the API update path uploads
+        # from. KSM-BEHAVE-063: async_cached_apk checks the signer pin before
+        # the file is stored, so nothing unverified is ever pushed.
+        apk = await apk_cache.async_cached_apk(
+            hass,
+            session,
+            target_version or "unversioned",
+            apk_url.rsplit("/", 1)[-1],
+            apk_url,
+        )
+        await client.push(str(apk), KS_APK_REMOTE_PATH)
         try:
-            await client.push(tmp_path, KS_APK_REMOTE_PATH)
-            try:
-                # KSM-BEHAVE-035/063: rejected artifacts, including signer
-                # mismatch, abort here. Never uninstall and retry as a fresh
-                # install; that would bypass certificate continuity.
-                await client.install_apk(KS_APK_REMOTE_PATH)
-            finally:
-                await client.shell(f"rm -f {KS_APK_REMOTE_PATH}")
+            # KSM-BEHAVE-035/063: rejected artifacts, including signer
+            # mismatch, abort here. Never uninstall and retry as a fresh
+            # install; that would bypass certificate continuity.
+            await client.install_apk(KS_APK_REMOTE_PATH)
         finally:
-            await hass.async_add_executor_job(os.unlink, tmp_path)
+            await client.shell(f"rm -f {KS_APK_REMOTE_PATH}")
 
         installed_version = await client.installed_version()
         if target_version and installed_version != target_version:
