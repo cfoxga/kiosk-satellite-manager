@@ -131,6 +131,18 @@ def tls_migration():
         yield mock
 
 
+@pytest.fixture(autouse=True)
+def esphome_identity():
+    """KSM-BEHAVE-110: each device setup fills an empty ESPHome node name over
+    the KS API in the background. Keep it off the network;
+    `test_esphome_identity.py` puts the real function back."""
+    with patch(
+        "custom_components.kiosk_satellite_manager.async_ensure_esphome_identity",
+        new=AsyncMock(),
+    ) as mock:
+        yield mock
+
+
 @dataclass
 class KSMContext:
     entry: MockConfigEntry

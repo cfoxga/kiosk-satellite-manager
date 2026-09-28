@@ -68,6 +68,7 @@ from . import ks_tls
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .ks_api import latest_release_info
 from .ks_update import async_check_devices_for_update
+from .esphome_identity import async_ensure_esphome_identity
 from .voice_satellite_link import async_bind_voice_satellite
 from .ks_api_client import KsApiError
 from .ks_api_client import login as ks_api_login
@@ -427,6 +428,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await _async_migrate_tls(hass, entry)
         # KSM-BEHAVE-100 (#65): after migration, so the bind uses the new pin.
         await async_bind_voice_satellite(hass, entry)
+        # KSM-BEHAVE-110 (#67): node name always; ESPHome on only when chosen.
+        await async_ensure_esphome_identity(hass, entry)
 
     entry.async_create_background_task(hass, _post_setup(), f"{DOMAIN}_post_setup_{host}")
 

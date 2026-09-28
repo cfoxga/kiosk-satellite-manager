@@ -33,6 +33,11 @@ CONF_AUTO_UPDATE: Final = "auto_update"
 # KSM-BEHAVE-080: manager-entry option, default off; while on, every device's
 # update entity auto-updates as if its own CONF_AUTO_UPDATE were on.
 CONF_AUTO_UPDATE_ALL: Final = "auto_update_all"
+# KSM-BEHAVE-110: manager-entry option, default off; a device added while it
+# is on gets CONF_ESPHOME_ENABLE_PENDING in its entry data, and its first
+# successful setup turns Kiosk Satellite's ESPHome server on and drops the flag.
+CONF_ESPHOME_NEW_DEVICES: Final = "esphome_new_devices"
+CONF_ESPHOME_ENABLE_PENDING: Final = "esphome_enable_pending"
 CONF_ENTRY_TYPE: Final = "entry_type"
 ENTRY_TYPE_MANAGER: Final = "manager"
 MANAGER_UNIQUE_ID: Final = "ksm_manager"

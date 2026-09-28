@@ -50,6 +50,8 @@ from .adb_client import AdbAuthPending, AdbClient, AdbConnectFailed, ensure_adb_
 from .const import (
     CONF_AREA_ID,
     CONF_AUTO_UPDATE,
+    CONF_ESPHOME_ENABLE_PENDING,
+    CONF_ESPHOME_NEW_DEVICES,
     CONF_TLS_SPKI,
     CONF_DEVICE_PROFILE,
     CONF_ENABLE_DEVICE_OWNER,
@@ -212,6 +214,9 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             )): vol.In([EXISTING_INSTALL_REUSE, EXISTING_INSTALL_REINSTALL]),
             vol.Required(CONF_HOME_LAUNCHER, default=saved.get(CONF_HOME_LAUNCHER, True)): bool,
             vol.Required(CONF_AUTO_UPDATE, default=saved.get(CONF_AUTO_UPDATE, False)): bool,
+            vol.Required(
+                CONF_ESPHOME_NEW_DEVICES, default=saved.get(CONF_ESPHOME_NEW_DEVICES, False)
+            ): bool,
             vol.Optional(CONF_PASSWORD): selector.TextSelector(
                 selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
             ),
@@ -751,6 +756,8 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_AREA_ID: None,
                     CONF_PASSWORD: password,
                     CONF_HA_URL: global_opts.get(CONF_HA_URL),
+                    # KSM-BEHAVE-110: copied at creation like auto-update.
+                    CONF_ESPHOME_ENABLE_PENDING: bool(global_opts.get(CONF_ESPHOME_NEW_DEVICES, False)),
                 }
                 if pin:
                     data[CONF_TLS_SPKI] = pin
@@ -1035,6 +1042,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_AREA_ID: self._area_id,
             CONF_PASSWORD: self._password,
             CONF_HA_URL: self._ha_url,
+            CONF_ESPHOME_ENABLE_PENDING: bool((self._global or {}).get(CONF_ESPHOME_NEW_DEVICES, False)),
         }
         if self._tls_pin:
             data[CONF_TLS_SPKI] = self._tls_pin

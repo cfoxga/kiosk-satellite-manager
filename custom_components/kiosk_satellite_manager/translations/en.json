@@ -107,6 +107,7 @@
           "existing_install_action": "Existing installation",
           "home_launcher": "Enable home launcher",
           "auto_update": "Auto-update new devices",
+          "esphome_new_devices": "Turn on ESPHome on new devices",
           "password": "Kiosk Satellite password",
           "ha_url": "Home Assistant URL",
           "token_mode": "Home Assistant credential",

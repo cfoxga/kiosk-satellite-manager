@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Every managed kiosk now gets an ESPHome node name (#67). If the kiosk has
+  none, KSM sets it from the device's name (Great Room Portal →
+  `great-room-portal`) the next time the device loads; a node name it already
+  has is left alone. KSM does not turn ESPHome on by itself: the manager's
+  options have a new **Turn on ESPHome on new devices** setting, off by
+  default. When it is on, a kiosk you add has ESPHome turned on once. After
+  that, your choice on the kiosk stands.
+
 - KSM now downloads each Kiosk Satellite release **once**, keeps it on the
   Home Assistant server, and sends it to your kiosks itself (#70). The update
   entity, auto-update and **Update all** all upload KSM's copy over the
