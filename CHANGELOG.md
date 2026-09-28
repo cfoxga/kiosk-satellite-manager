@@ -9,6 +9,14 @@
   service target IDs and backup paths. KSM only reads fleet status; invitations and sync remain
   controlled on the kiosks.
 
+- Each KSM device's Configure menu now offers **Rename device** (#78). It uses
+  KSM's existing rename operation and shows which name layers completed,
+  which need attention, and any old ESPHome action callers.
+
+- Enable Device Owner now supports Portal Gen 2 (#54). The Great Room Portal
+  confirmed the same account-clearing and Device Owner sequence as Portal Go
+  and Mini; KSM reopens Meta setup for the required on-device sign-in afterward.
+
 - Meta Portal updates that fail because Android's package verifier rejects the
   APK now try once more after KSM reads and disables that verifier over ADB
   (#76). Other devices and failures are unaffected. Manual update failures

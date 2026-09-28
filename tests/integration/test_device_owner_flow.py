@@ -74,7 +74,7 @@ def _adb(fake: FakeDevice | None, connect_error: Exception | None = None):
 async def _open_owner_step(hass, device):
     result = await hass.config_entries.options.async_init(device.entry_id)
     assert result["type"] == data_entry_flow.FlowResultType.MENU
-    assert set(result["menu_options"]) == {"device_password", "device_owner"}
+    assert set(result["menu_options"]) == {"device_rename", "device_password", "device_owner"}
     return await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "device_owner"}
     )
@@ -211,10 +211,10 @@ async def test_non_meta_model_enrolls_without_meta_setup(hass, meta_start):
     """[KSM-TEST-217] Negative: a model without a Meta setup app ends in the
     plain 'enabled' result and Meta setup is never started."""
     entry = MockConfigEntry(
-        domain=DOMAIN, title="Gen2", unique_id="192.0.2.52",
+        domain=DOMAIN, title="Gen1", unique_id="192.0.2.52",
         data={
             CONF_HOST: "192.0.2.52", CONF_PORT: 5555, CONF_KEY_PATH: "/k/adbkey",
-            CONF_NAME: "Gen2", CONF_DEVICE_PROFILE: "portal_gen2",
+            CONF_NAME: "Gen1", CONF_DEVICE_PROFILE: "portal_gen1",
         },
     )
     entry.add_to_hass(hass)
