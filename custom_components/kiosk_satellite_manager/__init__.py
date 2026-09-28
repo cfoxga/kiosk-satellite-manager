@@ -71,7 +71,7 @@ from .const import (
 from . import config_backup, ks_tls
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .ks_api import latest_release_info
-from .ks_update import async_check_devices_for_update
+from .ks_update import async_check_device_for_update, async_check_devices_for_update
 from .esphome_identity import async_ensure_esphome_identity
 from .ks_api_client import KsApiError
 from .ks_api_client import login as ks_api_login
@@ -426,6 +426,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await _async_migrate_tls(hass, entry)
         # KSM-BEHAVE-110 (#67): node name always; ESPHome on only when chosen.
         await async_ensure_esphome_identity(hass, entry)
+        # KSM-BEHAVE-117: the shared first check is a baseline and may run
+        # before this device is loaded. Refresh its own ESPHome update view.
+        try:
+            outcome = await async_check_device_for_update(hass, entry, coordinator)
+            _LOGGER.info("Kiosk Satellite startup update check on %s: %s", entry.title, outcome)
+        except Exception as err:
+            _LOGGER.warning("Kiosk Satellite startup update check failed on %s: %s", entry.title, err)
 
     entry.async_create_background_task(hass, _post_setup(), f"{DOMAIN}_post_setup_{host}")
 

@@ -88,7 +88,10 @@ def device_update_check():
     with patch(
         "custom_components.kiosk_satellite_manager.async_check_devices_for_update",
         new=AsyncMock(return_value={}),
-    ) as mock:
+    ) as mock, patch(
+        "custom_components.kiosk_satellite_manager.async_check_device_for_update",
+        new=AsyncMock(return_value="sees 2026.9.1"),
+    ):
         yield mock
 
 

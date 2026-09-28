@@ -91,7 +91,7 @@ SIGNAL_MANAGER_OPTIONS_UPDATED: Final = f"{DOMAIN}_manager_options_updated"
 # hass.data[DOMAIN], which maps entry_id -> health coordinator and is emptied
 # to decide when the last entry has unloaded.
 RELEASE_COORDINATOR_KEY: Final = f"{DOMAIN}_release"
-RELEASE_CHECK_INTERVAL_MIN: Final = 60
+RELEASE_CHECK_INTERVAL_MIN: Final = 15
 
 # KSM-BEHAVE-018: Allow up to 120s (24 * 5s) for the user to tap "Allow USB debugging?"
 # on a new or factory-reset device screen during the initial pairing attempt.

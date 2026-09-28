@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- KSM checks for new Kiosk Satellite releases every 15 minutes (#75). When a
+  device entry starts, KSM also asks that device to refresh its update status,
+  so an already-known release reaches its ESPHome update entity after a restart.
+
 - The global **Install version** list now always offers at least five versions
   (#74): every downloaded version, marked "(downloaded)", plus the newest
   Kiosk Satellite releases. Picking one that isn't downloaded yet downloads it

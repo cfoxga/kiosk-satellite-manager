@@ -75,3 +75,21 @@ async def test_only_a_newly_seen_release_fans_out_to_devices(
         release_check.return_value = ReleaseInfo("2026.9.3", "https://example.invalid/3", "notes")
         await _press(hass, _entity(hass, manager, "check_for_updates"))
         assert device_update_check.await_count == 2
+
+
+async def test_device_setup_checks_its_release_even_at_startup_baseline(
+    hass, release_check, device_update_check
+):
+    """[KSM-TEST-226] Setup refreshes the ESPHome release view without a version change."""
+    with patch(_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.1"})), patch(
+        "custom_components.kiosk_satellite_manager.async_check_device_for_update",
+        new=AsyncMock(side_effect=RuntimeError("device check failed")), create=True,
+    ) as check:
+        first = await init_integration(hass)
+        assert hass.config_entries.async_get_entry(first.entry.entry_id) is not None
+        check.assert_awaited_once()
+        assert check.await_args.args[1] is first.entry
+        assert release_check.await_count >= 1
+        device_update_check.assert_not_awaited()
+
+    assert hass.data[RELEASE_COORDINATOR_KEY].update_interval.total_seconds() == 15 * 60

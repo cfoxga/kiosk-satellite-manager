@@ -94,7 +94,7 @@ def _entity_id(hass, entry, suffix: str) -> str:
     )
 
 
-async def test_entries_share_one_hourly_release_check(hass, release_check):
+async def test_entries_share_one_15_minute_release_check(hass, release_check):
     """[KSM-TEST-130] One release coordinator for all entries, one GitHub
     request between them, removed only when the last entry unloads.
 
@@ -107,7 +107,7 @@ async def test_entries_share_one_hourly_release_check(hass, release_check):
         second = await init_integration(hass, data={CONF_HOST: "192.168.99.98"})
 
         coordinator = hass.data[RELEASE_COORDINATOR_KEY]
-        assert coordinator.update_interval == timedelta(hours=1)
+        assert coordinator.update_interval == timedelta(minutes=15)
         assert release_check.await_count == 1
 
         manager = next(
