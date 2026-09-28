@@ -40,6 +40,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components import persistent_notification
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
@@ -82,6 +83,7 @@ from .const import (
     MANAGER_UNIQUE_ID,
     ONBOARDING_AUTOMATIC,
     ONBOARDING_REVIEW,
+    RENAME_API_KEY,
     EXISTING_INSTALL_REINSTALL,
     EXISTING_INSTALL_REUSE,
     TOKEN_MODE_AUTO,
@@ -92,6 +94,7 @@ from .credentials import TokenCredential, async_revoke_owned_credential
 from .device_models import DeviceFacts
 from .install import install_and_launch
 from .ks_api_client import KsApiError, login
+from .rename import derive_rename_names
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -273,7 +276,56 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_device_menu(self, user_input: dict | None = None) -> FlowResult:
         """KSM-BEHAVE-088: a device entry's Configure is a menu."""
         return self.async_show_menu(
-            step_id="device_menu", menu_options=["device_password", "device_owner"]
+            step_id="device_menu", menu_options=["device_rename", "device_password", "device_owner"]
+        )
+
+    async def async_step_device_rename(self, user_input: dict | None = None) -> FlowResult:
+        """KSM-BEHAVE-127: expose the existing verified rename operation."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            name = user_input.get(CONF_NAME, "").strip()
+            try:
+                derive_rename_names(name)
+            except ValueError:
+                errors[CONF_NAME] = "invalid_device_name"
+            if not errors:
+                rename = self.hass.data.get(RENAME_API_KEY)
+                if rename is None:
+                    return self.async_abort(reason="device_rename_unavailable")
+                try:
+                    result = await rename(self._entry.entry_id, name)
+                except HomeAssistantError:
+                    errors["base"] = "device_rename_failed"
+                if errors:
+                    return self.async_show_form(
+                        step_id="device_rename",
+                        data_schema=vol.Schema({
+                            vol.Required(CONF_NAME, default=self._entry.title): str,
+                        }),
+                        errors=errors,
+                    )
+                parts = [f"{layer}: {result[layer]}" for layer in (
+                    "ks", "android", "entry", "host", "esphome"
+                )]
+                actions = result.get("esphome_actions") or {}
+                if actions.get("callers"):
+                    parts.append("Old ESPHome action callers: " + ", ".join(actions["callers"]))
+                if result.get("error"):
+                    parts.append(f"Error: {result['error']}")
+                incomplete = any(result[layer] in (
+                    "failed", "pending", "unsupported"
+                ) for layer in ("ks", "android", "entry", "host", "esphome"))
+                return self.async_abort(
+                    reason="device_rename_incomplete" if incomplete else "device_rename_done",
+                    description_placeholders={"result": "; ".join(parts)},
+                )
+
+        return self.async_show_form(
+            step_id="device_rename",
+            data_schema=vol.Schema({
+                vol.Required(CONF_NAME, default=self._entry.title): str,
+            }),
+            errors=errors,
         )
 
     async def async_step_device_password(self, user_input: dict | None = None) -> FlowResult:

@@ -100,6 +100,13 @@
           "password": "Current Kiosk Satellite password"
         }
       },
+      "device_rename": {
+        "title": "Rename Kiosk Satellite device",
+        "description": "This changes the Kiosk Satellite name, hostname and ESPHome node, then updates the KSM entry. Android's system name may remain unchanged. A DNS hostname changes only after the new name resolves to this device. Review any old ESPHome action callers shown in the result.",
+        "data": {
+          "name": "New device name"
+        }
+      },
       "init": {
         "title": "Configure Kiosk Satellite Manager",
         "description": "Install version and backup settings apply to every device now; the other settings apply to future devices only. Leave the password empty to retain it. A backup period of 0 turns automatic backups off.",
@@ -123,6 +130,7 @@
       "device_menu": {
         "title": "Configure this device",
         "menu_options": {
+          "device_rename": "Rename device",
           "device_password": "Update Kiosk Satellite password",
           "device_owner": "Enable Device Owner (advanced)"
         }
@@ -143,6 +151,8 @@
       }
     },
     "error": {
+      "invalid_device_name": "Enter a name containing at least one letter or number",
+      "device_rename_failed": "Could not start the rename. Check the device connection and stored password.",
       "password_required": "Enter the device password",
       "password_verification_failed": "The device did not accept the password or could not be reached",
       "token_not_found": "Selected token is unavailable",
@@ -150,6 +160,9 @@
       "confirm_required": "Tick the box to confirm, or close this dialog to cancel"
     },
     "abort": {
+      "device_rename_done": "Rename completed: {result}",
+      "device_rename_incomplete": "Rename needs attention: {result}",
+      "device_rename_unavailable": "Kiosk Satellite Manager is not loaded for this device. Try again after the integration loads.",
       "device_owner_enabled": "Kiosk Satellite is now Device Owner on this device.",
       "device_owner_already": "Kiosk Satellite is already Device Owner on this device. Nothing was changed.",
       "device_owner_blocked": "Device Owner cannot be enabled because {reason}. Nothing was changed.",

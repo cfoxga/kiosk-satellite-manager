@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Each KSM device's Configure menu now offers **Rename device** (#78). It uses
+  KSM's existing rename operation and shows which name layers completed,
+  which need attention, and any old ESPHome action callers.
+
 - Enable Device Owner now supports Portal Gen 2 (#54). The Great Room Portal
   confirmed the same account-clearing and Device Owner sequence as Portal Go
   and Mini; KSM reopens Meta setup for the required on-device sign-in afterward.
