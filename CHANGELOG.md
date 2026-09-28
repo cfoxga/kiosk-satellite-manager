@@ -5,7 +5,8 @@
 - KSM now manages each kiosk's Voice Satellite entry (#65). When a device is
   set up, KSM reuses the Voice Satellite entry with the device's name, or
   creates one, and points Kiosk Satellite at its satellite entity. A kiosk
-  that is already bound to a working Voice Satellite entity keeps it. If Voice
+  that is already bound to a working Voice Satellite entity keeps it, unless
+  that satellite carries another kiosk's name (a renamed kiosk gets its own). If Voice
   Satellite isn't installed, a repair asks whether to install it through HACS;
   nothing is downloaded unless you confirm.
 

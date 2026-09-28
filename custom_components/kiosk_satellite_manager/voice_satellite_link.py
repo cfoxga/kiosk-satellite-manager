@@ -71,6 +71,23 @@ def _satellite_entity(hass: HomeAssistant, vs_entry: ConfigEntry) -> str | None:
     return None
 
 
+def _named_for_another_device(
+    hass: HomeAssistant, entry: ConfigEntry, satellite: er.RegistryEntry
+) -> bool:
+    """True when the satellite's Voice Satellite entry carries another KSM
+    device's name -- e.g. a device renamed away from "Great Room Kiosk"
+    while a new device took that name. The renamed device lets it go."""
+    vs_entry = hass.config_entries.async_get_entry(satellite.config_entry_id or "")
+    if vs_entry is None:
+        return False
+    return any(
+        other.entry_id != entry.entry_id
+        and other.data.get(CONF_ENTRY_TYPE) is None
+        and satellite_unique_id(other.data.get(CONF_NAME) or other.title) == vs_entry.unique_id
+        for other in hass.config_entries.async_entries(DOMAIN)
+    )
+
+
 async def async_bind_voice_satellite(hass: HomeAssistant, entry: ConfigEntry) -> str | None:
     """KSM-BEHAVE-100: keep the device's live Voice Satellite binding, or
     create/adopt its entry by name and point KS at that entry's satellite
@@ -104,9 +121,14 @@ async def async_bind_voice_satellite(hass: HomeAssistant, entry: ConfigEntry) ->
         return None
     # A device already bound to a live Voice Satellite entity keeps it, even
     # when that satellite's name differs from the device's (e.g. a KSM entry
-    # "Theater GTV" on a hand-made "Theater Google TV" satellite).
+    # "Theater GTV" on a hand-made "Theater Google TV" satellite) -- unless
+    # another KSM device now has that satellite's name.
     existing = er.async_get(hass).async_get(current) if current else None
-    if existing is not None and existing.platform == VS_DOMAIN:
+    if (
+        existing is not None
+        and existing.platform == VS_DOMAIN
+        and not _named_for_another_device(hass, entry, existing)
+    ):
         _LOGGER.debug("Kiosk Satellite %s keeps its binding to %s", name, current)
         return current
 

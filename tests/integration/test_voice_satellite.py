@@ -306,3 +306,36 @@ async def test_upstream_flow_change_fails_soft(hass, ks_api, upstream):
     assert entry.state is ConfigEntryState.LOADED
     assert _bound(patch_settings) == []
     assert ir.async_get(hass).async_get_issue(DOMAIN, ISSUE) is None
+
+
+async def test_binding_owned_by_another_devices_name_is_released(hass, ks_api):
+    """[KSM-TEST-192] A renamed device (was "Great Room Kiosk", now "Master
+    Bedroom Kiosk") still bound to the satellite whose name another KSM
+    device now has gives it up: it gets its own entry, and the device
+    with that name adopts the old one."""
+    _install_voice_satellite(hass)
+    old = MockConfigEntry(
+        domain=VS, unique_id="great_room_kiosk", title="Great Room Kiosk",
+        data={"name": "Great Room Kiosk"},
+    )
+    old.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(old.entry_id)
+    old_satellite = _satellite(hass, old)
+    _, patch_settings, get_settings = ks_api
+
+    get_settings.return_value = {"ha.satellite_entity": old_satellite}
+    await _add_device(hass, "Master Bedroom Kiosk", host="192.168.99.250")
+    # Alone, the renamed device keeps its binding: no other device owns the name yet.
+    assert _bound(patch_settings) == []
+
+    get_settings.return_value = {}
+    await _add_device(hass, "Great Room Kiosk", host="192.168.99.45")
+    assert _bound(patch_settings) == [("192.168.99.45", old_satellite)]
+
+    get_settings.return_value = {"ha.satellite_entity": old_satellite}
+    [renamed] = [e for e in hass.config_entries.async_entries(DOMAIN) if e.data.get("host") == "192.168.99.250"]
+    assert await hass.config_entries.async_reload(renamed.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    [bedroom] = [e for e in hass.config_entries.async_entries(VS) if e.unique_id == "master_bedroom_kiosk"]
+    assert _bound(patch_settings)[-1] == ("192.168.99.250", _satellite(hass, bedroom))
+    assert len(hass.config_entries.async_entries(VS)) == 2
