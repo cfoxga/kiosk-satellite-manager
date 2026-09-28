@@ -66,6 +66,7 @@ from .const import (
 from . import ks_tls
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .ks_api import latest_release_info
+from .voice_satellite_link import async_bind_voice_satellite
 from .ks_api_client import KsApiError
 from .ks_api_client import login as ks_api_login
 from .provisioning import ProvisioningMismatch, apply_provisioning, fetch_health
@@ -300,10 +301,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    if entry.data.get(CONF_PASSWORD) and not entry.data.get(CONF_TLS_SPKI):
-        entry.async_create_background_task(
-            hass, _async_migrate_tls(hass, entry), f"{DOMAIN}_tls_migration_{host}"
-        )
+    async def _post_setup() -> None:
+        if entry.data.get(CONF_PASSWORD) and not entry.data.get(CONF_TLS_SPKI):
+            await _async_migrate_tls(hass, entry)
+        # KSM-BEHAVE-100 (#65): after migration, so the bind uses the new pin.
+        await async_bind_voice_satellite(hass, entry)
+
+    entry.async_create_background_task(hass, _post_setup(), f"{DOMAIN}_post_setup_{host}")
 
     if not hass.services.has_service(DOMAIN, SERVICE_PROVISION):
 

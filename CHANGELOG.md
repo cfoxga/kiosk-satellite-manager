@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- KSM now manages each kiosk's Voice Satellite entry (#65). When a device is
+  set up, KSM reuses the Voice Satellite entry with the device's name, or
+  creates one, and points Kiosk Satellite at its satellite entity. A kiosk
+  that is already bound to a working Voice Satellite entity keeps it. If Voice
+  Satellite isn't installed, a repair asks whether to install it through HACS;
+  nothing is downloaded unless you confirm.
+
 - Adding a Portal no longer stops half-way when Android keeps its own Home screen
   (#61). Install/Reinstall used to fail before it set the device name, admin
   password and Home Assistant connection whenever the Portal's launcher stayed
