@@ -76,6 +76,7 @@ from .const import (
     CONNECT_RETRY_ATTEMPTS,
     CONNECT_RETRY_DELAY_S,
     DEFAULT_ADB_PORT,
+    HEALTH_PORT,
     DEFAULT_BACKUP_INTERVAL_HOURS,
     DEFAULT_BACKUP_KEEP,
     DOMAIN,
@@ -168,6 +169,78 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Optional(CONF_PORT, default=DEFAULT_ADB_PORT): int,
     }
 )
+
+FLEET_CHOICE = "fleet_entry_id"
+UNMANAGED_CHOICE = "unmanaged"
+
+
+def _fleet_options(hass) -> list[selector.SelectOptionDict]:
+    """Existing KS fleets, not the synthetic Unmanaged entry."""
+    return [selector.SelectOptionDict(value=UNMANAGED_CHOICE, label="Unmanaged"), *(
+        selector.SelectOptionDict(value=entry.entry_id, label=entry.title)
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_FLEET
+    )]
+
+
+def _onboarding_schema(hass) -> vol.Schema:
+    fields = dict(STEP_USER_DATA_SCHEMA.schema)
+    if len(options := _fleet_options(hass)) > 1:
+        fields[vol.Optional(FLEET_CHOICE, default=UNMANAGED_CHOICE)] = (
+            selector.SelectSelector(selector.SelectSelectorConfig(
+                options=options, mode=selector.SelectSelectorMode.DROPDOWN,
+            ))
+        )
+    return vol.Schema(fields)
+
+
+def _invitation_leader(hass, fleet_entry_id: str) -> fleet.DeviceEntry | None:
+    """Resolve a current, confirmed leader for the selected HA fleet."""
+    parent = hass.config_entries.async_get_entry(fleet_entry_id)
+    if parent is None or parent.domain != DOMAIN or parent.data.get(CONF_ENTRY_TYPE) != ENTRY_TYPE_FLEET:
+        return None
+    leader_id = parent.data.get("leader_id")
+    leaders = [device for device in fleet.device_entries(hass, parent)
+               if device.fleet_status.get("self_id") == leader_id
+               and device.fleet_status.get("leading") is True
+               and fleet.status_available(hass, device.entry_id)]
+    return leaders[0] if len(leaders) == 1 else None
+
+
+async def _async_invite_to_fleet(
+    hass, fleet_entry_id: str, target_host: str, target_password: str, target_pin: str | None,
+) -> None:
+    """Ask the selected leader to invite a verified KS device by address."""
+    leader = _invitation_leader(hass, fleet_entry_id)
+    if leader is None:
+        raise KsApiError("selected Fleet has no available leader")
+    data = leader.data
+    session = async_get_clientsession(hass)
+    target_token = await login(session, target_host, target_password, pin=target_pin)
+    target_status = await ks_api_client.run_command(
+        session, target_host, target_token, "fleetStatus", pin=target_pin,
+    )
+    target_data = target_status.get("data") if isinstance(target_status, dict) and target_status.get("ok") is True else None
+    target_self = target_data.get("self") if isinstance(target_data, dict) else None
+    target_id = target_self.get("id") if isinstance(target_self, dict) else None
+    if not isinstance(target_id, str) or not target_id:
+        raise KsApiError("new kiosk did not report a Fleet identity")
+    pin = data.get(CONF_TLS_SPKI)
+    token = await login(session, data[CONF_HOST], data[CONF_PASSWORD], pin=pin)
+    found = await ks_api_client.run_command(
+        session, data[CONF_HOST], token, "fleetLookup", pin=pin,
+        params={"address": target_host, "port": HEALTH_PORT},
+    )
+    kiosk = found.get("data") if isinstance(found, dict) and found.get("ok") is True else None
+    if not isinstance(kiosk, dict) or kiosk.get("id") != target_id or not kiosk.get("address"):
+        raise KsApiError("leader lookup does not match the new kiosk")
+    invited = await ks_api_client.run_command(
+        session, data[CONF_HOST], token, "fleetInvite", pin=pin,
+        params={"id": kiosk["id"], "address": kiosk["address"],
+                "port": kiosk.get("port", HEALTH_PORT), "profile": "default"},
+    )
+    if not isinstance(invited, dict) or invited.get("ok") is not True:
+        raise KsApiError("leader rejected the Fleet invitation")
 
 
 def _valid_ha_url(value: str) -> bool:
@@ -664,6 +737,8 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._ha_url: str | None = None
         self._auto_update: bool = False
         self._want_device_owner: bool = False
+        self._selected_fleet_id: str | None = None
+        self._invitation_attempted: bool = False
 
     @staticmethod
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
@@ -711,8 +786,15 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not user_input.get(CONF_HOST):
                 errors[CONF_HOST] = "host_required"
                 return self.async_show_form(
-                    step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+                    step_id="user", data_schema=_onboarding_schema(self.hass), errors=errors
                 )
+            selected = user_input.get(FLEET_CHOICE, UNMANAGED_CHOICE)
+            if selected != UNMANAGED_CHOICE and _invitation_leader(self.hass, selected) is None:
+                errors[FLEET_CHOICE] = "fleet_unavailable"
+                return self.async_show_form(
+                    step_id="user", data_schema=_onboarding_schema(self.hass), errors=errors
+                )
+            self._selected_fleet_id = selected if selected != UNMANAGED_CHOICE else None
             host = user_input[CONF_HOST]
             port = user_input.get(CONF_PORT, DEFAULT_ADB_PORT)
             if any(device.data.get(CONF_HOST) == host for device in fleet.device_entries(self.hass)):
@@ -749,7 +831,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
                 _LOGGER.debug("connect to %s failed: %s", host, last_err)
                 return self.async_show_form(
-                    step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+                    step_id="user", data_schema=_onboarding_schema(self.hass), errors=errors
                 )
 
             try:
@@ -806,7 +888,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
         return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+            step_id="user", data_schema=_onboarding_schema(self.hass), errors=errors
         )
 
     async def async_step_confirm(self, user_input: dict | None = None) -> FlowResult:
@@ -969,6 +1051,10 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         the device's own API (pinned HTTPS when it can), then create the entry."""
         errors: dict[str, str] = {}
         if user_input is not None:
+            if self._selected_fleet_id and _invitation_leader(self.hass, self._selected_fleet_id) is None:
+                errors["base"] = "fleet_unavailable"
+                user_input = None
+        if user_input is not None:
             password = user_input[CONF_PASSWORD]
             session = async_get_clientsession(self.hass)
             pin: str | None = None
@@ -995,6 +1081,9 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 except (aiohttp.ClientError, TimeoutError, ValueError):
                     errors["base"] = "cannot_connect_ks"
             if not errors:
+                self._password = password
+                self._tls_pin = pin
+                await self._async_maybe_invite()
                 global_opts = self._global or {}
                 data = {
                     CONF_HOST: self._host,
@@ -1133,6 +1222,8 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """KSM-BEHAVE-012: run install_and_launch as a progress step so
         adding the integration installs the app automatically instead of
         requiring a separate button press afterward."""
+        if self._selected_fleet_id and _invitation_leader(self.hass, self._selected_fleet_id) is None:
+            return self.async_abort(reason="fleet_unavailable")
         if not self._install_task:
             self._install_task = self.hass.async_create_task(self._async_do_install())
 
@@ -1181,6 +1272,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     device_model=self._profile_key,
                     ha_url=self._ha_url,
                     on_tls_pinned=self._set_tls_pin,
+                    before_ha_setup=self._async_maybe_invite,
                 )
                 if used_token:
                     self._credential = used_token
@@ -1209,9 +1301,41 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._tls_pin = pin
 
     async def async_step_install_done(self, user_input: dict | None = None) -> FlowResult:
+        # Fresh installs invite from the bootstrap callback. A failed install
+        # never reaches it, so must not fall through to an invitation here.
+        if self._existing_install_action == EXISTING_INSTALL_REUSE:
+            await self._async_maybe_invite()
         if self._want_device_owner:
             return await self.async_step_onboard_device_owner()
         return self._async_create_device_entry()
+
+    async def _async_maybe_invite(self) -> None:
+        """Send one invitation after the new KS admin endpoint is reachable."""
+        if self._selected_fleet_id is None or self._invitation_attempted:
+            return
+        self._invitation_attempted = True
+        try:
+            await _async_invite_to_fleet(
+                self.hass, self._selected_fleet_id, self._host, self._password, self._tls_pin,
+            )
+        except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError, KeyError) as err:
+            _LOGGER.warning("Fleet invitation failed for %s: %s", self._host, type(err).__name__)
+            persistent_notification.async_create(
+                self.hass,
+                message=(f"Could not invite {self._discovered_name or self._host} to the selected "
+                         "Fleet. The device was added to KSM under Unmanaged. "
+                         "Use the leader's Fleet Management page to retry."),
+                title="Kiosk Satellite Fleet invitation failed",
+                notification_id=f"{DOMAIN}_fleet_invite_{self._host}",
+            )
+        else:
+            persistent_notification.async_create(
+                self.hass,
+                message=(f"The Fleet invitation for {self._discovered_name or self._host} was sent. "
+                         "Accept it on the new kiosk; KSM will move the device after KS confirms membership."),
+                title="Accept Kiosk Satellite Fleet invitation",
+                notification_id=f"{DOMAIN}_fleet_invite_{self._host}",
+            )
 
     async def async_step_onboard_device_owner(
         self, user_input: dict | None = None

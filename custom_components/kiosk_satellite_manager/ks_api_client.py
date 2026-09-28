@@ -291,14 +291,14 @@ async def import_config(
 
 async def run_command(
     session: aiohttp.ClientSession, host: str, token: str, command: str,
-    *, pin: str | None,
+    *, pin: str | None, params: dict | None = None,
 ) -> dict:
-    """POST /api/commands/<command> with an empty body and a Bearer token
+    """POST /api/commands/<command> with parameters and a Bearer token
     (KSM-BEHAVE-082) -- checkUpdateNow, getUpdateStatus,
     getUpdateInstallerStatus and installUpdate all ride this same shape."""
     async with session.post(
         _credential_url(host, f"/api/commands/{command}", pin),
-        data="{}",
+        **({"json": params} if params is not None else {"data": "{}"}),
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         allow_redirects=False,
         ssl=_ssl(pin),
@@ -353,4 +353,3 @@ async def check_ha_connection(
     ) as resp:
         data = await resp.json()
         return bool(data.get("ok"))
-

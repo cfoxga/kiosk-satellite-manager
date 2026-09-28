@@ -15,9 +15,10 @@ remotely — do them once per device, in order:
 2. **Tap "Allow USB debugging?"** on the device screen the first time this integration connects.
    The integration reuses one persistent ADB key across devices, so this is a true one-time tap per
    device, not a per-session prompt.
-3. **Tap Accept on-device if the device is joining a Kiosk Satellite fleet.** Fleet invitations are
-   answered on the kiosk screen only. KSM reads accepted membership to organize Home Assistant;
-   it does not send or accept invitations.
+3. **Tap Accept on-device if the device is joining a Kiosk Satellite fleet.** Choose an existing
+   Fleet in KSM's Add device form to have its leader send the invitation once KS is running.
+   Invitations are answered on the new kiosk screen only; KSM moves the device from Unmanaged
+   after KS confirms acceptance.
 
 ## What it does
 
@@ -28,6 +29,10 @@ remotely — do them once per device, in order:
   leader, managed count, reachability and sync status. Existing device entries migrate in place:
   their entity IDs, areas, options, service target IDs and backup paths remain usable. Configure a
   physical kiosk from its device subentry to update its password or enable Device Owner.
+  A new device can select an existing Fleet during addition. For a fresh install KSM sends the
+  invitation after setting the local admin password and secure transport, before writing its HA
+  settings. KS still keeps identity, remote access, HA credentials, and hardware preferences local;
+  the selected Fleet syncs only the categories allowed by its Default profile after acceptance.
 - **Install** — connects over ADB, detects the device type (Meta Portal vs. Android TV stick, etc.),
   fetches the matching Kiosk Satellite APK for the device's ABI from the project's GitHub releases,
   and installs it. A `button` entity (Install/Reinstall) and a `sensor` entity (installed KS version)

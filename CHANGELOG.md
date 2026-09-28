@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The Add device form can select an existing Kiosk Satellite Fleet (#92). KSM asks its leader
+  to invite the new kiosk after KS is running and its local admin connection is ready, before
+  writing Home Assistant settings. Accept the invitation on the new kiosk; HA placement follows
+  confirmed KS membership. A failed invitation leaves the added device under Unmanaged and
+  displays a notification.
+
 - Explicitly renaming a Meta Portal from KSM Configure now also updates its
   Android **Portal Name** over one temporary ADB connection (#81). Enable
   network ADB on the Portal for the action; KSM verifies the Android setting

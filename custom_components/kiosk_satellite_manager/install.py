@@ -46,7 +46,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.network import get_url
 
 from collections.abc import Callable
-from typing import Any, Final
+from typing import Any, Awaitable, Final
 
 from . import apk_cache, ks_api_client, ks_tls
 from .adb_client import AdbClient
@@ -309,6 +309,7 @@ async def install_and_launch(
     device_model: str | None = None,
     ha_url: str | None = None,
     on_tls_pinned: Callable[[str], None] | None = None,
+    before_ha_setup: Callable[[], Awaitable[None]] | None = None,
 ) -> TokenCredential | None:
     """Fetch the latest universal KS APK (#71), install it, launch
     it, and grant full permissions. If a password is configured on the entry,
@@ -455,6 +456,7 @@ async def install_and_launch(
             recipe=recipe,
             ha_url=ha_url,
             on_tls_pinned=on_tls_pinned,
+            before_ha_setup=before_ha_setup,
         )
     except (KsApiError, aiohttp.ClientError, asyncio.TimeoutError) as err:
         _LOGGER.warning("device-name/HA auto-connect sync failed for %s: %s", host, err)
@@ -554,6 +556,7 @@ async def _sync_device_and_connect_ha(
     home_launcher: bool = True,
     ha_url: str | None = None,
     on_tls_pinned: Callable[[str], None] | None = None,
+    before_ha_setup: Callable[[], Awaitable[None]] | None = None,
 ) -> TokenCredential:
     status, served = await _wait_for_setup_status(session, host)
     password_needed = status.get("passwordNeeded", True)
@@ -579,6 +582,11 @@ async def _sync_device_and_connect_ha(
         await ks_api_client.patch_settings(
             session, host, token, {"device.name": device_name}, pin=pin
         )
+
+    # Fleet sync needs a running app and a local admin credential. Invite at
+    # that first safe point, before KSM writes Home Assistant settings.
+    if before_ha_setup is not None:
+        await before_ha_setup()
 
     credential = token_credential
     created_credential = False

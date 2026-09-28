@@ -7,7 +7,8 @@
         "data": {
           "host": "IP address",
           "port": "ADB port",
-          "entry_type": "Configuration type"
+          "entry_type": "Configuration type",
+          "fleet_entry_id": "Invite to Fleet"
         }
       },
       "device_info": {
@@ -84,11 +85,13 @@
       "unsupported_device": "This device has no approved install recipe",
       "invalid_ha_url": "Enter an absolute HTTP or HTTPS URL",
       "invalid_auth": "Kiosk Satellite did not accept that password",
-      "cannot_connect_ks": "Could not connect securely to Kiosk Satellite on port 2324"
+      "cannot_connect_ks": "Could not connect securely to Kiosk Satellite on port 2324",
+      "fleet_unavailable": "The selected Fleet leader is unavailable. Choose another Fleet or Unmanaged."
     },
     "abort": {
       "already_configured": "Device is already configured",
-      "not_manager": "Global settings belong to the Configure KSM entry"
+      "not_manager": "Global settings belong to the Configure KSM entry",
+      "fleet_unavailable": "The selected Fleet leader is unavailable. Add the device again and choose another Fleet."
     }
   },
   "options": {

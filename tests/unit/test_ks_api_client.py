@@ -323,6 +323,20 @@ async def test_run_command_posts_bearer_token_to_the_command_url():
     assert session.post.call_args.args[0] == "http://192.168.1.50:2324/api/commands/getUpdateStatus"
 
 
+async def test_run_command_sends_fleet_invitation_parameters():
+    """[KSM-TEST-247] Invitation payload stays on the authenticated leader origin."""
+    session = _fake_session(post=_fake_response({"ok": True, "data": True}))
+    await ks_api_client.run_command(
+        session, "192.168.1.10", "leader-token", "fleetInvite", pin=None,
+        params={"id": "target-id", "address": "192.168.1.50", "port": 2324, "profile": "default"},
+    )
+    _, kwargs = session.post.call_args
+    assert session.post.call_args.args[0] == "http://192.168.1.10:2324/api/commands/fleetInvite"
+    assert kwargs["json"] == {"id": "target-id", "address": "192.168.1.50", "port": 2324, "profile": "default"}
+    assert kwargs["headers"]["Authorization"] == "Bearer leader-token"
+    assert kwargs["allow_redirects"] is False
+
+
 async def test_run_command_raises_ksapierror_on_rejection():
     session = _fake_session(post=_fake_response({"error": "not authenticated"}, ok=False, status=401))
     with pytest.raises(KsApiError, match="not authenticated"):

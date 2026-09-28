@@ -18,7 +18,10 @@ from custom_components.kiosk_satellite_manager import _active_target, _authorize
 from custom_components.kiosk_satellite_manager.sensor import FleetMembershipSensor, FleetStatusSensor
 from custom_components.kiosk_satellite_manager.button import KioskSatelliteUpdateAllButton
 from custom_components.kiosk_satellite_manager import config_backup, ks_update
-from custom_components.kiosk_satellite_manager.config_flow import KioskSatelliteManagerConfigFlow
+from custom_components.kiosk_satellite_manager.config_flow import (
+    KioskSatelliteManagerConfigFlow, _async_invite_to_fleet, _fleet_options,
+    _invitation_leader,
+)
 
 from .test_global_settings import _manager
 
@@ -38,6 +41,106 @@ async def test_manager_creates_one_unmanaged_peer_entry(hass):
         entry for entry in hass.config_entries.async_entries(DOMAIN)
         if entry.data.get(CONF_ENTRY_TYPE) == "unmanaged"
     ]) == 1
+
+
+async def test_onboarding_fleet_invitation_uses_selected_confirmed_leader(hass):
+    """[KSM-TEST-247] Selection invites through the leader, never places by assertion."""
+    leader_parent = MockConfigEntry(
+        domain=DOMAIN, title="Fleet - Living Room", data={CONF_ENTRY_TYPE: "fleet", "leader_id": "ks-leader"},
+    )
+    leader_parent.add_to_hass(hass)
+    hass.config_entries.async_add_subentry(leader_parent, ConfigSubentry(
+        data=MappingProxyType({
+            "host": "192.168.99.10", "password": "synthetic-password", "tls_spki": None,
+            "_ksm_fleet_status": {"self_id": "ks-leader", "leading": True},
+        }), subentry_id="leader-ha", subentry_type="device", title="Living Room", unique_id="leader-ha",
+    ))
+    hass.data.setdefault(fleet._READ_OK_KEY, set()).add("leader-ha")
+    assert _invitation_leader(hass, leader_parent.entry_id) is not None
+    assert _invitation_leader(hass, "missing-fleet") is None
+    assert leader_parent.entry_id in [option["value"] for option in _fleet_options(hass)]
+
+    flow = KioskSatelliteManagerConfigFlow()
+    flow.hass = hass
+    with patch.object(flow, "async_set_unique_id", new=AsyncMock()), patch.object(
+        flow, "_abort_if_unique_id_configured"
+    ), patch("custom_components.kiosk_satellite_manager.config_flow._async_probe_ks_health",
+             new=AsyncMock(return_value=(None, {"appVersion": "2026.9.87"}))), patch.object(
+        flow, "_async_start_ks_device", new=AsyncMock(return_value={"type": "form"})
+    ):
+        assert (await flow.async_step_user({"host": "192.168.99.50", "fleet_entry_id": leader_parent.entry_id}))["type"] == "form"
+    assert flow._selected_fleet_id == leader_parent.entry_id
+
+    async def command(_session, host, token, name, *, pin, params=None):
+        assert pin is None
+        if name == "fleetStatus":
+            assert (host, token) == ("192.168.99.50", "target-token")
+            return {"ok": True, "data": {"self": {"id": "ks-target"}}}
+        assert (host, token) == ("192.168.99.10", "leader-token")
+        if name == "fleetLookup":
+            assert params == {"address": "192.168.99.50", "port": 2324}
+            return {"ok": True, "data": {"id": "ks-target", "address": "192.168.99.50", "port": 2324}}
+        assert name == "fleetInvite"
+        assert params == {"id": "ks-target", "address": "192.168.99.50", "port": 2324, "profile": "default"}
+        return {"ok": True, "data": True}
+
+    async def token(_session, host, _password, *, pin):
+        return "target-token" if host == "192.168.99.50" else "leader-token"
+
+    with patch("custom_components.kiosk_satellite_manager.config_flow.login",
+               new=AsyncMock(side_effect=token)), patch(
+        "custom_components.kiosk_satellite_manager.config_flow.ks_api_client.run_command",
+        new=AsyncMock(side_effect=command),
+    ) as sent:
+        await _async_invite_to_fleet(hass, leader_parent.entry_id, "192.168.99.50", "target-password", None)
+        assert [call.args[3] for call in sent.await_args_list] == ["fleetStatus", "fleetLookup", "fleetInvite"]
+    assert set(leader_parent.subentries) == {"leader-ha"}
+    hass.data[fleet._READ_OK_KEY].clear()
+    assert _invitation_leader(hass, leader_parent.entry_id) is None
+    stale = KioskSatelliteManagerConfigFlow()
+    stale.hass = hass
+    rejected = await stale.async_step_user({"host": "192.168.99.50", "fleet_entry_id": leader_parent.entry_id})
+    assert rejected["errors"]["fleet_entry_id"] == "fleet_unavailable"
+    with patch("custom_components.kiosk_satellite_manager.config_flow.login",
+               new=AsyncMock()) as login:
+        with pytest.raises(Exception, match="no available leader"):
+            await _async_invite_to_fleet(hass, leader_parent.entry_id, "192.168.99.50", "target-password", None)
+        login.assert_not_awaited()
+    hass.data[fleet._READ_OK_KEY].add("leader-ha")
+    with patch("custom_components.kiosk_satellite_manager.config_flow.login",
+               new=AsyncMock(side_effect=token)), patch(
+        "custom_components.kiosk_satellite_manager.config_flow.ks_api_client.run_command",
+        new=AsyncMock(side_effect=[
+            {"ok": True, "data": {"self": {"id": "ks-target"}}},
+            {"ok": False, "error": "target unavailable"},
+        ]),
+    ) as sent:
+        with pytest.raises(Exception, match="does not match"):
+            await _async_invite_to_fleet(hass, leader_parent.entry_id, "192.168.99.50", "target-password", None)
+        assert sent.await_count == 2
+    with patch("custom_components.kiosk_satellite_manager.config_flow.login",
+               new=AsyncMock(side_effect=token)), patch(
+        "custom_components.kiosk_satellite_manager.config_flow.ks_api_client.run_command",
+        new=AsyncMock(side_effect=[
+            {"ok": True, "data": {"self": {"id": "ks-target"}}},
+            {"ok": True, "data": {"id": "other-kiosk", "address": "192.168.99.51"}},
+        ]),
+    ) as sent:
+        with pytest.raises(Exception, match="does not match"):
+            await _async_invite_to_fleet(hass, leader_parent.entry_id, "192.168.99.50", "target-password", None)
+        assert sent.await_count == 2  # no invitation for the wrong kiosk
+    with patch("custom_components.kiosk_satellite_manager.config_flow.login",
+               new=AsyncMock(side_effect=token)), patch(
+        "custom_components.kiosk_satellite_manager.config_flow.ks_api_client.run_command",
+        new=AsyncMock(side_effect=[
+            {"ok": True, "data": {"self": {"id": "ks-target"}}},
+            {"ok": True, "data": {"id": "ks-target", "address": "192.168.99.50"}},
+            {"ok": False, "error": "not leading"},
+        ]),
+    ) as sent:
+        with pytest.raises(Exception, match="rejected the Fleet invitation"):
+            await _async_invite_to_fleet(hass, leader_parent.entry_id, "192.168.99.50", "target-password", None)
+        assert sent.await_count == 3
 
 
 async def test_device_subentry_configure_verifies_password(hass):

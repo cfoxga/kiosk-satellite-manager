@@ -56,6 +56,70 @@ def _getprop(**props: str) -> AsyncMock:
     return AsyncMock(side_effect=_read)
 
 
+async def test_selected_fleet_invitation_attempted_once_before_entry_creation(hass):
+    """[KSM-TEST-247] A flow retry cannot send a second invitation."""
+    flow = KioskSatelliteManagerConfigFlow()
+    flow.hass = hass
+    flow._host = "192.168.99.50"
+    flow._discovered_name = "New Display"
+    flow._selected_fleet_id = "fleet-ha"
+    flow._existing_install_action = EXISTING_INSTALL_REUSE
+    events = []
+
+    async def invite(_hass, selected, host, password, pin):
+        events.append(("invite", selected, host, password, pin))
+
+    with patch("custom_components.kiosk_satellite_manager.config_flow._async_invite_to_fleet",
+               new=invite), patch.object(flow, "_async_create_device_entry", side_effect=lambda: events.append(("create",))):
+        await flow.async_step_install_done()
+        await flow.async_step_install_done()
+    assert events == [("invite", "fleet-ha", "192.168.99.50", None, None), ("create",), ("create",)]
+
+
+async def test_failed_onboarding_invitation_is_reported_without_claiming_join(hass):
+    """[KSM-TEST-247] A failed leader call leaves a recoverable entry and a notice."""
+    flow = KioskSatelliteManagerConfigFlow()
+    flow.hass = hass
+    flow._host = "192.168.99.50"
+    flow._selected_fleet_id = "fleet-ha"
+    flow._existing_install_action = EXISTING_INSTALL_REUSE
+    with patch("custom_components.kiosk_satellite_manager.config_flow._async_invite_to_fleet",
+               new=AsyncMock(side_effect=ValueError("unreachable"))) as invite, patch(
+        "custom_components.kiosk_satellite_manager.config_flow.persistent_notification.async_create"
+    ) as notice, patch.object(flow, "_async_create_device_entry", return_value={"type": "create_entry"}):
+        assert (await flow.async_step_install_done())["type"] == "create_entry"
+        assert (await flow.async_step_install_done())["type"] == "create_entry"
+    invite.assert_awaited_once()
+    assert notice.call_count == 1
+    assert "Unmanaged" in notice.call_args.kwargs["message"]
+
+
+async def test_failed_fresh_install_cannot_invite_a_device(hass):
+    """[KSM-TEST-247] Install failure leaves no authenticated KS target to invite."""
+    flow = KioskSatelliteManagerConfigFlow()
+    flow.hass = hass
+    flow._host = "192.168.99.50"
+    flow._selected_fleet_id = "fleet-ha"
+    with patch("custom_components.kiosk_satellite_manager.config_flow._async_invite_to_fleet",
+               new=AsyncMock()) as invite, patch.object(
+        flow, "_async_create_device_entry", return_value={"type": "create_entry"}
+    ):
+        assert (await flow.async_step_install_done())["type"] == "create_entry"
+    invite.assert_not_awaited()
+
+
+async def test_selected_leader_lost_before_target_setup_stops_onboarding(hass):
+    """[KSM-TEST-247] A stale selection cannot mutate the target device."""
+    flow = KioskSatelliteManagerConfigFlow()
+    flow.hass = hass
+    flow._selected_fleet_id = "missing-fleet"
+    flow._host = "192.168.99.50"
+    with patch.object(flow, "async_abort", return_value={"type": "abort", "reason": "fleet_unavailable"}):
+        assert (await flow.async_step_install())["reason"] == "fleet_unavailable"
+    rejected = await flow.async_step_ks_device_info({"password": "synthetic-password"})
+    assert rejected["errors"]["base"] == "fleet_unavailable"
+
+
 _GTV_PROPS = {
     "ro.build.characteristics": "tv,nosdcard",
     "ro.product.manufacturer": "onn",

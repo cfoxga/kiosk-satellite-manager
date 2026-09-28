@@ -349,7 +349,7 @@ def _sync_fakes(monkeypatch, *, establish):
     return events
 
 
-async def _run_sync(pinned: list):
+async def _run_sync(pinned: list, before_ha_setup=None):
     from custom_components.kiosk_satellite_manager.credentials import TokenCredential
 
     return await install._sync_device_and_connect_ha(
@@ -362,6 +362,7 @@ async def _run_sync(pinned: list):
         token_credential=TokenCredential("synthetic-ha-token", None, owned=False),
         ha_url="https://ha.example",
         on_tls_pinned=pinned.append,
+        before_ha_setup=before_ha_setup,
     )
 
 
@@ -383,6 +384,22 @@ async def test_onboarding_sends_the_ha_token_only_over_the_pinned_channel(monkey
     assert events.index(("establish",)) < events.index(ha_patch)
     assert all(e[2] == PIN for e in events if e[0] == "patch")
     assert ("check", PIN) in events
+
+
+async def test_fleet_invitation_runs_after_admin_bootstrap_before_ha_configuration(monkeypatch):
+    """[KSM-TEST-247] A selected Fleet can configure the device before HA setup."""
+    async def establish():
+        return PIN
+
+    events = _sync_fakes(monkeypatch, establish=establish)
+
+    async def invite():
+        events.append(("invite",))
+
+    await _run_sync([], before_ha_setup=invite)
+    assert events.index(("login", PIN)) < events.index(("invite",))
+    ha_patch = next(e for e in events if e[0] == "patch" and "ha.token" in e[1])
+    assert events.index(("invite",)) < events.index(ha_patch)
 
 
 async def test_onboarding_sends_no_ha_token_when_tls_cannot_be_established(monkeypatch):
