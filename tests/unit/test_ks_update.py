@@ -136,3 +136,58 @@ async def test_poll_treats_a_transient_status_error_as_no_outcome_yet():
             await ks_update._poll_until_resolved(
                 session=None, host="192.168.1.50", token="tok", version="2026.9.77", entry=_entry(), pin=None,
             )
+
+
+def _fanout_hass(entries, coordinators):
+    return SimpleNamespace(
+        data={DOMAIN: coordinators},
+        config_entries=SimpleNamespace(async_get_entry=lambda entry_id: entries.get(entry_id)),
+    )
+
+
+async def test_check_devices_for_update_asks_each_device_and_skips_the_rest():
+    """[KSM-TEST-197] KSM-BEHAVE-103: checkUpdateNow to every loaded device with
+    a password; one failure never stops the next; no-password and installing
+    devices are never logged into."""
+    def entry(entry_id, title, host, **extra):
+        data = {CONF_HOST: host, CONF_PASSWORD: "secret", **extra}
+        return SimpleNamespace(entry_id=entry_id, title=title, data=data)
+
+    entries = {
+        "a": entry("a", "Failing", "192.168.1.1"),
+        "b": entry("b", "Kitchen", "192.168.1.2"),
+        "c": entry("c", "No password", "192.168.1.3", **{CONF_PASSWORD: ""}),
+        "d": entry("d", "Busy", "192.168.1.4"),
+        "e": entry("e", "Rejecting", "192.168.1.5"),
+    }
+    coordinators = {
+        entry_id: SimpleNamespace(ksm_installing=entry_id == "d") for entry_id in entries
+    }
+
+    async def fake_login(session, host, password, *, pin=None):
+        if host == "192.168.1.1":
+            raise KsApiError("HTTP 401")
+        return f"token-{host}"
+
+    login = AsyncMock(side_effect=fake_login)
+    async def fake_run(session, host, token, command, *, pin=None):
+        if host == "192.168.1.5":
+            return {"ok": False, "error": "update check disabled"}
+        return {"ok": True, "data": {"reachable": True, "availableVersion": "2026.9.2"}}
+
+    run = AsyncMock(side_effect=fake_run)
+    with patch(_SESSION), patch(_LOGIN, new=login), patch(_RUN_COMMAND, new=run):
+        results = await ks_update.async_check_devices_for_update(_fanout_hass(entries, coordinators))
+
+    assert sorted(call.args[1] for call in login.await_args_list) == [
+        "192.168.1.1", "192.168.1.2", "192.168.1.5",
+    ]
+    assert sorted(call.args[1:4] for call in run.await_args_list) == [
+        ("192.168.1.2", "token-192.168.1.2", "checkUpdateNow"),
+        ("192.168.1.5", "token-192.168.1.5", "checkUpdateNow"),
+    ]
+    assert results["Rejecting"] == "failed: update check disabled"
+    assert results["Kitchen"] == "sees 2026.9.2"
+    assert results["Failing"].startswith("failed") and "401" in results["Failing"]
+    assert results["No password"] == "skipped: no password stored"
+    assert results["Busy"] == "skipped: install in progress"

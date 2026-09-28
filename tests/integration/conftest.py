@@ -51,6 +51,17 @@ def release_check():
 
 
 @pytest.fixture(autouse=True)
+def device_update_check():
+    """KSM-BEHAVE-103: a newly seen release fans `checkUpdateNow` out to every
+    device over its API. Keep that off the network; tests assert on the mock."""
+    with patch(
+        "custom_components.kiosk_satellite_manager.async_check_devices_for_update",
+        new=AsyncMock(return_value={}),
+    ) as mock:
+        yield mock
+
+
+@pytest.fixture(autouse=True)
 def adb_probe():
     """KSM-BEHAVE-079: the ADB-enabled binary sensor polls a TCP connect to
     the entry's host. Keep it off the network; tests that care patch the

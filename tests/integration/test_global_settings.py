@@ -132,10 +132,7 @@ async def test_update_all_skips_current_and_continues_after_failure(hass, releas
         await init_integration(hass, data={"host": "192.168.99.1"})
         await init_integration(hass, data={"host": "192.168.99.2"})
         await init_integration(hass, data={"host": "192.168.99.3"})
-        entity = next(
-            e for e in er.async_entries_for_config_entry(er.async_get(hass), manager.entry_id)
-            if e.domain == "button"
-        )
+        entity = SimpleNamespace(entity_id=_entity(hass, manager, "update_all"))
         with patch(
             "custom_components.kiosk_satellite_manager.button.async_self_update_entry",
             new=AsyncMock(side_effect=[RuntimeError("failed"), None]),
@@ -154,10 +151,7 @@ async def test_update_all_skips_current_and_continues_after_failure(hass, releas
 async def test_update_all_refuses_overlap_and_unknown_release(hass, release_check):
     """[KSM-TEST-146] No release and another run start no install."""
     manager = await _manager(hass)
-    entity = next(
-        e for e in er.async_entries_for_config_entry(er.async_get(hass), manager.entry_id)
-        if e.domain == "button"
-    )
+    entity = SimpleNamespace(entity_id=_entity(hass, manager, "update_all"))
     with patch("custom_components.kiosk_satellite_manager.button.async_self_update_entry") as install, patch(
         "custom_components.kiosk_satellite_manager.button.persistent_notification.async_create"
     ) as notify:
@@ -193,10 +187,7 @@ async def test_update_all_skips_unreachable_installing_and_ha_skipped(hass, rele
         await hass.services.async_call(
             "update", "skip", {"entity_id": update.entity_id}, blocking=True
         )
-        button = next(
-            e for e in er.async_entries_for_config_entry(er.async_get(hass), manager.entry_id)
-            if e.domain == "button"
-        )
+        button = SimpleNamespace(entity_id=_entity(hass, manager, "update_all"))
         with patch(
             "custom_components.kiosk_satellite_manager.button.async_self_update_entry"
         ) as install, patch(

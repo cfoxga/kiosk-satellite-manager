@@ -72,7 +72,12 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
-        async_add_entities([KioskSatelliteUpdateAllButton(hass, entry)])
+        async_add_entities(
+            [
+                KioskSatelliteUpdateAllButton(hass, entry),
+                KioskSatelliteCheckForUpdatesButton(hass, entry),
+            ]
+        )
         return
     async_add_entities(
         [
@@ -303,3 +308,27 @@ class KioskSatelliteUpdateAllButton(ButtonEntity):
             self.hass, message=message, title="Kiosk Satellite Update all",
             notification_id=f"{DOMAIN}_update_all",
         )
+
+
+class KioskSatelliteCheckForUpdatesButton(ButtonEntity):
+    """KSM-BEHAVE-103: run the shared release check now, on the manager."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Check for updates"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        self.hass = hass
+        self._attr_unique_id = f"{entry.entry_id}_check_for_updates"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)}, name=entry.title
+        )
+
+    async def async_press(self) -> None:
+        release = self.hass.data.get(RELEASE_COORDINATOR_KEY)
+        if release is None:
+            raise HomeAssistantError("Kiosk Satellite release check is not running")
+        # async_refresh, not async_request_refresh: a press must never be
+        # swallowed by the refresh debounce.
+        await release.async_refresh()
+        if not release.last_update_success:
+            raise HomeAssistantError(str(release.last_exception))

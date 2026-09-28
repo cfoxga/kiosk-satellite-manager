@@ -181,3 +181,52 @@ async def _poll_until_resolved(
     raise HomeAssistantError(
         f"Kiosk Satellite update failed on {entry.title}: update did not complete"
     )
+
+
+async def async_check_devices_for_update(hass: HomeAssistant) -> dict[str, str]:
+    """KSM-BEHAVE-103: ask every loaded device's Kiosk Satellite to check
+    GitHub now (`checkUpdateNow`), so a release the manager just saw reaches
+    each device without waiting for its own 12-hour check.
+
+    Concurrent, API-only (KSM-BEHAVE-081), installs nothing. Returns an
+    outcome per device title; a failure is logged and never stops the rest.
+    """
+    session = async_get_clientsession(hass)
+
+    async def _check(entry: ConfigEntry, coordinator) -> str:
+        password = entry.data.get(CONF_PASSWORD)
+        if not password:
+            return "skipped: no password stored"
+        if coordinator is not None and coordinator.ksm_installing:
+            # The running install already sent checkUpdateNow (KSM-BEHAVE-082).
+            return "skipped: install in progress"
+        host = entry.data[CONF_HOST]
+        pin = entry.data.get(CONF_TLS_SPKI)
+        try:
+            token = await ks_api_client.login(session, host, password, pin=pin)
+            result = await ks_api_client.run_command(
+                session, host, token, "checkUpdateNow", pin=pin
+            )
+        except Exception as err:  # continue with the next device
+            _LOGGER.warning(
+                "Kiosk Satellite update check failed on %s: %s", entry.title, err
+            )
+            return f"failed: {err}"
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            error = result.get("error") if isinstance(result, dict) else None
+            _LOGGER.warning(
+                "Kiosk Satellite update check failed on %s: %s",
+                entry.title, error or "checkUpdateNow rejected",
+            )
+            return f"failed: {error or 'checkUpdateNow rejected'}"
+        return f"sees {(result.get('data') or {}).get('availableVersion')}"
+
+    checks = [
+        (entry, coordinator)
+        for entry_id, coordinator in list(hass.data.get(DOMAIN, {}).items())
+        if (entry := hass.config_entries.async_get_entry(entry_id)) is not None
+    ]
+    outcomes = await asyncio.gather(*(_check(entry, coordinator) for entry, coordinator in checks))
+    results = {entry.title: outcome for (entry, _), outcome in zip(checks, outcomes)}
+    _LOGGER.info("Kiosk Satellite update check on devices: %s", results)
+    return results

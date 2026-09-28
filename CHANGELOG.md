@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The Kiosk Satellite Manager entry now has a **Check for updates** button
+  (#66). Pressing it checks GitHub for a new Kiosk Satellite release right
+  away instead of waiting for the hourly check. Whenever KSM sees a release it
+  hadn't seen before, it tells every managed kiosk to check GitHub too, so each
+  kiosk sees the release within the hour instead of on its own twice-a-day
+  check. Nothing is installed automatically unless auto-update is on.
+
 - Renaming a Kiosk Satellite device from Home Assistant or HAM now carries
   through to the kiosk (#64). HAM asks KSM to rename the device, and KSM
   pushes the new name, hostname and ESPHome node name to Kiosk Satellite. When

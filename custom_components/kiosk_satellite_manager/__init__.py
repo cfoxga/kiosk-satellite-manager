@@ -67,6 +67,7 @@ from .const import (
 from . import ks_tls
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .ks_api import latest_release_info
+from .ks_update import async_check_devices_for_update
 from .voice_satellite_link import async_bind_voice_satellite
 from .ks_api_client import KsApiError
 from .ks_api_client import login as ks_api_login
@@ -271,10 +272,19 @@ async def _async_ensure_release_coordinator(hass: HomeAssistant) -> None:
     async def _update():
         try:
             release = await latest_release_info(session)
-            coordinator.ksm_last_success = datetime.now(timezone.utc)
-            return release
         except Exception as err:  # network, HTTP status, no usable release
             raise UpdateFailed(f"Kiosk Satellite release check failed: {err}") from err
+        coordinator.ksm_last_success = datetime.now(timezone.utc)
+        # KSM-BEHAVE-103: the first check is only a baseline -- device
+        # entries are still loading at startup. A different version later
+        # tells every device to check GitHub itself now.
+        announced = coordinator.ksm_announced_version
+        coordinator.ksm_announced_version = release.version
+        if announced is not None and release.version != announced:
+            hass.async_create_background_task(
+                async_check_devices_for_update(hass), f"{DOMAIN}_device_update_check"
+            )
+        return release
 
     coordinator = DataUpdateCoordinator(
         hass,
@@ -284,6 +294,7 @@ async def _async_ensure_release_coordinator(hass: HomeAssistant) -> None:
         update_method=_update,
         update_interval=timedelta(minutes=RELEASE_CHECK_INTERVAL_MIN),
     )
+    coordinator.ksm_announced_version = None
     hass.data[RELEASE_COORDINATOR_KEY] = coordinator
     await coordinator.async_refresh()
 
