@@ -45,7 +45,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.helpers.network import get_url
 
-from . import device_owner, ks_api_client, ks_tls
+from . import device_owner, ks_api_client, ks_tls, meta_setup
 from .adb_client import AdbAuthPending, AdbClient, AdbConnectFailed, ensure_adb_key
 from .const import (
     CONF_AREA_ID,
@@ -296,9 +296,12 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             if coordinator is not None:
                 coordinator.ksm_installing = True
                 coordinator.async_update_listeners()
+            meta_error: str | None = None
             try:
                 await client.connect()
-                await device_owner.enable_device_owner(client, model_key)
+                result = await device_owner.enable_device_owner(client, model_key)
+                if result.meta_setup_needed:
+                    meta_error = await _start_meta_setup(self.hass, self._meta_target(), client)
             except (AdbAuthPending, AdbConnectFailed):
                 return self.async_abort(
                     reason="adb_unavailable", description_placeholders={"address": address}
@@ -320,7 +323,14 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
                 if coordinator is not None:
                     coordinator.ksm_installing = False
                     coordinator.async_update_listeners()
-            return self.async_abort(reason="device_owner_enabled")
+            if not result.meta_setup_needed:
+                return self.async_abort(reason="device_owner_enabled")
+            if meta_error:
+                return self.async_abort(
+                    reason="device_owner_enabled_meta_failed",
+                    description_placeholders={"reason": meta_error},
+                )
+            return self.async_abort(reason="device_owner_enabled_meta_setup")
         if user_input is not None:
             errors["confirm"] = "confirm_required"
 
@@ -336,6 +346,8 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             await client.close()
 
         if device_owner.BLOCKER_ALREADY_OWNER in pre.blockers:
+            if pre.meta_identity_missing:
+                return await self.async_step_meta_setup()
             return self.async_abort(reason="device_owner_already")
         if pre.blockers:
             return self.async_abort(
@@ -348,6 +360,74 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             errors=errors,
             description_placeholders={"accounts": _owner_accounts_text(pre)},
         )
+
+
+    def _meta_target(self) -> "meta_setup.Target":
+        data = self._entry.data
+        return meta_setup.Target(
+            host=data[CONF_HOST],
+            port=data[CONF_PORT],
+            key_path=data[CONF_KEY_PATH],
+            password=data.get(CONF_PASSWORD),
+            pin=data.get(CONF_TLS_SPKI),
+            model_key=data.get(CONF_DEVICE_PROFILE),
+            name=data.get(CONF_NAME) or self._entry.title,
+        )
+
+    async def async_step_meta_setup(self, user_input: dict | None = None) -> FlowResult:
+        """KSM-BEHAVE-113: Kiosk Satellite is already Device Owner but the
+        Portal's Meta login is gone -- offer to show Meta's setup screen."""
+        coordinator = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
+        if coordinator is not None and getattr(coordinator, "ksm_installing", False):
+            return self.async_abort(reason="install_in_progress")
+        address = f"{self._entry.data[CONF_HOST]}:{self._entry.data[CONF_PORT]}"
+        errors: dict[str, str] = {}
+        if user_input is not None and user_input.get("confirm"):
+            client = self._owner_client()
+            if coordinator is not None:
+                coordinator.ksm_installing = True
+                coordinator.async_update_listeners()
+            try:
+                await client.connect()
+                error = await _start_meta_setup(self.hass, self._meta_target(), client)
+            except (AdbAuthPending, AdbConnectFailed, OSError):
+                return self.async_abort(
+                    reason="adb_unavailable", description_placeholders={"address": address}
+                )
+            finally:
+                await client.close()
+                if coordinator is not None:
+                    coordinator.ksm_installing = False
+                    coordinator.async_update_listeners()
+            if error:
+                return self.async_abort(
+                    reason="meta_setup_failed", description_placeholders={"reason": error}
+                )
+            return self.async_abort(reason="meta_setup_started")
+        if user_input is not None:
+            errors["confirm"] = "confirm_required"
+        return self.async_show_form(
+            step_id="meta_setup",
+            data_schema=vol.Schema({vol.Required("confirm", default=False): bool}),
+            errors=errors,
+        )
+
+
+async def _start_meta_setup(
+    hass, target: "meta_setup.Target", client
+) -> str | None:
+    """Show Meta's setup screen (KSM-BEHAVE-112). Returns None when it is on
+    screen and being watched, else why not -- Device Owner is already set,
+    so no failure here may be reported as an enrollment failure."""
+    try:
+        await meta_setup.async_start(hass, target, client)
+    except device_owner.DeviceOwnerError as err:
+        _LOGGER.warning("Meta setup could not be shown on %s: %s", target.host, err)
+        return _owner_failure_text(err)
+    except Exception as err:  # noqa: BLE001 -- ADB transport drop mid-run
+        _LOGGER.warning("Meta setup error on %s: %s", target.host, err)
+        return "The ADB connection failed while showing the setup screen."
+    return None
 
 
 _OWNER_BLOCKERS = {
@@ -367,6 +447,8 @@ _OWNER_FAILURES = {
     "set_owner_failed": "Android refused to set Device Owner.",
     "readback_failed": "Android reported success, but Kiosk Satellite is not listed as Device Owner.",
     "preflight_blocked": "The device changed since the check; open Enable Device Owner again.",
+    "meta_setup_failed": "Meta's setup screen could not be shown ({detail}).",
+    "meta_setup_unsupported": "This Portal model has no known Meta setup app.",
 }
 
 
@@ -398,7 +480,7 @@ def _owner_blocker_text(pre: "device_owner.Preflight") -> str:
 def _owner_failure_text(err: "device_owner.DeviceOwnerError") -> str:
     if err.code == "restore_failed":
         return f"Device Owner step finished, but an app was not restored: {err.detail}"
-    return _OWNER_FAILURES.get(err.code, err.code)
+    return _OWNER_FAILURES.get(err.code, err.code).format(detail=err.detail)
 
 
 class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -981,7 +1063,12 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self._async_create_device_entry()
             try:
                 await client.connect()
-                await device_owner.enable_device_owner(client, self._profile_key)
+                result = await device_owner.enable_device_owner(client, self._profile_key)
+                meta_error = (
+                    await _start_meta_setup(self.hass, self._meta_target(), client)
+                    if result.meta_setup_needed
+                    else None
+                )
             except (AdbAuthPending, AdbConnectFailed, OSError):
                 self._owner_notice(unreachable)
             except device_owner.DeviceOwnerError as err:
@@ -993,7 +1080,14 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "Device Owner was not enabled: the ADB connection failed mid-run."
                 )
             else:
-                self._owner_notice("Kiosk Satellite is now Device Owner on this device.")
+                if meta_error:
+                    self._owner_notice(
+                        "Kiosk Satellite is now Device Owner, but the Meta login must be "
+                        f"set up again and the setup screen was not shown: {meta_error} "
+                        "Use Configure → Enable Device Owner to try again."
+                    )
+                elif not result.meta_setup_needed:
+                    self._owner_notice("Kiosk Satellite is now Device Owner on this device.")
             finally:
                 await client.close()
             return self._async_create_device_entry()
@@ -1022,6 +1116,17 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="onboard_device_owner",
             data_schema=vol.Schema({vol.Required("confirm", default=False): bool}),
             description_placeholders={"accounts": _owner_accounts_text(pre)},
+        )
+
+    def _meta_target(self) -> "meta_setup.Target":
+        return meta_setup.Target(
+            host=self._host,
+            port=self._port,
+            key_path=self._key_path,
+            password=self._password,
+            pin=self._tls_pin,
+            model_key=self._profile_key,
+            name=self._name or self._host,
         )
 
     def _owner_notice(self, message: str) -> None:

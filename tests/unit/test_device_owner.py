@@ -12,7 +12,9 @@ from custom_components.kiosk_satellite_manager.device_owner import (
     run_preflight,
 )
 
-from ksm_device_owner_fake import FakeDevice, KS_ADMIN, META, SECRET, _META_TYPES  # noqa: E402
+from ksm_device_owner_fake import (  # noqa: E402
+    KS_ACTIVITY, KS_ADMIN, META, SECRET, SETUP, SETUP_ACTIVITY, _META_TYPES, FakeDevice,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -42,7 +44,6 @@ async def test_preflight_parses_types_packages_and_never_names():
     # An account registered by a package no model lists.
     ("portal_mini", ("com.facebook.aloha.sso", "com.example.other")),
     # The Meta package, but on a model with no live evidence for clearing it.
-    ("portal_go", ("com.facebook.aloha.sso",)),
     ("portal_gen2", ("com.facebook.aloha.sso",)),
     (None, ("com.facebook.aloha.sso",)),
     # An account type with no registered authenticator at all.
@@ -225,3 +226,135 @@ async def test_transport_drop_during_restore_names_package():
         await enable_device_owner(dev, "portal_mini")
     assert err.value.code == "restore_failed"
     assert META in str(err.value)
+
+
+IDENTITY = ("com.facebook.aloha.pl", "com.facebook.aloha.privowner", "com.facebook.aloha.sso")
+
+
+@pytest.mark.parametrize("model_key,types,missing", [
+    ("portal_mini", tuple(f"com.facebook.aloha.{t}" for t in _META_TYPES), ()),
+    # What the purge leaves behind: only the hardware account comes back.
+    ("portal_go", ("com.facebook.aloha.hw",), IDENTITY),
+    ("portal_mini", (), IDENTITY),
+    # Models without a Meta setup app never report a missing identity.
+    ("portal_gen2", (), ()),
+    (None, (), ()),
+])
+async def test_preflight_reports_missing_meta_identity(model_key, types, missing):
+    """[KSM-TEST-214] The preflight names the Meta login account types
+    missing on a Portal with a Meta setup app, and nothing elsewhere."""
+    dev = FakeDevice(account_types=types)
+    pre = await run_preflight(dev, model_key)
+    assert pre.meta_identity_missing == missing
+    assert dev.mutations() == []
+
+
+async def test_portal_go_clears_meta_accounts():
+    """[KSM-TEST-214] PortalGo has live purge/restore evidence (2026-09-28):
+    its Meta accounts are clearable, and enrollment flags Meta setup."""
+    dev = FakeDevice(restore_readds_hw=True)
+    pre = await run_preflight(dev, "portal_go")
+    assert pre.ready and pre.clear_packages == (META,)
+    result = await enable_device_owner(dev, "portal_go")
+    assert result.meta_setup_needed is True
+    # Only the hardware account came back by itself -- the identity is gone.
+    assert await device_owner.read_meta_identity_missing(dev) == IDENTITY
+
+
+@pytest.mark.parametrize("model_key,types,needed", [
+    ("portal_mini", tuple(f"com.facebook.aloha.{t}" for t in _META_TYPES), True),
+    # Nothing cleared, but the identity is already gone: setup still needed.
+    ("portal_go", (), True),
+    # No Meta setup app on this model.
+    ("portal_gen2", (), False),
+])
+async def test_enrollment_flags_meta_setup(model_key, types, needed):
+    """[KSM-TEST-214] meta_setup_needed follows the model and whether the
+    Meta identity is gone after enrollment; enrollment itself never
+    touches Meta setup."""
+    dev = FakeDevice(account_types=types)
+    result = await enable_device_owner(dev, model_key)
+    assert result.meta_setup_needed is needed
+    assert not any(SETUP in c for c in dev.commands)
+
+
+async def test_restart_meta_setup_resets_and_launches():
+    """[KSM-TEST-215] uninstall -k -> install-existing -> enabled check ->
+    am start, and success is the setup screen actually in front."""
+    dev = FakeDevice(owner="me.jxl.kiosk_satellite")
+    await device_owner.restart_meta_setup(dev, "portal_go")
+    assert dev.mutations() == [
+        f"pm uninstall -k --user 0 {SETUP}",
+        f"cmd package install-existing --user 0 {SETUP}",
+        f"am start -n {SETUP_ACTIVITY}",
+    ]
+    assert f"pm list packages -e --user 0 {SETUP}" in dev.commands
+    assert dev.front == SETUP_ACTIVITY
+    assert dev.commands[-1] == "dumpsys activity activities"
+
+
+async def test_restart_meta_setup_restore_failure_names_package():
+    """[KSM-TEST-215] Negative: setup app not coming back is restore_failed
+    naming the package and its restore command; nothing is launched."""
+    dev = FakeDevice(setup_restore_works=False)
+    with pytest.raises(DeviceOwnerError) as err:
+        await device_owner.restart_meta_setup(dev, "portal_mini")
+    assert err.value.code == "restore_failed"
+    assert SETUP in str(err.value) and "install-existing" in str(err.value)
+    assert not any(c.startswith("am start") for c in dev.commands)
+
+
+async def test_restart_meta_setup_fails_when_screen_stays_hidden():
+    """[KSM-TEST-215] Negative: am start 'succeeding' while Kiosk Satellite
+    stays in front (a kiosk lock) is meta_setup_failed, not success."""
+    dev = FakeDevice(setup_launches=False)
+    with pytest.raises(DeviceOwnerError) as err:
+        await device_owner.restart_meta_setup(dev, "portal_mini")
+    assert err.value.code == "meta_setup_failed"
+    assert dev.front == KS_ACTIVITY
+
+
+async def test_restart_meta_setup_refuses_unsupported_model():
+    """[KSM-TEST-215] Negative: a model without a known Meta setup app gets
+    no command at all."""
+    dev = FakeDevice()
+    with pytest.raises(DeviceOwnerError) as err:
+        await device_owner.restart_meta_setup(dev, "portal_gen2")
+    assert err.value.code == "meta_setup_unsupported"
+    assert dev.commands == []
+
+
+async def test_meta_identity_unreadable_is_none():
+    """[KSM-TEST-214] Negative: an unreadable account dump is None, never
+    'nothing missing'."""
+
+    class Blank(FakeDevice):
+        async def shell(self, command: str) -> str:
+            return ""
+
+    assert await device_owner.read_meta_identity_missing(Blank()) is None
+
+
+@pytest.mark.parametrize("override,detail", [
+    ({f"pm uninstall -k --user 0 {SETUP}": "Failure [DELETE_FAILED_INTERNAL_ERROR]\n"},
+     "could not reset"),
+    ({f"pm list packages -e --user 0 {SETUP}": ""}, "still disabled"),
+    ({f"am start -n {SETUP_ACTIVITY}": "Error: Activity not started\n"}, "could not be started"),
+    ({"dumpsys activity activities": "no focus lines here\n"}, "did not come to the front"),
+])
+async def test_restart_meta_setup_step_failures(override, detail):
+    """[KSM-TEST-215] Negative: each step's refusal is meta_setup_failed
+    with its own reason, never success."""
+
+    class Scripted(FakeDevice):
+        async def shell(self, command: str) -> str:
+            if command in override:
+                self.commands.append(command)
+                return override[command]
+            return await super().shell(command)
+
+    dev = Scripted()
+    with pytest.raises(DeviceOwnerError) as err:
+        await device_owner.restart_meta_setup(dev, "portal_mini")
+    assert err.value.code == "meta_setup_failed"
+    assert detail in err.value.detail

@@ -10,7 +10,10 @@ user. So enrollment is:
     cmd package install-existing --user 0 <pkg>  (always, even on failure)
 
 and success is only ever the `dumpsys device_policy` readback naming Kiosk
-Satellite. Only packages listed for the exact device model are ever passed to
+Satellite. On a Meta Portal the purge also wipes the Meta identity (the
+package's credential-encrypted data), so the FB/WhatsApp login has to be set
+up again: `restart_meta_setup` resets Meta's self-disabled setup app and puts
+its first-run wizard on screen (KSM-BEHAVE-111). Only packages listed for the exact device model are ever passed to
 a shell command; an account owned by anything else blocks. Account names are
 never parsed into, stored in, or reported from this module.
 
@@ -37,7 +40,25 @@ _POLL_ATTEMPTS = 15
 # (docs/SPEC/device-management-strategy.md section 6).
 ACCOUNT_CLEAR_PACKAGES: dict[str, tuple[str, ...]] = {
     "portal_mini": ("com.facebook.alohaservices.alohausers",),
+    "portal_go": ("com.facebook.alohaservices.alohausers",),
 }
+
+# KSM-BEHAVE-111: Meta's first-run setup app, on the models where it is
+# live-verified (PortalMini and PortalGo, 2026-09-28). It disables itself once
+# setup is done and the shell may not re-enable it, but a user-0
+# `uninstall -k` + `install-existing` returns it enabled with empty data.
+META_SETUP_PACKAGE = "com.facebook.alohaapps.devicesetup"
+META_SETUP_ACTIVITY = (
+    f"{META_SETUP_PACKAGE}/com.facebook.aloha.app.devicesetup.DeviceSetupActivity"
+)
+META_SETUP_MODELS = frozenset({"portal_mini", "portal_go"})
+# The login/owner account types Meta setup creates. The hardware account
+# (`com.facebook.aloha.hw`) re-registers by itself, so it proves nothing.
+META_IDENTITY_TYPES = (
+    "com.facebook.aloha.pl",
+    "com.facebook.aloha.privowner",
+    "com.facebook.aloha.sso",
+)
 
 BLOCKER_ACCOUNTS = "accounts_blocked"
 BLOCKER_ALREADY_OWNER = "already_owner"
@@ -84,6 +105,8 @@ class Preflight:
     account_packages: set[str] = field(default_factory=set)
     clear_packages: tuple[str, ...] = ()
     blockers: tuple[str, ...] = ()
+    # Meta login account types absent on a META_SETUP_MODELS device.
+    meta_identity_missing: tuple[str, ...] = ()
 
     @property
     def ready(self) -> bool:
@@ -93,6 +116,9 @@ class Preflight:
 @dataclass(frozen=True)
 class EnrollResult:
     cleared_packages: tuple[str, ...]
+    # The Meta identity is gone (the purge wiped it, or it already was) and
+    # restart_meta_setup applies to this model.
+    meta_setup_needed: bool = False
 
 
 def _account_counts(dump: str) -> dict[str, int]:
@@ -107,6 +133,10 @@ def _account_counts(dump: str) -> dict[str, int]:
 
 def _authenticators(dump: str) -> dict[str, str]:
     return {t.strip(): pkg for t, pkg in _AUTHENTICATOR_RE.findall(dump)}
+
+
+def _identity_missing(counts: dict[str, int]) -> tuple[str, ...]:
+    return tuple(t for t in META_IDENTITY_TYPES if t not in counts)
 
 
 def _owner_package(policy: str) -> str | None:
@@ -163,6 +193,11 @@ async def run_preflight(client: ShellClient, model_key: str | None) -> Preflight
         account_packages=packages,
         clear_packages=clear,
         blockers=tuple(dict.fromkeys(blockers)),
+        meta_identity_missing=(
+            _identity_missing(counts)
+            if model_key in META_SETUP_MODELS and BLOCKER_UNOBSERVED not in blockers
+            else ()
+        ),
     )
 
 
@@ -230,4 +265,61 @@ async def enable_device_owner(client: ShellClient, model_key: str | None) -> Enr
         )
     if failure:
         raise failure
-    return EnrollResult(cleared_packages=pre.clear_packages)
+    return EnrollResult(
+        cleared_packages=pre.clear_packages,
+        meta_setup_needed=model_key in META_SETUP_MODELS
+        and bool(pre.clear_packages or pre.meta_identity_missing),
+    )
+
+
+async def read_meta_identity_missing(client: ShellClient) -> tuple[str, ...] | None:
+    """The META_IDENTITY_TYPES not registered now; None when unreadable."""
+    dump = await client.shell("dumpsys account")
+    if "Accounts:" not in dump:
+        return None
+    return _identity_missing(_account_counts(dump))
+
+
+async def _front_activity(client: ShellClient) -> str:
+    dump = await client.shell("dumpsys activity activities")
+    for line in dump.splitlines():
+        if "mResumedActivity" in line or "topResumedActivity" in line:
+            return line
+    return ""
+
+
+async def restart_meta_setup(client: ShellClient, model_key: str | None) -> None:
+    """KSM-BEHAVE-111: reset Meta's setup app and put its wizard on screen.
+
+    Success is the setup activity actually in front, not am start's output:
+    a kiosk lock that keeps Kiosk Satellite pinned is a failure. The caller
+    turns the lock off first. Raises DeviceOwnerError with code
+    meta_setup_unsupported, meta_setup_failed, or restore_failed.
+    """
+    if model_key not in META_SETUP_MODELS:
+        raise DeviceOwnerError("meta_setup_unsupported", "no known Meta setup app on this model")
+    pkg = META_SETUP_PACKAGE
+    out = await client.shell(f"pm uninstall -k --user 0 {pkg}")
+    if "Success" not in out:
+        raise DeviceOwnerError("meta_setup_failed", f"could not reset {pkg}")
+    if await _restore(client, [pkg]):
+        raise DeviceOwnerError(
+            "restore_failed",
+            f"{pkg} was not restored; "
+            f"run: adb shell cmd package install-existing --user 0 {pkg}",
+        )
+    enabled = await client.shell(f"pm list packages -e --user 0 {pkg}")
+    if f"package:{pkg}" not in enabled.split():
+        raise DeviceOwnerError("meta_setup_failed", f"{pkg} is still disabled")
+    out = await client.shell(f"am start -n {META_SETUP_ACTIVITY}")
+    if "Error" in out:
+        raise DeviceOwnerError("meta_setup_failed", "the setup screen could not be started")
+    for attempt in range(_POLL_ATTEMPTS):
+        if pkg in await _front_activity(client):
+            return
+        if attempt + 1 < _POLL_ATTEMPTS:
+            await asyncio.sleep(_POLL_INTERVAL_S)
+    raise DeviceOwnerError(
+        "meta_setup_failed",
+        "the setup screen did not come to the front (is the kiosk lock on?)",
+    )

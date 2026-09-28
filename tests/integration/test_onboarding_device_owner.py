@@ -35,6 +35,15 @@ def _fast_poll(monkeypatch):
     monkeypatch.setattr(device_owner, "_POLL_INTERVAL_S", 0)
 
 
+@pytest.fixture(autouse=True)
+def meta_start():
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.meta_setup.async_start",
+        new=AsyncMock(),
+    ) as start:
+        yield start
+
+
 def _client_class(fake: FakeDevice, *, owner_connect_error: Exception | None = None):
     """config_flow's AdbClient: detection (connect 1) and install (connect 2)
     succeed; every later connect -- the Device Owner steps -- raises
@@ -144,17 +153,33 @@ async def _add_and_confirm(hass, fake, confirm: bool):
     return result, notify
 
 
-async def test_opt_in_confirmed_enrolls_and_creates_entry(hass):
-    """[KSM-TEST-189] Ticked + confirmed: one enrollment, entry created,
-    'enabled' notification."""
+async def test_opt_in_confirmed_enrolls_and_creates_entry(hass, meta_start):
+    """[KSM-TEST-189] Ticked + confirmed: one enrollment, entry created, and
+    (KSM-TEST-217) Meta setup started, whose notice replaces 'enabled'."""
     fake = FakeDevice()
     result, notify = await _add_and_confirm(hass, fake, confirm=True)
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_DEVICE_PROFILE] == "portal_mini"
     assert fake.mutations().count(f"dpm set-device-owner {KS_ADMIN}") == 1
     assert fake.owner == "me.jxl.kiosk_satellite" and fake.meta_installed
-    notify.assert_called_once()
-    assert "now Device Owner" in notify.call_args.kwargs["message"]
+    meta_start.assert_awaited_once()
+    target = meta_start.await_args.args[1]
+    assert (target.host, target.password, target.model_key) == (HOST, "pw", "portal_mini")
+    notify.assert_not_called()
+
+
+async def test_opt_in_meta_setup_failure_is_reported(hass, meta_start):
+    """[KSM-TEST-217] Negative: Meta setup not shown after enrollment -- the
+    entry is still created and the notice says Device Owner is on and why
+    the setup screen failed."""
+    meta_start.side_effect = device_owner.DeviceOwnerError(
+        "meta_setup_failed", "the setup screen did not come to the front"
+    )
+    fake = FakeDevice()
+    result, notify = await _add_and_confirm(hass, fake, confirm=True)
+    assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    message = notify.call_args.kwargs["message"]
+    assert "now Device Owner" in message and "did not come to the front" in message
 
 
 async def test_opt_in_unconfirmed_skips_enrollment(hass):

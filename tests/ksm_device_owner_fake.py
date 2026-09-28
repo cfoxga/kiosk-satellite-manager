@@ -7,6 +7,9 @@ from __future__ import annotations
 META = "com.facebook.alohaservices.alohausers"
 KS_ADMIN = "me.jxl.kiosk_satellite/.KioskAdminReceiver"
 SECRET = "person@example.com"
+SETUP = "com.facebook.alohaapps.devicesetup"
+SETUP_ACTIVITY = f"{SETUP}/com.facebook.aloha.app.devicesetup.DeviceSetupActivity"
+KS_ACTIVITY = "me.jxl.kiosk_satellite/.MainActivity"
 
 _AUTH = (
     "  RegisteredServicesCache: 4 services\n"
@@ -63,6 +66,9 @@ class FakeDevice:
         set_owner_output="Success: Device owner set to package me.jxl.kiosk_satellite",
         set_owner_takes_effect=True,
         restore_works=True,
+        restore_readds_hw=False,
+        setup_restore_works=True,
+        setup_launches=True,
     ):
         self.account_types = list(account_types)
         self.owner = owner
@@ -72,7 +78,15 @@ class FakeDevice:
         self.set_owner_output = set_owner_output
         self.set_owner_takes_effect = set_owner_takes_effect
         self.restore_works = restore_works
+        self.restore_readds_hw = restore_readds_hw
         self.meta_installed = True
+        # Meta's setup app disables itself once first-run setup is done
+        # (live on PortalGo/PortalMini, 2026-09-28).
+        self.setup_installed = True
+        self.setup_enabled = False
+        self.setup_restore_works = setup_restore_works
+        self.setup_launches = setup_launches
+        self.front = KS_ACTIVITY
         self.commands: list[str] = []
 
     async def shell(self, command: str) -> str:
@@ -102,13 +116,38 @@ class FakeDevice:
         if command == f"cmd package install-existing --user 0 {META}":
             if self.restore_works:
                 self.meta_installed = True
+                # The restored package re-registers its hardware account alone.
+                if self.restore_readds_hw and "com.facebook.aloha.hw" not in self.account_types:
+                    self.account_types.append("com.facebook.aloha.hw")
             return f"Package {META} installed for user: 0\n"
         if command == f"pm list packages --user 0 {META}":
             return f"package:{META}\n" if self.meta_installed else ""
+        if command == f"pm uninstall -k --user 0 {SETUP}":
+            self.setup_installed = False
+            return "Success\n"
+        if command == f"cmd package install-existing --user 0 {SETUP}":
+            if self.setup_restore_works:
+                self.setup_installed = True
+                self.setup_enabled = True
+            return f"Package {SETUP} installed for user: 0\n"
+        if command == f"pm list packages --user 0 {SETUP}":
+            return f"package:{SETUP}\n" if self.setup_installed else ""
+        if command == f"pm list packages -e --user 0 {SETUP}":
+            return f"package:{SETUP}\n" if self.setup_installed and self.setup_enabled else ""
+        if command == f"am start -n {SETUP_ACTIVITY}":
+            if not (self.setup_installed and self.setup_enabled):
+                return f"Error: Activity class {{{SETUP_ACTIVITY}}} does not exist.\n"
+            if self.setup_launches:
+                self.front = SETUP_ACTIVITY
+            return f"Starting: Intent {{ cmp={SETUP_ACTIVITY} }}\n"
+        if command == "dumpsys activity activities":
+            return f"    mResumedActivity: ActivityRecord{{ae18243 u0 {self.front} t34}}\n"
+        if command == "settings get global adb_enabled":
+            return "1\n"
         raise AssertionError(f"unexpected command {command!r}")
 
     def mutations(self) -> list[str]:
         return [
             c for c in self.commands
-            if c.startswith(("pm uninstall", "dpm set", "cmd package install"))
+            if c.startswith(("pm uninstall", "dpm set", "cmd package install", "am start"))
         ]
