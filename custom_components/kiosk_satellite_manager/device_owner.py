@@ -41,17 +41,18 @@ _POLL_ATTEMPTS = 15
 ACCOUNT_CLEAR_PACKAGES: dict[str, tuple[str, ...]] = {
     "portal_mini": ("com.facebook.alohaservices.alohausers",),
     "portal_go": ("com.facebook.alohaservices.alohausers",),
+    "portal_gen2": ("com.facebook.alohaservices.alohausers",),
 }
 
 # KSM-BEHAVE-111: Meta's first-run setup app, on the models where it is
-# live-verified (PortalMini and PortalGo, 2026-09-28). It disables itself once
+# live-verified (Portal Mini, Portal Go, and Portal Gen 2, 2026-09-28). It disables itself once
 # setup is done and the shell may not re-enable it, but a user-0
 # `uninstall -k` + `install-existing` returns it enabled with empty data.
 META_SETUP_PACKAGE = "com.facebook.alohaapps.devicesetup"
 META_SETUP_ACTIVITY = (
     f"{META_SETUP_PACKAGE}/com.facebook.aloha.app.devicesetup.DeviceSetupActivity"
 )
-META_SETUP_MODELS = frozenset({"portal_mini", "portal_go"})
+META_SETUP_MODELS = frozenset({"portal_mini", "portal_go", "portal_gen2"})
 # The login/owner account types Meta setup creates. The hardware account
 # (`com.facebook.aloha.hw`) re-registers by itself, so it proves nothing.
 META_IDENTITY_TYPES = (

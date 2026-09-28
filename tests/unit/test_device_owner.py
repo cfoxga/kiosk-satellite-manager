@@ -44,7 +44,7 @@ async def test_preflight_parses_types_packages_and_never_names():
     # An account registered by a package no model lists.
     ("portal_mini", ("com.facebook.aloha.sso", "com.example.other")),
     # The Meta package, but on a model with no live evidence for clearing it.
-    ("portal_gen2", ("com.facebook.aloha.sso",)),
+    ("portal_gen1", tuple(f"com.facebook.aloha.{t}" for t in _META_TYPES)),
     (None, ("com.facebook.aloha.sso",)),
     # An account type with no registered authenticator at all.
     ("portal_mini", ("com.unknown.type",)),
@@ -237,7 +237,7 @@ IDENTITY = ("com.facebook.aloha.pl", "com.facebook.aloha.privowner", "com.facebo
     ("portal_go", ("com.facebook.aloha.hw",), IDENTITY),
     ("portal_mini", (), IDENTITY),
     # Models without a Meta setup app never report a missing identity.
-    ("portal_gen2", (), ()),
+    ("portal_gen2", (), IDENTITY),
     (None, (), ()),
 ])
 async def test_preflight_reports_missing_meta_identity(model_key, types, missing):
@@ -261,12 +261,28 @@ async def test_portal_go_clears_meta_accounts():
     assert await device_owner.read_meta_identity_missing(dev) == IDENTITY
 
 
+async def test_portal_gen2_clears_accounts_and_requests_meta_setup():
+    """[KSM-TEST-243] Great Room Gen 2 has the same live account package
+    and Device Owner sequence; an unlisted Portal remains blocked above."""
+    dev = FakeDevice(restore_readds_hw=True)
+    pre = await run_preflight(dev, "portal_gen2")
+    assert pre.ready and pre.clear_packages == (META,)
+    result = await enable_device_owner(dev, "portal_gen2")
+    assert dev.mutations() == [
+        f"pm uninstall -k --user 0 {META}",
+        f"dpm set-device-owner {KS_ADMIN}",
+        f"cmd package install-existing --user 0 {META}",
+    ]
+    assert result.meta_setup_needed is True
+    assert dev.owner == "me.jxl.kiosk_satellite"
+
+
 @pytest.mark.parametrize("model_key,types,needed", [
     ("portal_mini", tuple(f"com.facebook.aloha.{t}" for t in _META_TYPES), True),
     # Nothing cleared, but the identity is already gone: setup still needed.
     ("portal_go", (), True),
-    # No Meta setup app on this model.
-    ("portal_gen2", (), False),
+    # No verified Meta setup app on this model.
+    ("portal_gen1", (), False),
 ])
 async def test_enrollment_flags_meta_setup(model_key, types, needed):
     """[KSM-TEST-214] meta_setup_needed follows the model and whether the
@@ -278,11 +294,12 @@ async def test_enrollment_flags_meta_setup(model_key, types, needed):
     assert not any(SETUP in c for c in dev.commands)
 
 
-async def test_restart_meta_setup_resets_and_launches():
-    """[KSM-TEST-215] uninstall -k -> install-existing -> enabled check ->
-    am start, and success is the setup screen actually in front."""
+@pytest.mark.parametrize("model_key", ["portal_go", "portal_gen2"])
+async def test_restart_meta_setup_resets_and_launches(model_key):
+    """[KSM-TEST-215/243] Go and Gen 2 reset and launch Meta setup; success
+    requires the setup screen actually in front."""
     dev = FakeDevice(owner="me.jxl.kiosk_satellite")
-    await device_owner.restart_meta_setup(dev, "portal_go")
+    await device_owner.restart_meta_setup(dev, model_key)
     assert dev.mutations() == [
         f"pm uninstall -k --user 0 {SETUP}",
         f"cmd package install-existing --user 0 {SETUP}",
@@ -319,7 +336,7 @@ async def test_restart_meta_setup_refuses_unsupported_model():
     no command at all."""
     dev = FakeDevice()
     with pytest.raises(DeviceOwnerError) as err:
-        await device_owner.restart_meta_setup(dev, "portal_gen2")
+        await device_owner.restart_meta_setup(dev, "portal_gen1")
     assert err.value.code == "meta_setup_unsupported"
     assert dev.commands == []
 
