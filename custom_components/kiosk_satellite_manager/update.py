@@ -34,9 +34,9 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     CONF_AREA_ID, CONF_AUTO_UPDATE, CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_MANAGER,
-    RELEASE_COORDINATOR_KEY, SIGNAL_AUTO_UPDATE_ALL,
+    RELEASE_COORDINATOR_KEY, SIGNAL_AUTO_UPDATE_ALL, SIGNAL_MANAGER_OPTIONS_UPDATED,
 )
-from .helpers import auto_update_all_enabled, resolve_area_name
+from .helpers import auto_update_all_enabled, resolve_area_name, target_release
 from .ks_update import OUTCOME_AWAITING_CONFIRMATION, async_self_update_entry
 
 _LOGGER = logging.getLogger(__name__)
@@ -95,6 +95,12 @@ class KioskSatelliteUpdateEntity(CoordinatorEntity, UpdateEntity):
         self.async_on_remove(
             async_dispatcher_connect(self.hass, SIGNAL_AUTO_UPDATE_ALL, self._maybe_auto_update)
         )
+        # KSM-BEHAVE-114: a new Install version applies at once, no reload.
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, SIGNAL_MANAGER_OPTIONS_UPDATED, self._handle_coordinator_update
+            )
+        )
         self._maybe_auto_update()
 
     @property
@@ -111,18 +117,22 @@ class KioskSatelliteUpdateEntity(CoordinatorEntity, UpdateEntity):
 
     @property
     def latest_version(self) -> str | None:
-        return self.coordinator.data.version if self.coordinator.data else None
+        # KSM-BEHAVE-114: the pinned Install version, else the latest release.
+        target = target_release(self.hass)
+        return target.version if target else None
 
     @property
     def release_url(self) -> str | None:
-        return self.coordinator.data.url if self.coordinator.data else None
+        target = target_release(self.hass)
+        return target.url if target else None
 
     @property
     def in_progress(self) -> bool:
         return bool(self._health.ksm_installing)
 
     async def async_release_notes(self) -> str | None:
-        return self.coordinator.data.notes if self.coordinator.data else None
+        target = target_release(self.hass)
+        return target.notes if target else None
 
     @property
     def extra_state_attributes(self) -> dict[str, str] | None:

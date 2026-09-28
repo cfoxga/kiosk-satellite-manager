@@ -102,7 +102,7 @@
       },
       "init": {
         "title": "Configure Kiosk Satellite Manager",
-        "description": "These settings apply to future devices only. Leave the password empty to retain it.",
+        "description": "Install version applies to every device now; the other settings apply to future devices only. Leave the password empty to retain it.",
         "data": {
           "existing_install_action": "Existing installation",
           "home_launcher": "Enable home launcher",
@@ -111,7 +111,11 @@
           "password": "Kiosk Satellite password",
           "ha_url": "Home Assistant URL",
           "token_mode": "Home Assistant credential",
-          "onboarding_mode": "Onboarding mode"
+          "onboarding_mode": "Onboarding mode",
+          "target_version": "Install version"
+        },
+        "data_description": {
+          "target_version": "Latest follows the newest release. A downloaded version becomes what every device installs, so an upgrade can be tested. Devices only move forward; Kiosk Satellite refuses downgrades."
         }
       },
       "device_menu": {

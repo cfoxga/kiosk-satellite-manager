@@ -63,6 +63,7 @@ from .const import (
 from .device_catalog import require_recipe
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .install_recipes import InstallRecipe
+from .helpers import pinned_version
 from .ks_api import latest_release
 from .ks_api_client import KsApiError
 from .provisioning import build_provision_command
@@ -328,7 +329,13 @@ async def install_and_launch(
     except Exception:
         sdk = 29
 
-    apk_url, target_version = await latest_release(session)
+    # KSM-BEHAVE-114: a version pinned in global settings comes from the
+    # cache alone; only Latest asks GitHub.
+    pinned = pinned_version(hass)
+    if pinned is not None:
+        apk_url, target_version = None, pinned
+    else:
+        apk_url, target_version = await latest_release(session)
     current_version = await client.installed_version()
     if target_version and current_version == target_version:
         # KSM-BEHAVE-040 (Phase 2, "preserve compatible installations where
@@ -344,13 +351,16 @@ async def install_and_launch(
         # KSM-BEHAVE-107: the same verified cache the API update path uploads
         # from. KSM-BEHAVE-063: async_cached_apk checks the signer pin before
         # the file is stored, so nothing unverified is ever pushed.
-        apk = await apk_cache.async_cached_apk(
-            hass,
-            session,
-            target_version or "unversioned",
-            apk_url.rsplit("/", 1)[-1],
-            apk_url,
-        )
+        if apk_url is None:
+            apk = await apk_cache.async_pinned_apk(hass, target_version)
+        else:
+            apk = await apk_cache.async_cached_apk(
+                hass,
+                session,
+                target_version or "unversioned",
+                apk_url.rsplit("/", 1)[-1],
+                apk_url,
+            )
         await client.push(str(apk), KS_APK_REMOTE_PATH)
         try:
             # KSM-BEHAVE-035/063: rejected artifacts, including signer

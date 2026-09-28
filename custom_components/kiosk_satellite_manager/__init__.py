@@ -39,6 +39,7 @@ from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -63,6 +64,7 @@ from .const import (
     RELEASE_COORDINATOR_KEY,
     MANAGER_ENTRY_KEY,
     RENAME_API_KEY,
+    SIGNAL_MANAGER_OPTIONS_UPDATED,
 )
 from . import ks_tls
 from .credentials import TokenCredential, async_revoke_owned_credential
@@ -375,12 +377,18 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+async def _async_manager_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """KSM-BEHAVE-114: device update entities re-read the Install version."""
+    async_dispatcher_send(hass, SIGNAL_MANAGER_OPTIONS_UPDATED)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up a config entry: start the health-poll coordinator, then the
     button/sensor/switch/update platforms."""
     if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
         hass.data[MANAGER_ENTRY_KEY] = entry.entry_id
         await _async_ensure_release_coordinator(hass)
+        entry.async_on_unload(entry.add_update_listener(_async_manager_options_updated))
         await hass.config_entries.async_forward_entry_setups(entry, MANAGER_PLATFORMS)
         return True
 

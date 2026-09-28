@@ -45,13 +45,15 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.helpers.network import get_url
 
-from . import device_owner, ks_api_client, ks_tls, meta_setup
+from . import apk_cache, device_owner, ks_api_client, ks_tls, meta_setup
 from .adb_client import AdbAuthPending, AdbClient, AdbConnectFailed, ensure_adb_key
 from .const import (
     CONF_AREA_ID,
     CONF_AUTO_UPDATE,
     CONF_ESPHOME_ENABLE_PENDING,
     CONF_ESPHOME_NEW_DEVICES,
+    CONF_TARGET_VERSION,
+    TARGET_VERSION_LATEST,
     CONF_TLS_SPKI,
     CONF_DEVICE_PROFILE,
     CONF_ENABLE_DEVICE_OWNER,
@@ -208,6 +210,11 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             default_url = get_url(self.hass, prefer_external=False)
         except Exception:
             default_url = ""
+        # KSM-BEHAVE-114: Latest, then only versions already downloaded.
+        cached = await self.hass.async_add_executor_job(
+            apk_cache.cached_versions, apk_cache.cache_root(self.hass)
+        )
+        saved_target = saved.get(CONF_TARGET_VERSION, TARGET_VERSION_LATEST)
         fields = {
             vol.Required(CONF_EXISTING_INSTALL_ACTION, default=saved.get(
                 CONF_EXISTING_INSTALL_ACTION, EXISTING_INSTALL_REUSE
@@ -217,6 +224,15 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             vol.Required(
                 CONF_ESPHOME_NEW_DEVICES, default=saved.get(CONF_ESPHOME_NEW_DEVICES, False)
             ): bool,
+            vol.Required(CONF_TARGET_VERSION, default=(
+                saved_target if saved_target in cached else TARGET_VERSION_LATEST
+            )): selector.SelectSelector(selector.SelectSelectorConfig(
+                options=[
+                    selector.SelectOptionDict(value=TARGET_VERSION_LATEST, label="Latest"),
+                    *(selector.SelectOptionDict(value=v, label=v) for v in cached),
+                ],
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )),
             vol.Optional(CONF_PASSWORD): selector.TextSelector(
                 selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
             ),

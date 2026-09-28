@@ -18,6 +18,7 @@ from custom_components.kiosk_satellite_manager.const import (
     MANAGER_UPDATE_RUNNING_KEY, ONBOARDING_AUTOMATIC, RELEASE_COORDINATOR_KEY,
     TOKEN_MODE_AUTO,
 )
+from custom_components.kiosk_satellite_manager import apk_cache
 from custom_components.kiosk_satellite_manager.ks_api import ReleaseInfo
 
 from .conftest import init_integration
@@ -623,3 +624,108 @@ async def test_auto_update_all_respects_a_skipped_version(hass, release_check):
         )
         await _publish(hass, release_check, "2026.9.77")
     install.assert_not_awaited()
+
+
+def _cache_versions(tmp_path, *versions):
+    root = tmp_path / "apks"
+    for version in versions:
+        path = root / version / f"kiosk-satellite-{version}.apk"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"cached")
+    (root / "2026.9.70").mkdir()
+    (root / "2026.9.70" / "kiosk-satellite-2026.9.70.arm64-v8a.apk").write_bytes(b"split")
+    return patch.object(apk_cache, "cache_root", lambda hass: root)
+
+
+def _target_options(result):
+    key = next(k for k in result["data_schema"].schema if k == "target_version")
+    config = result["data_schema"].schema[key].config
+    return key.default(), [(o["value"], o["label"]) for o in config["options"]]
+
+
+async def test_install_version_offers_latest_then_cached_versions(hass, tmp_path):
+    """[KSM-TEST-219] #72: Latest first, then cached universal versions newest
+    first. Negative: split-only and no-longer-cached versions are not offered,
+    and a stale saved pin does not become the default."""
+    manager = await _manager(hass, options={"target_version": "2026.9.10"})
+    with _cache_versions(tmp_path, "2026.9.86", "2026.9.100", "2026.9.88"):
+        result = await hass.config_entries.options.async_init(manager.entry_id)
+    default, options = _target_options(result)
+    assert options == [
+        ("latest", "Latest"), ("2026.9.100", "2026.9.100"),
+        ("2026.9.88", "2026.9.88"), ("2026.9.86", "2026.9.86"),
+    ]
+    assert default == "latest"
+    data = result["data_schema"]({})
+    data.update({
+        CONF_HA_URL: "https://ha.example.test", CONF_TOKEN_MODE: TOKEN_MODE_AUTO,
+        "target_version": "2026.9.88",
+    })
+    result = await hass.config_entries.options.async_configure(result["flow_id"], data)
+    assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert manager.options["target_version"] == "2026.9.88"
+
+
+async def test_pinned_version_is_every_device_install_target(hass, release_check, tmp_path, apk_upload):
+    """[KSM-TEST-220] #72: the pin replaces the latest release as the update
+    entity's latest_version (on save, no reload) and Update all's target.
+    Negative control: Latest targets the release's version."""
+    release_check.return_value = ReleaseInfo("2026.9.88", "https://example.invalid/88", "notes")
+    manager = await _manager(hass)
+    with patch(
+        "custom_components.kiosk_satellite_manager.fetch_health", new=_health_version("2026.9.85")
+    ):
+        device = await init_integration(hass)
+    update_id = _entity(hass, device.entry, "update")
+    assert hass.states.get(update_id).attributes["latest_version"] == "2026.9.88"
+
+    with _cache_versions(tmp_path, "2026.9.86", "2026.9.88"):
+        result = await hass.config_entries.options.async_init(manager.entry_id)
+        data = result["data_schema"]({})
+        data.update({
+            CONF_HA_URL: "https://ha.example.test", CONF_TOKEN_MODE: TOKEN_MODE_AUTO,
+            "target_version": "2026.9.86",
+        })
+        await hass.config_entries.options.async_configure(result["flow_id"], data)
+        await hass.async_block_till_done()
+    state = hass.states.get(update_id)
+    assert state.attributes["latest_version"] == "2026.9.86"
+    assert state.state == "on"
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.button.async_self_update_entry",
+        new=AsyncMock(return_value="updated"),
+    ) as install, patch(
+        "custom_components.kiosk_satellite_manager.button.persistent_notification.async_create"
+    ) as notify:
+        await hass.services.async_call(
+            "button", "press", {"entity_id": _entity(hass, manager, "update_all")}, blocking=True
+        )
+    install.assert_awaited_once()
+    assert notify.call_args.kwargs["message"].startswith("Release: 2026.9.86")
+
+
+async def test_self_update_uploads_the_pinned_release(hass, release_check, apk_upload):
+    """[KSM-TEST-220] the self-update asks the cache for the pinned version,
+    not the latest release."""
+    from custom_components.kiosk_satellite_manager.ks_update import async_self_update_entry
+
+    release_check.return_value = ReleaseInfo("2026.9.88", "https://example.invalid/88", "notes")
+    await _manager(hass, options={"target_version": "2026.9.86"})
+    with patch(
+        "custom_components.kiosk_satellite_manager.fetch_health", new=_health_version("2026.9.85")
+    ):
+        device = await init_integration(hass, data={CONF_PASSWORD: "pw"})
+        with patch(
+            "custom_components.kiosk_satellite_manager.ks_update.fetch_health",
+            new=_health_version("2026.9.86"),
+        ), patch(
+            "custom_components.kiosk_satellite_manager.ks_update.ks_api_client.login",
+            new=AsyncMock(return_value="tok"),
+        ), patch(
+            "custom_components.kiosk_satellite_manager.ks_update.ks_api_client.run_command",
+            new=AsyncMock(return_value={"ok": True}),
+        ):
+            assert await async_self_update_entry(hass, device.entry) == "updated"
+    release = apk_upload.release_apk.await_args.args[1]
+    assert (release.version, release.pinned) == ("2026.9.86", True)

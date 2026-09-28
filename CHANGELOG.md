@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The manager's options have a new **Install version** setting (#72). **Latest**
+  (the default) follows new releases as before. Picking a version KSM has already
+  downloaded makes every kiosk's update, Update all, auto-update and the ADB
+  Install use that version instead, so you can test an upgrade without waiting
+  for a new release. Kiosks only move forward: to re-test an upgrade on a kiosk
+  that is already newest, Uninstall it, pick the older version and ADB Install,
+  then switch back to Latest.
+
 - **Enable Device Owner no longer leaves a Portal without its Meta login**
   (#54). Enabling Device Owner has to remove the Portal's accounts, which also
   signed it out of Meta and FB/WhatsApp with no way back short of a factory

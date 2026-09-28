@@ -30,17 +30,24 @@ class ReleaseInfo:
     # KSM-BEHAVE-107: (filename, download URL) of every .apk asset, for the
     # APK cache to pick a device's split from without a second lookup.
     assets: tuple[tuple[str, str], ...] = ()
+    # KSM-BEHAVE-114: a version pinned in global settings, served only from
+    # the APK cache (no assets, never downloaded).
+    pinned: bool = False
 
 
 class ApkAssetNotFound(Exception):
     """No usable .apk asset on the latest release."""
 
 
+def is_universal_apk(name: str) -> bool:
+    return name.endswith(".apk") and not any(token in name for token in _ABI_TOKENS)
+
+
 def universal_apk(assets: Iterable[tuple[str, str]]) -> tuple[str, str]:
     """KSM-BEHAVE-107 (#71): (name, url) of the release's universal APK -- the
     `.apk` asset whose name carries no ABI. One file serves every device."""
     for name, url in assets:
-        if name.endswith(".apk") and not any(token in name for token in _ABI_TOKENS):
+        if is_universal_apk(name):
             return name, url
     raise ApkAssetNotFound("no universal .apk asset on the release")
 

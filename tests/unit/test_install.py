@@ -1257,3 +1257,23 @@ async def test_install_and_launch_runs_functional_verification_after_permission_
         await install_and_launch(hass, client, session, device_model="portal_go")
 
     client.bluetooth_enabled.assert_awaited_once()
+
+
+async def test_install_and_launch_pushes_the_pinned_cached_apk(apk_cache_dir):
+    """[KSM-TEST-221] #72: with an Install version pinned, ADB Install pushes
+    that cached file and never asks GitHub for the latest release."""
+    pinned = apk_cache_dir / "2026.9.86" / "kiosk-satellite-2026.9.86.apk"
+    pinned.parent.mkdir(parents=True)
+    pinned.write_bytes(b"pinned")
+    session = _fake_session()
+    client = _fake_client()
+    client.installed_version = AsyncMock(side_effect=[None, "2026.9.86"])
+    latest = AsyncMock()
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.pinned_version",
+        return_value="2026.9.86",
+    ), patch("custom_components.kiosk_satellite_manager.install.latest_release", new=latest):
+        await install_and_launch(_FakeHass(), client, session, device_model="portal_go")
+    latest.assert_not_awaited()
+    client.push.assert_awaited_once_with(str(pinned), client.install_apk.await_args.args[0])
+    assert not [c for c in session.get.call_args_list if c.args[0].endswith(".apk")]

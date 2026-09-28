@@ -37,6 +37,9 @@ CONF_AUTO_UPDATE_ALL: Final = "auto_update_all"
 # is on gets CONF_ESPHOME_ENABLE_PENDING in its entry data, and its first
 # successful setup turns Kiosk Satellite's ESPHome server on and drops the flag.
 CONF_ESPHOME_NEW_DEVICES: Final = "esphome_new_devices"
+# KSM-BEHAVE-114 (#72): manager option, "latest" or a cached version.
+CONF_TARGET_VERSION: Final = "target_version"
+TARGET_VERSION_LATEST: Final = "latest"
 CONF_ESPHOME_ENABLE_PENDING: Final = "esphome_enable_pending"
 CONF_ENTRY_TYPE: Final = "entry_type"
 ENTRY_TYPE_MANAGER: Final = "manager"
@@ -80,6 +83,7 @@ MANAGER_PLATFORMS: Final = ["button", "sensor", "switch"]
 # KSM-BEHAVE-080: sent when the manager's Auto-update all switch changes so
 # every device's update entity re-evaluates its auto-update rules.
 SIGNAL_AUTO_UPDATE_ALL: Final = f"{DOMAIN}_auto_update_all_changed"
+SIGNAL_MANAGER_OPTIONS_UPDATED: Final = f"{DOMAIN}_manager_options_updated"
 
 # KSM-BEHAVE-071: one release check per HA instance, kept beside (not inside)
 # hass.data[DOMAIN], which maps entry_id -> health coordinator and is emptied

@@ -49,7 +49,7 @@ from .const import (
 )
 from .credentials import TokenCredential, async_replace_entry_credential
 
-from .helpers import resolve_area_name
+from .helpers import resolve_area_name, target_release
 from .install import install_and_launch
 from .ks_update import OUTCOME_AWAITING_CONFIRMATION, async_self_update_entry
 
@@ -259,16 +259,17 @@ class KioskSatelliteUpdateAllButton(ButtonEntity):
         return None
 
     async def async_press(self) -> None:
-        release = self.hass.data.get(RELEASE_COORDINATOR_KEY)
+        # KSM-BEHAVE-114: the pinned Install version, else the latest release.
+        release = target_release(self.hass)
         if self.hass.data.get(MANAGER_UPDATE_RUNNING_KEY):
             self._notify("Update all is already running.")
             return
-        if release is None or release.data is None:
+        if release is None:
             self._notify("No usable Kiosk Satellite release is known.")
             return
         self.hass.data[MANAGER_UPDATE_RUNNING_KEY] = True
         updated, awaiting, skipped, failed = [], [], [], []
-        version = release.data.version
+        version = release.version
         try:
             entries = [
                 entry for entry in self.hass.config_entries.async_entries(DOMAIN)

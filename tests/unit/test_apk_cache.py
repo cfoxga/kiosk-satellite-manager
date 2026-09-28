@@ -157,7 +157,7 @@ async def test_release_apk_caches_the_universal_asset(tmp_path):
     a split, and stores it under the release version."""
     hass = _FakeHass(tmp_path)
     session = _session(b"universal")
-    release = SimpleNamespace(version=_V, assets=_ASSETS)
+    release = SimpleNamespace(version=_V, assets=_ASSETS, pinned=False)
     with patch(_VERIFY), patch(
         "custom_components.kiosk_satellite_manager.apk_cache.async_get_clientsession",
         return_value=session,
@@ -184,3 +184,65 @@ async def test_prune_failure_is_logged_not_raised(tmp_path, caplog):
     ):
         assert await apk_cache.async_prune(_FakeHass(tmp_path)) == []
     assert "Could not prune the KSM APK cache" in caplog.text
+
+
+def _put(root: Path, version: str, name: str) -> Path:
+    path = root / version / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"cached")
+    return path
+
+
+def test_cached_versions_lists_universal_versions_newest_first(tmp_path):
+    """[KSM-TEST-219] #72: the Install version choices are the cached versions
+    holding a universal APK, newest first. Negative: a split-only directory
+    (left by #70) and a stray file are not offered."""
+    root = _cache_dir(tmp_path)
+    _put(root, "2026.9.87", "kiosk-satellite-2026.9.87.apk")
+    _put(root, "2026.9.100", "kiosk-satellite-2026.9.100.apk")
+    _put(root, "2026.9.88", "kiosk-satellite-2026.9.88.apk")
+    _put(root, "2026.9.86", "kiosk-satellite-2026.9.86.arm64-v8a.apk")
+    (root / "stray.txt").write_text("x")
+    assert apk_cache.cached_versions(root) == ["2026.9.100", "2026.9.88", "2026.9.87"]
+    assert apk_cache.cached_versions(tmp_path / "missing") == []
+
+
+def test_versions_to_keep_never_drops_the_pinned_version():
+    """[KSM-TEST-221] #72: a pinned version survives even when the three
+    retention rules alone would delete it."""
+    assert "2026.9.81" not in apk_cache.versions_to_keep(_CACHED, ["2026.9.87"])
+    assert "2026.9.81" in apk_cache.versions_to_keep(_CACHED, ["2026.9.87"], pinned="2026.9.81")
+
+
+async def test_prune_keeps_the_manager_pinned_version(tmp_path):
+    """[KSM-TEST-221] async_prune reads the pin from the manager options."""
+    root = _cache_dir(tmp_path)
+    for version in _CACHED:
+        _put(root, version, f"kiosk-satellite-{version}.apk")
+    hass = _FakeHass(tmp_path, device_versions=["2026.9.87"])
+    with patch(
+        "custom_components.kiosk_satellite_manager.apk_cache.pinned_version",
+        return_value="2026.9.81",
+    ):
+        await apk_cache.async_prune(hass)
+    assert (root / "2026.9.81").is_dir()
+
+
+async def test_pinned_release_uses_the_cached_file_and_never_downloads(tmp_path):
+    """[KSM-TEST-220] a pinned release has no assets: its APK is the cached
+    universal file. Negative: an uncached pin fails clearly, no download."""
+    root = _cache_dir(tmp_path)
+    cached = _put(root, "2026.9.86", "kiosk-satellite-2026.9.86.apk")
+    _put(root, "2026.9.86", "kiosk-satellite-2026.9.86.arm64-v8a.apk")
+    session = _session()
+    hass = _FakeHass(tmp_path)
+    with patch(
+        "custom_components.kiosk_satellite_manager.apk_cache.async_get_clientsession",
+        return_value=session,
+    ):
+        pinned = SimpleNamespace(version="2026.9.86", assets=(), pinned=True)
+        assert await apk_cache.async_release_apk(hass, pinned) == cached
+        missing = SimpleNamespace(version="2026.9.10", assets=(), pinned=True)
+        with pytest.raises(FileNotFoundError, match="not in the KSM APK cache"):
+            await apk_cache.async_release_apk(hass, missing)
+    session.get.assert_not_called()

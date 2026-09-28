@@ -28,10 +28,10 @@ from .const import (
     CONF_PASSWORD,
     CONF_TLS_SPKI,
     DOMAIN,
-    RELEASE_COORDINATOR_KEY,
     SELF_UPDATE_POLL_ATTEMPTS,
     SELF_UPDATE_POLL_DELAY_S,
 )
+from .helpers import target_release
 from .ks_api_client import KsApiError
 from .provisioning import fetch_health
 
@@ -70,7 +70,8 @@ def _status_data(response: dict, entry: ConfigEntry) -> dict:
 
 async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> str:
     """KSM-BEHAVE-082: update Kiosk Satellite to the shared release check's
-    latest version over its own API.
+    latest version (or the version pinned in global settings, KSM-BEHAVE-114)
+    over its own API.
 
     Returns OUTCOME_UPDATED or OUTCOME_AWAITING_CONFIRMATION. Raises
     HomeAssistantError for the "failed" outcome -- never
@@ -82,10 +83,9 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
             f"Kiosk Satellite install already in progress on {entry.title}"
         )
 
-    release = hass.data.get(RELEASE_COORDINATOR_KEY)
-    if release is None or release.data is None:
+    release_info = target_release(hass)
+    if release_info is None:
         raise HomeAssistantError("No usable Kiosk Satellite release is known")
-    release_info = release.data
     version = release_info.version
 
     host = entry.data[CONF_HOST]

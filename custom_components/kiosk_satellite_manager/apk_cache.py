@@ -21,7 +21,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .apk_signing import verify_ks_apk_signer
 from .const import APK_CACHE_KEEP_LATEST, APK_DOWNLOAD_TIMEOUT_S, DOMAIN
-from .ks_api import ReleaseInfo, universal_apk
+from .helpers import pinned_version
+from .ks_api import ReleaseInfo, is_universal_apk, universal_apk
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,23 +83,61 @@ async def async_cached_apk(
     return path
 
 
+def cached_universal_apk(root: Path, version: str) -> Path | None:
+    """The cached universal APK of `version`, if any (#71 leaves only these;
+    a #70 split-only directory has none)."""
+    folder = root / version
+    if not folder.is_dir():
+        return None
+    return next(
+        (p for p in sorted(folder.iterdir()) if p.is_file() and is_universal_apk(p.name)), None
+    )
+
+
+def cached_versions(root: Path) -> list[str]:
+    """KSM-BEHAVE-114: every cached version with a universal APK, newest first."""
+    if not root.is_dir():
+        return []
+    versions = [
+        p.name for p in root.iterdir() if p.is_dir() and cached_universal_apk(root, p.name)
+    ]
+    return sorted(versions, key=version_key, reverse=True)
+
+
 async def async_release_apk(hass: HomeAssistant, release: ReleaseInfo) -> Path:
-    """KSM-BEHAVE-107: the cached universal APK of `release` (#71)."""
+    """KSM-BEHAVE-107: the cached universal APK of `release` (#71). A pinned
+    release (KSM-BEHAVE-114) is served from the cache only, never downloaded."""
+    if release.pinned:
+        return await async_pinned_apk(hass, release.version)
     name, url = universal_apk(release.assets)
     return await async_cached_apk(hass, async_get_clientsession(hass), release.version, name, url)
+
+
+async def async_pinned_apk(hass: HomeAssistant, version: str) -> Path:
+    """KSM-BEHAVE-114: the cached file of a pinned version; never a download."""
+    _checked(version, "x.apk")
+    apk = await hass.async_add_executor_job(cached_universal_apk, cache_root(hass), version)
+    if apk is None:
+        raise FileNotFoundError(f"Kiosk Satellite {version} is not in the KSM APK cache")
+    return apk
 
 
 def versions_to_keep(
     cached: Iterable[str],
     device_versions: Iterable[str | None],
     latest_n: int = APK_CACHE_KEEP_LATEST,
+    *,
+    pinned: str | None = None,
 ) -> set[str]:
     """KSM-BEHAVE-109: the cached versions to keep --
     1. every version a device runs;
     2. the newest cached version older than the oldest of those;
-    3. the newest `latest_n` cached versions."""
+    3. the newest `latest_n` cached versions;
+    plus the version pinned in global settings (KSM-BEHAVE-114)."""
     ordered = sorted(set(cached), key=version_key)
     keep = set(ordered[-latest_n:]) if latest_n > 0 else set()
+    if pinned in ordered:
+        keep.add(pinned)
     running = {v for v in device_versions if v}
     keep |= running & set(ordered)
     if running:
@@ -109,11 +148,11 @@ def versions_to_keep(
     return keep
 
 
-def _prune(root: Path, running: list[str | None]) -> list[str]:
+def _prune(root: Path, running: list[str | None], pinned: str | None = None) -> list[str]:
     if not root.is_dir():
         return []
     cached = [p.name for p in root.iterdir() if p.is_dir()]
-    keep = versions_to_keep(cached, running)
+    keep = versions_to_keep(cached, running, pinned=pinned)
     removed = sorted(set(cached) - keep, key=version_key)
     for version in removed:
         shutil.rmtree(root / version)
@@ -132,7 +171,9 @@ async def async_prune(hass: HomeAssistant) -> list[str]:
     lock = hass.data.setdefault(_PRUNE_LOCK_KEY, asyncio.Lock())
     try:
         async with lock:
-            removed = await hass.async_add_executor_job(_prune, cache_root(hass), running)
+            removed = await hass.async_add_executor_job(
+                _prune, cache_root(hass), running, pinned_version(hass)
+            )
     except OSError as err:  # never fails the install that triggered it
         _LOGGER.warning("Could not prune the KSM APK cache: %s", err)
         return []
