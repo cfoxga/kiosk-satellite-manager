@@ -309,7 +309,7 @@ async def install_and_launch(
     ha_url: str | None = None,
     on_tls_pinned: Callable[[str], None] | None = None,
 ) -> TokenCredential | None:
-    """Fetch the latest KS APK matching the device's ABI, install it, launch
+    """Fetch the latest universal KS APK (#71), install it, launch
     it, and grant full permissions. If a password is configured on the entry,
     also sync the device's admin password/Device Name and connect it to this
     HA instance (KSM-BEHAVE-010/011/014/015/020). Returns the HA token used.
@@ -322,14 +322,13 @@ async def install_and_launch(
     `on_tls_pinned` receives the device's HTTPS key pin once the sync has
     established it (KSM-BEHAVE-094); the caller persists it."""
     recipe = require_recipe(device_model)
-    abi = await client.getprop("ro.product.cpu.abi")
     try:
         sdk_str = await client.getprop("ro.build.version.sdk")
         sdk = int(sdk_str) if sdk_str.isdigit() else 29
     except Exception:
         sdk = 29
 
-    apk_url, target_version = await latest_release(session, abi)
+    apk_url, target_version = await latest_release(session)
     current_version = await client.installed_version()
     if target_version and current_version == target_version:
         # KSM-BEHAVE-040 (Phase 2, "preserve compatible installations where

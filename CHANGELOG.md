@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- KSM now keeps only the universal Kiosk Satellite APK, which works on every
+  kiosk, instead of one file per CPU type (#71). That is one ~195 MB file per
+  version, however many kinds of kiosk you have.
+
 - Every managed kiosk now gets an ESPHome node name (#67). If the kiosk has
   none, or only Kiosk Satellite's generated `kiosk-satellite-xxxxxx`, KSM sets
   it from the device's name (Great Room Portal → `great-room-portal`) the next

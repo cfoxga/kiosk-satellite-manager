@@ -636,7 +636,6 @@ async def test_update_all_updates_two_devices_over_the_ks_api(hass, release_chec
 
         def fake_run_command(session, host, token, command, *, pin=None):
             responses = {
-                "getDeviceInfo": {"ok": True, "data": {"abis": ["arm64-v8a"]}},
                 "getUpdateStatus": {
                     "ok": True,
                     "data": {"lastOutcome": "confirm"} if host == "192.168.99.98" else {},

@@ -3,9 +3,9 @@
 Release assets are published per-ABI -- confirmed live against the real
 jxlarrea/kiosk-satellite releases API (tag 2026.9.61):
 `kiosk-satellite-<ver>.apk` (universal) plus `.arm64-v8a.apk`/
-`.armeabi-v7a.apk`/`.x86_64.apk` splits. Pick the split matching the detected
-device ABI (a real onn 4K Pro reported `armeabi-v7a` live this session),
-falling back to the universal build for anything unmatched.
+`.armeabi-v7a.apk`/`.x86_64.apk` splits. KSM installs only the universal
+build on every device (#71): one cached file per version instead of one per
+ABI, and no device ABI probe.
 """
 from __future__ import annotations
 
@@ -36,48 +36,13 @@ class ApkAssetNotFound(Exception):
     """No usable .apk asset on the latest release."""
 
 
-# Kiosk Satellite publishes splits for exactly these (release_apk.dart).
-_SPLIT_ABIS = ("arm64-v8a", "armeabi-v7a", "x86_64")
-
-
-def select_release_apk(
-    assets: Iterable[tuple[str, str]], version: str, abis: Iterable[str]
-) -> tuple[str, str]:
-    """KSM-BEHAVE-107: (name, url) of the asset Kiosk Satellite's own updater
-    would pick -- the first of the device's ABIs, in its order, with a split
-    named for this version, else the universal build."""
-    by_name = dict(assets)
-    abis = list(abis)
-    version = version.removeprefix("v")
-    prefixes = (f"kiosk-satellite-v{version}", f"kiosk-satellite-{version}")
-
-    def named(suffix: str) -> tuple[str, str] | None:
-        for prefix in prefixes:
-            if (url := by_name.get(prefix + suffix)):
-                return prefix + suffix, url
-        return None
-
-    for abi in abis:
-        if abi in _SPLIT_ABIS and (split := named(f".{abi}.apk")):
-            return split
-    if universal := named(".apk"):
-        return universal
-    raise ApkAssetNotFound(f"release {version} has no APK for ABIs {abis!r}")
-
-
-def select_apk_asset(assets: list[tuple[str, str]], abi: str) -> str:
-    """assets: [(filename, download_url), ...] for every .apk asset on a release."""
-    abi = abi.strip()
-    if abi:
-        for name, url in assets:
-            if abi in name:
-                return url
+def universal_apk(assets: Iterable[tuple[str, str]]) -> tuple[str, str]:
+    """KSM-BEHAVE-107 (#71): (name, url) of the release's universal APK -- the
+    `.apk` asset whose name carries no ABI. One file serves every device."""
     for name, url in assets:
-        if not any(token in name for token in _ABI_TOKENS):
-            return url
-    if assets:
-        return assets[0][1]
-    raise ApkAssetNotFound("no .apk asset on the latest release")
+        if name.endswith(".apk") and not any(token in name for token in _ABI_TOKENS):
+            return name, url
+    raise ApkAssetNotFound("no universal .apk asset on the release")
 
 
 async def _latest_usable_release(session: aiohttp.ClientSession) -> tuple[dict, list[tuple[str, str]]]:
@@ -100,25 +65,16 @@ async def _latest_usable_release(session: aiohttp.ClientSession) -> tuple[dict, 
             for asset in release.get("assets", [])
             if asset.get("name", "").endswith(".apk")
         ]
-        if assets:
-            return release, assets
-    raise ApkAssetNotFound(f"no .apk asset found in releases of {KS_GITHUB_REPO}")
+        try:
+            universal_apk(assets)
+        except ApkAssetNotFound:
+            continue  # empty or split-only: not installable (#71)
+        return release, assets
+    raise ApkAssetNotFound(f"no universal .apk asset found in releases of {KS_GITHUB_REPO}")
 
 
-async def _latest_release_and_asset(session: aiohttp.ClientSession, abi: str) -> tuple[dict, str]:
-    release, assets = await _latest_usable_release(session)
-    return release, select_apk_asset(assets, abi)
-
-
-async def latest_apk_url(session: aiohttp.ClientSession, abi: str) -> str:
-    """Return the download URL for the release asset matching abi (or the
-    universal build if nothing matches)."""
-    _, url = await _latest_release_and_asset(session, abi)
-    return url
-
-
-async def latest_release(session: aiohttp.ClientSession, abi: str) -> tuple[str, str]:
-    """Return (download_url, tag_name) for the latest usable release.
+async def latest_release(session: aiohttp.ClientSession) -> tuple[str, str]:
+    """Return (universal_download_url, tag_name) for the latest usable release.
 
     KSM-BEHAVE-040 (Phase 2, "install and update"): the tag name is the
     target version install_and_launch compares against the device's
@@ -127,8 +83,8 @@ async def latest_release(session: aiohttp.ClientSession, abi: str) -> tuple[str,
     afterward -- the same tag format already confirmed live to match the
     app's own reported version (docstring above, `docs/SPEC/provisioning.md`).
     """
-    release, url = await _latest_release_and_asset(session, abi)
-    return url, release.get("tag_name") or ""
+    release, assets = await _latest_usable_release(session)
+    return universal_apk(assets)[1], release.get("tag_name") or ""
 
 
 async def latest_release_info(session: aiohttp.ClientSession) -> ReleaseInfo:

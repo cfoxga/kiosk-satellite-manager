@@ -11,7 +11,6 @@ import pytest
 from custom_components.kiosk_satellite_manager import apk_cache
 from custom_components.kiosk_satellite_manager.apk_signing import ApkSignerVerificationFailed
 from custom_components.kiosk_satellite_manager.const import DOMAIN
-from custom_components.kiosk_satellite_manager.ks_api import ApkAssetNotFound, select_release_apk
 
 _VERIFY = "custom_components.kiosk_satellite_manager.apk_cache.verify_ks_apk_signer"
 
@@ -53,28 +52,11 @@ def _cache_dir(tmp_path: Path) -> Path:
 
 _V = "2026.9.88"
 _ASSETS = (
-    (f"kiosk-satellite-{_V}.apk", "https://example.invalid/universal.apk"),
     (f"kiosk-satellite-{_V}.arm64-v8a.apk", "https://example.invalid/arm64.apk"),
     (f"kiosk-satellite-{_V}.armeabi-v7a.apk", "https://example.invalid/v7a.apk"),
     (f"kiosk-satellite-{_V}.x86_64.apk", "https://example.invalid/x86_64.apk"),
+    (f"kiosk-satellite-{_V}.apk", "https://example.invalid/universal.apk"),
 )
-
-
-def test_select_release_apk_follows_the_device_abi_order():
-    """[KSM-TEST-206] The first listed ABI with a split wins, as in Kiosk
-    Satellite's own selectReleaseApk; unknown or no ABIs take universal."""
-    assert select_release_apk(_ASSETS, _V, ["armeabi-v7a", "arm64-v8a"]) == _ASSETS[2]
-    assert select_release_apk(_ASSETS, _V, ["arm64-v8a", "armeabi-v7a"]) == _ASSETS[1]
-    assert select_release_apk(_ASSETS, _V, ["mips", "x86"]) == _ASSETS[0]
-    assert select_release_apk(_ASSETS, _V, []) == _ASSETS[0]
-
-
-def test_select_release_apk_raises_without_a_split_or_universal():
-    """[KSM-TEST-206] negative case: nothing usable for the device."""
-    with pytest.raises(ApkAssetNotFound):
-        select_release_apk(_ASSETS[1:2], _V, ["armeabi-v7a"])
-    with pytest.raises(ApkAssetNotFound):
-        select_release_apk((), _V, ["arm64-v8a"])
 
 
 async def test_concurrent_requests_share_one_download(tmp_path):
@@ -170,19 +152,19 @@ async def test_prune_without_a_cache_directory_is_a_no_op(tmp_path):
     assert await apk_cache.async_prune(_FakeHass(tmp_path)) == []
 
 
-async def test_release_apk_picks_the_device_asset_and_caches_it(tmp_path):
-    """[KSM-TEST-207] async_release_apk selects by ABI, then stores under the
-    release version."""
+async def test_release_apk_caches_the_universal_asset(tmp_path):
+    """[KSM-TEST-207] #71: async_release_apk takes the universal asset, never
+    a split, and stores it under the release version."""
     hass = _FakeHass(tmp_path)
-    session = _session(b"v7a")
+    session = _session(b"universal")
     release = SimpleNamespace(version=_V, assets=_ASSETS)
     with patch(_VERIFY), patch(
         "custom_components.kiosk_satellite_manager.apk_cache.async_get_clientsession",
         return_value=session,
     ):
-        path = await apk_cache.async_release_apk(hass, release, ["armeabi-v7a"])
-    assert path == _cache_dir(tmp_path) / _V / _ASSETS[2][0]
-    assert session.get.call_args.args[0] == _ASSETS[2][1]
+        path = await apk_cache.async_release_apk(hass, release)
+    assert path == _cache_dir(tmp_path) / _V / _ASSETS[-1][0]
+    assert session.get.call_args.args[0] == _ASSETS[-1][1]
 
 
 def test_versions_to_keep_with_nothing_older_than_the_oldest_device():

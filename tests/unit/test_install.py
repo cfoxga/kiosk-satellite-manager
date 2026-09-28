@@ -180,7 +180,7 @@ async def test_install_and_launch_pushes_the_cached_apk_and_keeps_it(apk_cache_d
     same cache the API update path uploads from, pushes that file, and
     leaves it cached -- a second press downloads nothing."""
     session = _fake_session()
-    target = apk_cache_dir / _TARGET_VERSION / "kiosk-satellite-2026.9.99.arm64-v8a.apk"
+    target = apk_cache_dir / _TARGET_VERSION / "kiosk-satellite-2026.9.99.apk"
     for _ in range(2):
         client = _fake_client()
         client.installed_version = AsyncMock(side_effect=[None, _TARGET_VERSION])
@@ -188,13 +188,15 @@ async def test_install_and_launch_pushes_the_cached_apk_and_keeps_it(apk_cache_d
             "custom_components.kiosk_satellite_manager.install.latest_release",
             new=AsyncMock(
                 return_value=(
-                    "https://example.invalid/dl/kiosk-satellite-2026.9.99.arm64-v8a.apk",
+                    "https://example.invalid/dl/kiosk-satellite-2026.9.99.apk",
                     _TARGET_VERSION,
                 )
             ),
         ):
             await install_and_launch(_FakeHass(), client, session, device_model="portal_go")
         client.push.assert_awaited_once_with(str(target), client.install_apk.await_args.args[0])
+        # #71: the universal APK serves every device, so no ABI probe.
+        assert "ro.product.cpu.abi" not in [c.args[0] for c in client.getprop.await_args_list]
 
     assert target.read_bytes() == b"fake-apk-bytes"
     apk_gets = [c for c in session.get.call_args_list if c.args[0].endswith(".apk")]
@@ -885,7 +887,7 @@ async def test_install_uses_sdk_29_fallback_when_the_sdk_probe_fails():
     """[KSM-TEST-113] A failed SDK probe takes the documented safe fallback."""
     hass = _FakeHass()
     client = _fake_client()
-    client.getprop = AsyncMock(side_effect=["arm64-v8a", OSError("probe failed")])
+    client.getprop = AsyncMock(side_effect=[OSError("probe failed")])
     session = _fake_session()
 
     with patch(

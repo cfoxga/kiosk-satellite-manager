@@ -1,6 +1,6 @@
 """KSM's on-host copy of each Kiosk Satellite release APK (KSM-BEHAVE-107/109, #70).
 
-One verified download per release asset serves every device: the update
+One verified download of each release's universal APK serves every device: the update
 sequence uploads it over the `:2324` API (KSM-BEHAVE-108) and the ADB
 Install/Reinstall pushes it. Files live under `<config>/.cache/`, which Home
 Assistant's own and Supervisor backups both exclude.
@@ -21,7 +21,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .apk_signing import verify_ks_apk_signer
 from .const import APK_CACHE_KEEP_LATEST, APK_DOWNLOAD_TIMEOUT_S, DOMAIN
-from .ks_api import ReleaseInfo, select_release_apk
+from .ks_api import ReleaseInfo, universal_apk
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,11 +82,9 @@ async def async_cached_apk(
     return path
 
 
-async def async_release_apk(
-    hass: HomeAssistant, release: ReleaseInfo, abis: Iterable[str]
-) -> Path:
-    """KSM-BEHAVE-107: the cached APK of `release` for a device's ABIs."""
-    name, url = select_release_apk(release.assets, release.version, abis)
+async def async_release_apk(hass: HomeAssistant, release: ReleaseInfo) -> Path:
+    """KSM-BEHAVE-107: the cached universal APK of `release` (#71)."""
+    name, url = universal_apk(release.assets)
     return await async_cached_apk(hass, async_get_clientsession(hass), release.version, name, url)
 
 

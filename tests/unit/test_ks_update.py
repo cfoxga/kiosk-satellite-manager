@@ -71,7 +71,7 @@ def cached_apk(tmp_path):
 def _commands(**by_command):
     async def fake_run_command(session, host, token, command, *, pin=None):
         value = by_command[command]
-        if command in ("getUpdateStatus", "getDeviceInfo"):
+        if command == "getUpdateStatus":
             return {"ok": True, "data": value}
         return value
     return fake_run_command
@@ -94,7 +94,6 @@ async def test_no_coordinator_registered_still_completes_and_skips_the_refresh()
     ), patch(
         _RUN_COMMAND,
         new=_commands(
-            getDeviceInfo={"abis": []},
             getUpdateStatus={},
             installUploadedApk={"ok": True},
         ),
@@ -111,7 +110,7 @@ async def test_install_update_transient_failure_is_reported_as_failed():
     async def fake_run_command(session, host, token, command, *, pin=None):
         if command == "installUploadedApk":
             raise KsApiError("connection reset")
-        return {"getDeviceInfo": {"ok": True, "data": {"abis": []}}}[command]
+        raise AssertionError(f"unexpected command: {command}")
 
     with patch(_SESSION), patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(
         _RUN_COMMAND, new=fake_run_command
@@ -220,16 +219,16 @@ async def test_apk_unavailable_fails_before_any_upload(cached_apk):
 
     async def fake_run_command(session, host, token, command, *, pin=None):
         sent.append(command)
-        return {"ok": True, "data": {"abis": ["mips"]}}
+        raise AssertionError(f"unexpected command: {command}")
 
     prefix = "custom_components.kiosk_satellite_manager.ks_update."
     with patch(_SESSION), patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(
         _RUN_COMMAND, new=fake_run_command
     ), patch(
         prefix + "apk_cache.async_release_apk",
-        new=AsyncMock(side_effect=ApkAssetNotFound("no asset for mips")),
+        new=AsyncMock(side_effect=ApkAssetNotFound("no universal APK")),
     ), patch(prefix + "ks_api_client.upload_update", new=AsyncMock()) as upload:
         with pytest.raises(HomeAssistantError, match="APK unavailable for Test Device"):
             await ks_update.async_self_update_entry(hass, _entry())
     upload.assert_not_awaited()
-    assert sent == ["getDeviceInfo"]
+    assert sent == []
