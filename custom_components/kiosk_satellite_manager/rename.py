@@ -14,25 +14,19 @@ import ipaddress
 import json
 import re
 import socket
-import logging
 from dataclasses import dataclass
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import CONF_HOST, CONF_PASSWORD, CONF_TLS_SPKI
-from .ks_api_client import KsApiError, get_settings, patch_settings
-from .ks_api_client import login as ks_login
+from .ks_api_client import KsApiError, get_settings
 from .provisioning import apply_provisioning, fetch_health
 
-_LOGGER = logging.getLogger(__name__)
 
 _SLUG_COLLAPSE_RE = re.compile(r"[^a-z0-9]+")
 
-SATELLITE_ENTITY_SETTING = "ha.satellite_entity"
 
 # KSM-BEHAVE-092: how long each ESPHome wait (new device_name recorded,
 # actions re-registered) may take before the result reports `pending`.
@@ -317,32 +311,3 @@ async def rename_esphome_actions(
             hass.services.async_remove(ESPHOME_DOMAIN, name)
             actions["removed"].append(f"{ESPHOME_DOMAIN}.{name}")
     return "applied", actions
-
-
-async def async_follow_satellite_entity_rename(
-    hass: HomeAssistant, entries: list[ConfigEntry], old_entity_id: str, new_entity_id: str
-) -> None:
-    """KSM-BEHAVE-099: point every device whose `ha.satellite_entity` is
-    `old_entity_id` at `new_entity_id`. A device that cannot be reached or
-    rejects the login is logged and skipped; the rest still update."""
-    session = async_get_clientsession(hass)
-    for entry in entries:
-        password = entry.data.get(CONF_PASSWORD)
-        if not password:
-            continue
-        host = entry.data[CONF_HOST]
-        pin = entry.data.get(CONF_TLS_SPKI)
-        try:
-            token = await ks_login(session, host, password, pin=pin)
-            settings = await get_settings(session, host, token, pin=pin)
-            if settings.get(SATELLITE_ENTITY_SETTING) != old_entity_id:
-                continue
-            await patch_settings(
-                session, host, token, {SATELLITE_ENTITY_SETTING: new_entity_id}, pin=pin
-            )
-        except (KsApiError, aiohttp.ClientError, TimeoutError) as err:
-            _LOGGER.warning(
-                "Could not point %s at renamed satellite %s: %s", entry.title, new_entity_id, err
-            )
-            continue
-        _LOGGER.info("%s satellite entity %s -> %s", entry.title, old_entity_id, new_entity_id)

@@ -33,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 import aiohttp
 import voluptuous as vol
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
-from homeassistant.core import Event, HomeAssistant, ServiceCall, SupportsResponse, callback
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -71,13 +71,11 @@ from .credentials import TokenCredential, async_revoke_owned_credential
 from .ks_api import latest_release_info
 from .ks_update import async_check_devices_for_update
 from .esphome_identity import async_ensure_esphome_identity
-from .voice_satellite_link import async_bind_voice_satellite
 from .ks_api_client import KsApiError
 from .ks_api_client import login as ks_api_login
 from .provisioning import ProvisioningMismatch, apply_provisioning, fetch_health
 from .rename import (
     apply_rename_ks_settings,
-    async_follow_satellite_entity_rename,
     derive_dns_host,
     derive_rename_names,
     find_esphome_link,
@@ -346,27 +344,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     hass.data[RENAME_API_KEY] = _trusted_rename
 
-    @callback
-    def _on_entity_registry_updated(event: Event) -> None:
-        """KSM-BEHAVE-099: KS's satellite entity follows an HA rename."""
-        old_entity_id = event.data.get("old_entity_id")
-        if event.data.get("action") != "update" or not str(old_entity_id or "").startswith(
-            "assist_satellite."
-        ):
-            return
-        entries = [
-            entry for entry_id in hass.data.get(DOMAIN, {})
-            if (entry := hass.config_entries.async_get_entry(entry_id)) is not None
-        ]
-        hass.async_create_task(
-            async_follow_satellite_entity_rename(
-                hass, entries, old_entity_id, event.data["entity_id"]
-            ),
-            f"{DOMAIN}_satellite_entity_rename",
-        )
-
-    hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, _on_entity_registry_updated)
-
     if not any(
         entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER
         for entry in hass.config_entries.async_entries(DOMAIN)
@@ -434,8 +411,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def _post_setup() -> None:
         if entry.data.get(CONF_PASSWORD) and not entry.data.get(CONF_TLS_SPKI):
             await _async_migrate_tls(hass, entry)
-        # KSM-BEHAVE-100 (#65): after migration, so the bind uses the new pin.
-        await async_bind_voice_satellite(hass, entry)
         # KSM-BEHAVE-110 (#67): node name always; ESPHome on only when chosen.
         await async_ensure_esphome_identity(hass, entry)
 

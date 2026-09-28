@@ -36,8 +36,6 @@ def ks_api():
     ), patch(f"{KS}.patch_settings", new=patch_settings), patch(
         HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.88"})
     ), patch(
-        "custom_components.kiosk_satellite_manager.async_bind_voice_satellite", new=AsyncMock()
-    ), patch(
         "custom_components.kiosk_satellite_manager.async_ensure_esphome_identity",
         new=esphome_identity.async_ensure_esphome_identity,
     ):
@@ -139,9 +137,7 @@ async def test_adoption_copies_the_manager_option(hass, ks_health_probe, tls_mig
     manager = {} if option is None else {CONF_ESPHOME_NEW_DEVICES: option}
     with patch(f"{FLOW}._manager_options", return_value=manager), patch(
         f"{FLOW}.login", new=AsyncMock(return_value="tok")
-    ), patch(HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.88"})), patch(
-        "custom_components.kiosk_satellite_manager.async_bind_voice_satellite", new=AsyncMock()
-    ):
+    ), patch(HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.88"})):
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": config_entries.SOURCE_USER}
         )

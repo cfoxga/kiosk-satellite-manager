@@ -69,8 +69,9 @@ remotely — do them once per device, in order:
   it replaced (HA leaves them behind, dead, until a restart), and lists any automations or
   scripts that still call the old action names (reported only, never edited).
 
-Voice Satellite binding was explored and dropped (not worth the hassle yet) — see the design doc's
-Non-goals if you're wondering why it isn't here.
+KSM does not manage Voice Satellite. Kiosk Satellite 2026.9.87 and later has it built in: turn on
+the kiosk's ESPHome server and Voice Satellite on the kiosk, then add it in Home Assistant as an
+ESPHome device. The separate Voice Satellite integration is no longer needed.
 
 Full design, verified findings, and phase-by-phase status: the [ham-harness](https://git.cfoxga.com/cfoxga/ham-harness)
 repo's `kiosk-satellite-manager/` silo (`docs/SPEC/provisioning.md`).

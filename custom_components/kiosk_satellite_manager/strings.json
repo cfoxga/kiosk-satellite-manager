@@ -175,23 +175,6 @@
           "entry_not_found": "This device is no longer configured."
         }
       }
-    },
-    "voice_satellite_missing": {
-      "title": "Install Voice Satellite for your kiosks?",
-      "fix_flow": {
-        "step": {
-          "confirm": {
-            "title": "Install Voice Satellite?",
-            "description": "Kiosk Satellite uses the Voice Satellite integration to talk to Assist. It is not installed, so each kiosk's voice satellite has to be set up by hand.\n\nSubmit to download Voice Satellite (jxlarrea/voice-satellite-card-integration) through HACS. Kiosk Satellite Manager then creates a Voice Satellite entry for each kiosk, reusing any that already has the kiosk's name, and points the kiosk at it. To keep setting it up by hand, ignore this repair instead."
-          }
-        },
-        "abort": {
-          "hacs_missing": "HACS is not installed. Install HACS first, or install Voice Satellite manually, then restart Home Assistant.",
-          "repository_unknown": "HACS does not know the Voice Satellite repository. Add jxlarrea/voice-satellite-card-integration to HACS as a custom integration repository, then try again.",
-          "download_failed": "HACS could not download Voice Satellite. Check the Home Assistant log, then try again.",
-          "restart_required": "Voice Satellite was downloaded. Restart Home Assistant to finish; the kiosks are set up automatically after the restart."
-        }
-      }
     }
   }
 }

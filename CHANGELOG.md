@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- KSM no longer manages Voice Satellite (#73). Kiosk Satellite 2026.9.87 and
+  later has voice built in through its own ESPHome server, so the separate
+  Voice Satellite integration isn't needed. KSM no longer creates or reuses a
+  Voice Satellite entry for each kiosk, no longer offers to install Voice
+  Satellite through HACS, and no longer updates a kiosk's satellite entity
+  when one is renamed. Voice Satellite entries KSM created earlier are left in
+  place; remove them once each kiosk has migrated from its own Voice
+  Satellite settings page.
+
 - The manager's options have a new **Install version** setting (#72). **Latest**
   (the default) follows new releases as before. Picking a version KSM has already
   downloaded makes every kiosk's update, Update all, auto-update and the ADB
