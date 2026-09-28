@@ -63,7 +63,7 @@ from .const import (
 from .device_catalog import require_recipe
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .install_recipes import InstallRecipe
-from .helpers import pinned_version
+from .helpers import pinned_release, pinned_version
 from .ks_api import latest_release
 from .ks_api_client import KsApiError
 from .provisioning import build_provision_command
@@ -329,13 +329,24 @@ async def install_and_launch(
     except Exception:
         sdk = 29
 
-    # KSM-BEHAVE-114: a version pinned in global settings comes from the
-    # cache alone; only Latest asks GitHub.
+    # #74: the device's ABI list picks its split (KSM-BEHAVE-107).
+    abis: list[str] = []
+    for prop in ("ro.product.cpu.abilist", "ro.product.cpu.abi"):
+        try:
+            abis = [a.strip() for a in (await client.getprop(prop)).split(",") if a.strip()]
+        except Exception:  # noqa: BLE001 -- unknown ABIs fall back to universal
+            abis = []
+        if abis:
+            break
+
+    # KSM-BEHAVE-114: a version pinned in global settings; only Latest asks
+    # GitHub here.
     pinned = pinned_version(hass)
     if pinned is not None:
-        apk_url, target_version = None, pinned
+        release, apk_url, target_version = pinned_release(hass, pinned), None, pinned
     else:
-        apk_url, target_version = await latest_release(session)
+        release = None
+        apk_url, target_version = await latest_release(session, abis)
     current_version = await client.installed_version()
     if target_version and current_version == target_version:
         # KSM-BEHAVE-040 (Phase 2, "preserve compatible installations where
@@ -351,8 +362,17 @@ async def install_and_launch(
         # KSM-BEHAVE-107: the same verified cache the API update path uploads
         # from. KSM-BEHAVE-063: async_cached_apk checks the signer pin before
         # the file is stored, so nothing unverified is ever pushed.
-        if apk_url is None:
-            apk = await apk_cache.async_pinned_apk(hass, target_version)
+        universal = None
+        if release is None and target_version:
+            # #74: a universal APK already cached (#71) is reused, as on the
+            # API path, rather than downloading the split.
+            universal = await hass.async_add_executor_job(
+                apk_cache.cached_device_apk, apk_cache.cache_root(hass), target_version, ()
+            )
+        if release is not None:
+            apk = await apk_cache.async_release_apk(hass, release, abis)
+        elif universal is not None:
+            apk = universal
         else:
             apk = await apk_cache.async_cached_apk(
                 hass,

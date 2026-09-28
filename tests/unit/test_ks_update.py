@@ -219,6 +219,8 @@ async def test_apk_unavailable_fails_before_any_upload(cached_apk):
 
     async def fake_run_command(session, host, token, command, *, pin=None):
         sent.append(command)
+        if command == "getDeviceInfo":
+            return {"ok": True, "data": {"abis": ["arm64-v8a"]}}
         raise AssertionError(f"unexpected command: {command}")
 
     prefix = "custom_components.kiosk_satellite_manager.ks_update."
@@ -226,9 +228,42 @@ async def test_apk_unavailable_fails_before_any_upload(cached_apk):
         _RUN_COMMAND, new=fake_run_command
     ), patch(
         prefix + "apk_cache.async_release_apk",
-        new=AsyncMock(side_effect=ApkAssetNotFound("no universal APK")),
+        new=AsyncMock(side_effect=ApkAssetNotFound("no APK for the device")),
     ), patch(prefix + "ks_api_client.upload_update", new=AsyncMock()) as upload:
         with pytest.raises(HomeAssistantError, match="APK unavailable for Test Device"):
             await ks_update.async_self_update_entry(hass, _entry())
     upload.assert_not_awaited()
-    assert sent == []
+    assert sent == ["getDeviceInfo"]
+
+
+@pytest.mark.parametrize(
+    ("device_info", "abis"),
+    [
+        ({"ok": True, "data": {"abis": ["armeabi-v7a", "armeabi", 7]}}, ["armeabi-v7a", "armeabi"]),
+        ({"ok": False, "error": "unknown command"}, []),
+        (KsApiError("timeout"), []),
+    ],
+)
+async def test_self_update_asks_the_device_for_its_abis(cached_apk, device_info, abis):
+    """[KSM-TEST-224] #74: the self-update gets the APK for the ABIs Kiosk
+    Satellite's getDeviceInfo reports. Negative cases: a refused or failed
+    getDeviceInfo means "unknown" (universal fallback), never a failed update."""
+    hass = _hass()
+
+    async def fake_run_command(session, host, token, command, *, pin=None):
+        if command == "getDeviceInfo":
+            if isinstance(device_info, Exception):
+                raise device_info
+            return device_info
+        if command == "getUpdateStatus":
+            return {"ok": True, "data": {}}
+        return {"ok": True}
+
+    prefix = "custom_components.kiosk_satellite_manager.ks_update."
+    with patch(_SESSION), patch(_POLL_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.77"})), patch(
+        _LOGIN, new=AsyncMock(return_value="device-token")
+    ), patch(_RUN_COMMAND, new=fake_run_command), patch(
+        prefix + "apk_cache.async_release_apk", new=AsyncMock(return_value=cached_apk)
+    ) as release_apk:
+        assert await ks_update.async_self_update_entry(hass, _entry()) == ks_update.OUTCOME_UPDATED
+    assert release_apk.await_args.args[2] == abis

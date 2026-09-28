@@ -632,7 +632,7 @@ def _cache_versions(tmp_path, *versions):
         path = root / version / f"kiosk-satellite-{version}.apk"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"cached")
-    (root / "2026.9.70").mkdir()
+    (root / "2026.9.70").mkdir(parents=True, exist_ok=True)
     (root / "2026.9.70" / "kiosk-satellite-2026.9.70.arm64-v8a.apk").write_bytes(b"split")
     return patch.object(apk_cache, "cache_root", lambda hass: root)
 
@@ -643,17 +643,19 @@ def _target_options(result):
     return key.default(), [(o["value"], o["label"]) for o in config["options"]]
 
 
-async def test_install_version_offers_latest_then_cached_versions(hass, tmp_path):
-    """[KSM-TEST-219] #72: Latest first, then cached universal versions newest
-    first. Negative: split-only and no-longer-cached versions are not offered,
-    and a stale saved pin does not become the default."""
+async def test_install_version_offers_latest_then_cached_versions(hass, release_check, tmp_path):
+    """[KSM-TEST-219] #72/#74: Latest first, then cached versions (universal or
+    split) newest first, marked downloaded. Negative: a saved pin neither
+    cached nor listed by the release check is not offered and is not the
+    default."""
     manager = await _manager(hass, options={"target_version": "2026.9.10"})
     with _cache_versions(tmp_path, "2026.9.86", "2026.9.100", "2026.9.88"):
         result = await hass.config_entries.options.async_init(manager.entry_id)
     default, options = _target_options(result)
     assert options == [
-        ("latest", "Latest"), ("2026.9.100", "2026.9.100"),
-        ("2026.9.88", "2026.9.88"), ("2026.9.86", "2026.9.86"),
+        ("latest", "Latest"), ("2026.9.100", "2026.9.100 (downloaded)"),
+        ("2026.9.88", "2026.9.88 (downloaded)"), ("2026.9.86", "2026.9.86 (downloaded)"),
+        ("2026.9.70", "2026.9.70 (downloaded)"), ("2026.9.1", "2026.9.1"),
     ]
     assert default == "latest"
     data = result["data_schema"]({})
@@ -729,3 +731,30 @@ async def test_self_update_uploads_the_pinned_release(hass, release_check, apk_u
             assert await async_self_update_entry(hass, device.entry) == "updated"
     release = apk_upload.release_apk.await_args.args[1]
     assert (release.version, release.pinned) == ("2026.9.86", True)
+
+
+async def test_install_version_list_fills_to_five_from_the_release_check(hass, release_check, tmp_path):
+    """[KSM-TEST-225] #74: with fewer than five versions downloaded, the
+    newest GitHub releases fill the list to five. A saved pin that is listed
+    but not downloaded stays the default. Negative: with five or more
+    downloaded, no release is added."""
+    recent = tuple(
+        ReleaseInfo(f"2026.9.{n}", None, None, ((f"kiosk-satellite-2026.9.{n}.apk", "https://x.invalid"),))
+        for n in (92, 91, 90, 89, 88, 87)
+    )
+    release_check.return_value = ReleaseInfo("2026.9.92", None, None, recent[0].assets, recent=recent)
+    manager = await _manager(hass, options={"target_version": "2026.9.91"})
+    with _cache_versions(tmp_path, "2026.9.88"):
+        result = await hass.config_entries.options.async_init(manager.entry_id)
+    default, options = _target_options(result)
+    assert options == [
+        ("latest", "Latest"), ("2026.9.92", "2026.9.92"), ("2026.9.91", "2026.9.91"),
+        ("2026.9.90", "2026.9.90"), ("2026.9.88", "2026.9.88 (downloaded)"),
+        ("2026.9.70", "2026.9.70 (downloaded)"),
+    ]
+    assert default == "2026.9.91"
+    with _cache_versions(tmp_path, *(f"2026.9.{n}" for n in (80, 81, 82, 83))):
+        result = await hass.config_entries.options.async_init(manager.entry_id)
+    assert [v for v, _ in _target_options(result)[1]] == [
+        "latest", "2026.9.88", "2026.9.83", "2026.9.82", "2026.9.81", "2026.9.80", "2026.9.70",
+    ]

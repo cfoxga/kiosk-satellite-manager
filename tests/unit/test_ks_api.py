@@ -6,6 +6,7 @@ from custom_components.kiosk_satellite_manager.ks_api import (
     ApkAssetNotFound,
     latest_release,
     latest_release_info,
+    select_release_apk,
     universal_apk,
 )
 from custom_components.kiosk_satellite_manager.const import KS_GITHUB_REPO
@@ -77,15 +78,57 @@ class _FakeSession:
         return _FakeResponse(self._payload)
 
 
+def test_select_release_apk_picks_the_device_split():
+    """[KSM-TEST-224] #74: a device gets the split for the first of its ABIs
+    that has one, in the device's own order."""
+    assert select_release_apk(_ASSETS, "v", ["arm64-v8a", "armeabi-v7a"]) == _ASSETS[0]
+    assert select_release_apk(_ASSETS, "v", ["armeabi-v7a", "armeabi"]) == _ASSETS[2]
+    assert select_release_apk(_ASSETS, "v", ["x86_64"]) == _ASSETS[3]
+
+
+def test_select_release_apk_falls_back_to_universal_only_when_needed():
+    """[KSM-TEST-224] negative cases: an unknown ABI list, or one no split
+    matches, takes the universal APK; with neither available it raises."""
+    assert select_release_apk(_ASSETS, "v", []) == _UNIVERSAL
+    assert select_release_apk(_ASSETS, "v", ["x86", "mips"]) == _UNIVERSAL
+    split_only = [asset for asset in _ASSETS if asset != _UNIVERSAL]
+    with pytest.raises(ApkAssetNotFound):
+        select_release_apk(split_only, "v", ["x86"])
+    with pytest.raises(ApkAssetNotFound):
+        select_release_apk([], "v", ["arm64-v8a"])
+
+
 @pytest.mark.asyncio
-async def test_latest_release_skips_empty_and_split_only_releases():
-    """[KSM-TEST-009] #71: a release without the universal APK is not usable."""
+async def test_latest_release_skips_empty_releases_and_picks_the_device_split():
+    """[KSM-TEST-009] [KSM-TEST-224] a release with no .apk asset is not
+    usable; a split-only release is (#74), and the device's split is picked."""
     split_only = [asset for asset in _ASSETS if asset != _UNIVERSAL]
     session = _FakeSession(
         [_release([], tag_name="3"), _release(split_only, tag_name="2"), _release(_ASSETS, tag_name="1")]
     )
-    url, tag_name = await latest_release(session)
-    assert (url, tag_name) == (_UNIVERSAL[1], "1")
+    url, tag_name = await latest_release(session, ["armeabi-v7a"])
+    assert (url, tag_name) == (split_only[1][1], "2")
+
+
+@pytest.mark.asyncio
+async def test_latest_release_info_keeps_every_usable_release_newest_first():
+    """[KSM-TEST-225] #74: the release check keeps each usable release with
+    its assets, so the Install version list can offer versions not yet
+    downloaded. Negative: drafts, prereleases and asset-less releases are
+    not among them."""
+    session = _FakeSession(
+        [
+            _release(_ASSETS, prerelease=True, tag_name="2026.9.91"),
+            _release(_ASSETS, tag_name="2026.9.90"),
+            _release([], tag_name="2026.9.89"),
+            _release(_ASSETS[:1], tag_name="2026.9.88"),
+            _release(_ASSETS, draft=True, tag_name="2026.9.87"),
+        ]
+    )
+    info = await latest_release_info(session)
+    assert info.version == "2026.9.90"
+    assert [r.version for r in info.recent] == ["2026.9.90", "2026.9.88"]
+    assert info.recent[1].assets == tuple(_ASSETS[:1])
 
 
 @pytest.mark.asyncio

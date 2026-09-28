@@ -48,15 +48,34 @@ def pinned_version(hass: HomeAssistant) -> str | None:
     return None if not version or version == TARGET_VERSION_LATEST else version
 
 
+def recent_releases(hass: HomeAssistant) -> tuple[ReleaseInfo, ...]:
+    """KSM-BEHAVE-116: the usable releases the last successful release check
+    saw, newest first (none before its first success)."""
+    release = hass.data.get(RELEASE_COORDINATOR_KEY)
+    latest = release.data if release is not None else None
+    if latest is None:
+        return ()
+    return latest.recent or (latest,)
+
+
+def pinned_release(hass: HomeAssistant, version: str) -> ReleaseInfo:
+    """KSM-BEHAVE-114/116: the pinned `version`, with its assets when the
+    release check still lists it (so an install can download it), else with
+    none (cache only)."""
+    listed = next((r for r in recent_releases(hass) if r.version == version), None)
+    return ReleaseInfo(
+        version,
+        listed.url if listed else None,
+        f"Pinned to {version} in Kiosk Satellite Manager global settings.",
+        listed.assets if listed else (),
+        pinned=True,
+    )
+
+
 def target_release(hass: HomeAssistant) -> ReleaseInfo | None:
     """KSM-BEHAVE-114: what every KSM install aims at -- the pinned version,
     else the shared release check's latest (None before its first success)."""
     if (version := pinned_version(hass)) is not None:
-        return ReleaseInfo(
-            version,
-            None,
-            f"Pinned to {version} in Kiosk Satellite Manager global settings.",
-            pinned=True,
-        )
+        return pinned_release(hass, version)
     release = hass.data.get(RELEASE_COORDINATOR_KEY)
     return release.data if release is not None else None

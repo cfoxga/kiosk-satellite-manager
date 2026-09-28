@@ -55,6 +55,26 @@ async def _file_chunks(hass: HomeAssistant, path: Path) -> AsyncIterator[bytes]:
         await hass.async_add_executor_job(handle.close)
 
 
+def _device_abis(response: dict) -> list[str]:
+    """getDeviceInfo's `data.abis`; anything unusable means "unknown" (the
+    universal APK, KSM-BEHAVE-107)."""
+    data = response.get("data") if isinstance(response, dict) and response.get("ok") is True else None
+    abis = data.get("abis") if isinstance(data, dict) else None
+    return [abi for abi in abis if isinstance(abi, str)] if isinstance(abis, list) else []
+
+
+async def _async_device_abis(session, host: str, token: str, pin: str | None) -> list[str]:
+    """#74: the device's ABI list, to fetch only its split. A failed or
+    refused getDeviceInfo never fails the update."""
+    try:
+        return _device_abis(
+            await ks_api_client.run_command(session, host, token, "getDeviceInfo", pin=pin)
+        )
+    except Exception as err:  # noqa: BLE001 -- unknown ABIs fall back to universal
+        _LOGGER.debug("getDeviceInfo failed on %s; using the universal APK: %s", host, err)
+        return []
+
+
 def _status_data(response: dict, entry: ConfigEntry) -> dict:
     """Read status fields from Kiosk Satellite's command response envelope."""
     if (
@@ -103,8 +123,9 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
     try:
         try:
             token = await ks_api_client.login(session, host, password, pin=pin)
+            abis = await _async_device_abis(session, host, token, pin)
             try:
-                apk = await apk_cache.async_release_apk(hass, release_info)
+                apk = await apk_cache.async_release_apk(hass, release_info, abis)
             except Exception as err:  # no asset, download, signer pin
                 raise HomeAssistantError(
                     f"Kiosk Satellite {version} APK unavailable for {entry.title}: {err}"

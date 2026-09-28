@@ -152,19 +152,66 @@ async def test_prune_without_a_cache_directory_is_a_no_op(tmp_path):
     assert await apk_cache.async_prune(_FakeHass(tmp_path)) == []
 
 
-async def test_release_apk_caches_the_universal_asset(tmp_path):
-    """[KSM-TEST-207] #71: async_release_apk takes the universal asset, never
-    a split, and stores it under the release version."""
+async def test_release_apk_downloads_only_each_device_split(tmp_path):
+    """[KSM-TEST-224] #74: each device's install downloads just its own ABI
+    split, once. Two v7a devices and one arm64 device fetch two files; the
+    universal and x86_64 APKs are never downloaded."""
     hass = _FakeHass(tmp_path)
-    session = _session(b"universal")
+    session = _session(b"split")
     release = SimpleNamespace(version=_V, assets=_ASSETS, pinned=False)
     with patch(_VERIFY), patch(
         "custom_components.kiosk_satellite_manager.apk_cache.async_get_clientsession",
         return_value=session,
     ):
-        path = await apk_cache.async_release_apk(hass, release)
-    assert path == _cache_dir(tmp_path) / _V / _ASSETS[-1][0]
-    assert session.get.call_args.args[0] == _ASSETS[-1][1]
+        v7a = await apk_cache.async_release_apk(hass, release, ["armeabi-v7a", "armeabi"])
+        again = await apk_cache.async_release_apk(hass, release, ["armeabi-v7a"])
+        arm64 = await apk_cache.async_release_apk(hass, release, ["arm64-v8a", "armeabi-v7a"])
+    assert v7a == again == _cache_dir(tmp_path) / _V / _ASSETS[1][0]
+    assert arm64 == _cache_dir(tmp_path) / _V / _ASSETS[0][0]
+    assert [c.args[0] for c in session.get.call_args_list] == [_ASSETS[1][1], _ASSETS[0][1]]
+
+
+async def test_release_apk_reuses_a_cached_file_the_device_can_run(tmp_path):
+    """[KSM-TEST-224] a universal APK already cached (by #71) serves any
+    device with no download. A version with no known assets serves a cached
+    split the device can run (v7a on a 64-bit device). Negative: when the
+    release's assets are known, a 64-bit device with only a v7a split cached
+    downloads its own arm64 split."""
+    root = _cache_dir(tmp_path)
+    session = _session(b"split")
+    hass = _FakeHass(tmp_path)
+    release = SimpleNamespace(version=_V, assets=_ASSETS, pinned=False)
+    with patch(_VERIFY), patch(
+        "custom_components.kiosk_satellite_manager.apk_cache.async_get_clientsession",
+        return_value=session,
+    ):
+        universal = _put(root, "2026.9.87", "kiosk-satellite-2026.9.87.apk")
+        old = SimpleNamespace(version="2026.9.87", assets=(), pinned=False)
+        assert await apk_cache.async_release_apk(hass, old, ["arm64-v8a"]) == universal
+        assert await apk_cache.async_release_apk(
+            hass, SimpleNamespace(version="2026.9.87", assets=_ASSETS, pinned=False), ["arm64-v8a"]
+        ) == universal
+        v7a = _put(root, _V, _ASSETS[1][0])
+        no_assets = SimpleNamespace(version=_V, assets=(), pinned=True)
+        assert await apk_cache.async_release_apk(hass, no_assets, ["arm64-v8a", "armeabi-v7a"]) == v7a
+        session.get.assert_not_called()
+        await apk_cache.async_release_apk(hass, release, ["arm64-v8a", "armeabi-v7a"])
+    assert [c.args[0] for c in session.get.call_args_list] == [_ASSETS[0][1]]
+
+
+def test_install_version_choices_fill_to_five_with_recent_releases():
+    """[KSM-TEST-225] #74: every cached version, then the newest releases not
+    yet downloaded until there are at least five, newest first."""
+    recent = ["2026.9.92", "2026.9.91", "2026.9.90", "2026.9.89", "2026.9.88", "2026.9.87"]
+    assert apk_cache.install_version_choices(["2026.9.80", "2026.9.90"], recent) == [
+        "2026.9.92", "2026.9.91", "2026.9.90", "2026.9.89", "2026.9.80",
+    ]
+    six = [f"2026.9.{n}" for n in range(70, 76)]
+    assert apk_cache.install_version_choices(six, recent) == sorted(
+        six, key=apk_cache.version_key, reverse=True
+    )
+    assert apk_cache.install_version_choices([], recent[:2]) == recent[:2]
+    assert apk_cache.install_version_choices([], []) == []
 
 
 def test_versions_to_keep_with_nothing_older_than_the_oldest_device():
@@ -193,17 +240,18 @@ def _put(root: Path, version: str, name: str) -> Path:
     return path
 
 
-def test_cached_versions_lists_universal_versions_newest_first(tmp_path):
-    """[KSM-TEST-219] #72: the Install version choices are the cached versions
-    holding a universal APK, newest first. Negative: a split-only directory
-    (left by #70) and a stray file are not offered."""
+def test_cached_versions_lists_downloaded_versions_newest_first(tmp_path):
+    """[KSM-TEST-219] #72/#74: the cached versions holding any APK, universal
+    or split, newest first. Negative: an empty directory and a stray file
+    are not versions."""
     root = _cache_dir(tmp_path)
     _put(root, "2026.9.87", "kiosk-satellite-2026.9.87.apk")
     _put(root, "2026.9.100", "kiosk-satellite-2026.9.100.apk")
     _put(root, "2026.9.88", "kiosk-satellite-2026.9.88.apk")
     _put(root, "2026.9.86", "kiosk-satellite-2026.9.86.arm64-v8a.apk")
+    (root / "2026.9.85").mkdir()
     (root / "stray.txt").write_text("x")
-    assert apk_cache.cached_versions(root) == ["2026.9.100", "2026.9.88", "2026.9.87"]
+    assert apk_cache.cached_versions(root) == ["2026.9.100", "2026.9.88", "2026.9.87", "2026.9.86"]
     assert apk_cache.cached_versions(tmp_path / "missing") == []
 
 
@@ -229,8 +277,9 @@ async def test_prune_keeps_the_manager_pinned_version(tmp_path):
 
 
 async def test_pinned_release_uses_the_cached_file_and_never_downloads(tmp_path):
-    """[KSM-TEST-220] a pinned release has no assets: its APK is the cached
-    universal file. Negative: an uncached pin fails clearly, no download."""
+    """[KSM-TEST-220] a cached pinned version is served from the cache.
+    Negative: a pin with no cached file and no known assets fails clearly,
+    with no download."""
     root = _cache_dir(tmp_path)
     cached = _put(root, "2026.9.86", "kiosk-satellite-2026.9.86.apk")
     _put(root, "2026.9.86", "kiosk-satellite-2026.9.86.arm64-v8a.apk")
@@ -241,8 +290,8 @@ async def test_pinned_release_uses_the_cached_file_and_never_downloads(tmp_path)
         return_value=session,
     ):
         pinned = SimpleNamespace(version="2026.9.86", assets=(), pinned=True)
-        assert await apk_cache.async_release_apk(hass, pinned) == cached
+        assert await apk_cache.async_release_apk(hass, pinned, ["x86"]) == cached
         missing = SimpleNamespace(version="2026.9.10", assets=(), pinned=True)
         with pytest.raises(FileNotFoundError, match="not in the KSM APK cache"):
-            await apk_cache.async_release_apk(hass, missing)
+            await apk_cache.async_release_apk(hass, missing, ["arm64-v8a"])
     session.get.assert_not_called()

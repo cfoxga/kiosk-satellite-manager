@@ -195,8 +195,8 @@ async def test_install_and_launch_pushes_the_cached_apk_and_keeps_it(apk_cache_d
         ):
             await install_and_launch(_FakeHass(), client, session, device_model="portal_go")
         client.push.assert_awaited_once_with(str(target), client.install_apk.await_args.args[0])
-        # #71: the universal APK serves every device, so no ABI probe.
-        assert "ro.product.cpu.abi" not in [c.args[0] for c in client.getprop.await_args_list]
+        # #74: the device's own ABI list picks the split.
+        assert "ro.product.cpu.abilist" in [c.args[0] for c in client.getprop.await_args_list]
 
     assert target.read_bytes() == b"fake-apk-bytes"
     apk_gets = [c for c in session.get.call_args_list if c.args[0].endswith(".apk")]
@@ -1277,3 +1277,48 @@ async def test_install_and_launch_pushes_the_pinned_cached_apk(apk_cache_dir):
     latest.assert_not_awaited()
     client.push.assert_awaited_once_with(str(pinned), client.install_apk.await_args.args[0])
     assert not [c for c in session.get.call_args_list if c.args[0].endswith(".apk")]
+
+
+async def test_install_and_launch_asks_for_the_device_split(apk_cache_dir):
+    """[KSM-TEST-224] #74: ADB Install reads ro.product.cpu.abilist and asks
+    for the latest release's split for those ABIs. Negative: an empty
+    abilist falls back to ro.product.cpu.abi."""
+    for props, abis in (
+        ({"ro.product.cpu.abilist": "arm64-v8a,armeabi-v7a,armeabi"}, ["arm64-v8a", "armeabi-v7a", "armeabi"]),
+        ({"ro.product.cpu.abilist": "", "ro.product.cpu.abi": "armeabi-v7a"}, ["armeabi-v7a"]),
+    ):
+        client = _fake_client()
+        client.getprop = AsyncMock(side_effect=lambda name, p=props: p.get(name, "29"))
+        client.installed_version = AsyncMock(side_effect=[None, _TARGET_VERSION])
+        latest = AsyncMock(return_value=(
+            "https://example.invalid/dl/kiosk-satellite-2026.9.99.x.apk", _TARGET_VERSION,
+        ))
+        with patch("custom_components.kiosk_satellite_manager.install.latest_release", new=latest):
+            await install_and_launch(_FakeHass(), client, _fake_session(), device_model="portal_go")
+        assert list(latest.await_args.args[1]) == abis
+
+
+async def test_install_and_launch_reuses_a_cached_universal_apk(apk_cache_dir):
+    """[KSM-TEST-224] ADB Install on Latest pushes a universal APK already
+    cached for the target version and downloads nothing. Negative control:
+    with nothing cached it downloads the device's split."""
+    universal = apk_cache_dir / _TARGET_VERSION / "kiosk-satellite-2026.9.99.apk"
+    universal.parent.mkdir(parents=True)
+    universal.write_bytes(b"universal")
+    for cached in (True, False):
+        if not cached:
+            universal.unlink()
+        session = _fake_session()
+        client = _fake_client()
+        client.installed_version = AsyncMock(side_effect=[None, _TARGET_VERSION])
+        latest = AsyncMock(return_value=(
+            "https://example.invalid/dl/kiosk-satellite-2026.9.99.arm64-v8a.apk", _TARGET_VERSION,
+        ))
+        with patch("custom_components.kiosk_satellite_manager.install.latest_release", new=latest):
+            await install_and_launch(_FakeHass(), client, session, device_model="portal_go")
+        apk_gets = [c for c in session.get.call_args_list if c.args[0].endswith(".apk")]
+        pushed = client.push.await_args.args[0]
+        if cached:
+            assert (pushed, apk_gets) == (str(universal), [])
+        else:
+            assert pushed.endswith("kiosk-satellite-2026.9.99.arm64-v8a.apk") and len(apk_gets) == 1

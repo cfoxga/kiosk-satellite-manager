@@ -46,6 +46,7 @@ from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.helpers.network import get_url
 
 from . import apk_cache, device_owner, ks_api_client, ks_tls, meta_setup
+from .helpers import recent_releases
 from .adb_client import AdbAuthPending, AdbClient, AdbConnectFailed, ensure_adb_key
 from .const import (
     CONF_AREA_ID,
@@ -210,9 +211,13 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             default_url = get_url(self.hass, prefer_external=False)
         except Exception:
             default_url = ""
-        # KSM-BEHAVE-114: Latest, then only versions already downloaded.
+        # KSM-BEHAVE-114/116: Latest, then every downloaded version and enough
+        # of the newest releases to offer at least five.
         cached = await self.hass.async_add_executor_job(
             apk_cache.cached_versions, apk_cache.cache_root(self.hass)
+        )
+        versions = apk_cache.install_version_choices(
+            cached, [r.version for r in recent_releases(self.hass)]
         )
         saved_target = saved.get(CONF_TARGET_VERSION, TARGET_VERSION_LATEST)
         fields = {
@@ -225,11 +230,16 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
                 CONF_ESPHOME_NEW_DEVICES, default=saved.get(CONF_ESPHOME_NEW_DEVICES, False)
             ): bool,
             vol.Required(CONF_TARGET_VERSION, default=(
-                saved_target if saved_target in cached else TARGET_VERSION_LATEST
+                saved_target if saved_target in versions else TARGET_VERSION_LATEST
             )): selector.SelectSelector(selector.SelectSelectorConfig(
                 options=[
                     selector.SelectOptionDict(value=TARGET_VERSION_LATEST, label="Latest"),
-                    *(selector.SelectOptionDict(value=v, label=v) for v in cached),
+                    *(
+                        selector.SelectOptionDict(
+                            value=v, label=f"{v} (downloaded)" if v in cached else v
+                        )
+                        for v in versions
+                    ),
                 ],
                 mode=selector.SelectSelectorMode.DROPDOWN,
             )),

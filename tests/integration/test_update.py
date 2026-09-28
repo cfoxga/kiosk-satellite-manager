@@ -199,14 +199,16 @@ def _recording(**by_command):
 
 
 async def test_update_install_uploads_the_cached_apk(hass, release_check, apk_upload):
-    """[KSM-TEST-209] KSM-BEHAVE-082/107/108 (#71): the cached universal APK
-    for the release is uploaded -- no ABI lookup --, then installUploadedApk -- never the
-    device's own GitHub download, never ADB. The cache is pruned afterwards."""
+    """[KSM-TEST-209] [KSM-TEST-224] KSM-BEHAVE-082/107/108 (#74): the device's
+    getDeviceInfo ABIs pick the cached APK for the release, which is uploaded,
+    then installUploadedApk -- never the device's own GitHub download, never
+    ADB. The cache is pruned afterwards."""
     release_check.return_value = _release("2026.9.77")
     with patch(_HEALTH, new=_health("2026.9.76", "2026.9.77")):
         ctx = await init_integration(hass)
         entity_id = _entity_id(hass, ctx.entry, "update")
         run, sent = _recording(
+            getDeviceInfo={"ok": True, "data": {"abis": ["armeabi-v7a", "armeabi"]}},
             getUpdateStatus={},
             installUploadedApk={"ok": True},
         )
@@ -216,13 +218,13 @@ async def test_update_install_uploads_the_cached_apk(hass, release_check, apk_up
             await hass.services.async_call("update", "install", {"entity_id": entity_id}, blocking=True)
 
     adb.assert_not_called()
-    [release] = apk_upload.release_apk.await_args.args[1:]
-    assert release.version == "2026.9.77"
+    release, abis = apk_upload.release_apk.await_args.args[1:]
+    assert (release.version, abis) == ("2026.9.77", ["armeabi-v7a", "armeabi"])
     [upload] = apk_upload.received
     assert upload["token"] == "device-token"
     assert upload["body"] == apk_upload.path.read_bytes()
     assert upload["size"] == apk_upload.path.stat().st_size
-    assert sent[0] == "installUploadedApk" and "getDeviceInfo" not in sent
+    assert sent[:2] == ["getDeviceInfo", "installUploadedApk"]
     assert "checkUpdateNow" not in sent and "installUpdate" not in sent
     apk_upload.prune.assert_awaited()
     assert hass.states.get(entity_id).state == "off"
@@ -257,7 +259,7 @@ async def test_update_install_already_running_build_installs_nothing(hass, relea
         with _refuses_adb(), patch(_LOGIN, new=AsyncMock(return_value="t")), patch(_RUN_COMMAND, new=run):
             await hass.services.async_call("update", "install", {"entity_id": entity_id}, blocking=True)
 
-    assert sent == []
+    assert sent == ["getDeviceInfo"]
     assert len(apk_upload.received) == 1
 
 

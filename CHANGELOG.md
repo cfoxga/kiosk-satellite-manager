@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The global **Install version** list now always offers at least five versions
+  (#74): every downloaded version, marked "(downloaded)", plus the newest
+  Kiosk Satellite releases. Picking one that isn't downloaded yet downloads it
+  the first time a kiosk installs it.
+- KSM is back to downloading the per-CPU Kiosk Satellite APK, and only for the
+  CPU types your kiosks actually have (#74, replacing #71's single universal
+  APK). A universal APK KSM already downloaded is still used; it is only
+  downloaded again for a kiosk whose CPU type can't be read.
+
 - KSM no longer manages Voice Satellite (#73). Kiosk Satellite 2026.9.87 and
   later has voice built in through its own ESPHome server, so the separate
   Voice Satellite integration isn't needed. KSM no longer creates or reuses a

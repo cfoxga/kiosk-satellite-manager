@@ -70,6 +70,8 @@ APK_DOWNLOAD_TIMEOUT_S: Final = 600
 APK_UPLOAD_TIMEOUT_S: Final = 900
 # KSM-BEHAVE-109: rule 3 of the cache retention -- the newest N versions.
 APK_CACHE_KEEP_LATEST: Final = 3
+# KSM-BEHAVE-116 (#74): the Install version list offers at least this many versions.
+INSTALL_VERSION_CHOICES_MIN: Final = 5
 HEALTH_SCAN_INTERVAL_MIN: Final = 5
 
 KS_PACKAGE: Final = "me.jxl.kiosk_satellite"

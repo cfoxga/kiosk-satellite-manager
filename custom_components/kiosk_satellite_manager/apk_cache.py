@@ -1,6 +1,7 @@
 """KSM's on-host copy of each Kiosk Satellite release APK (KSM-BEHAVE-107/109, #70).
 
-One verified download of each release's universal APK serves every device: the update
+One verified download of each APK a device needs -- its ABI split (#74) --
+serves every device that runs it: the update
 sequence uploads it over the `:2324` API (KSM-BEHAVE-108) and the ADB
 Install/Reinstall pushes it. Files live under `<config>/.cache/`, which Home
 Assistant's own and Supervisor backups both exclude.
@@ -20,9 +21,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .apk_signing import verify_ks_apk_signer
-from .const import APK_CACHE_KEEP_LATEST, APK_DOWNLOAD_TIMEOUT_S, DOMAIN
+from .const import (
+    APK_CACHE_KEEP_LATEST,
+    APK_DOWNLOAD_TIMEOUT_S,
+    DOMAIN,
+    INSTALL_VERSION_CHOICES_MIN,
+)
 from .helpers import pinned_version
-from .ks_api import ReleaseInfo, is_universal_apk, universal_apk
+from .ks_api import SPLIT_ABIS, ReleaseInfo, is_universal_apk, select_release_apk, split_apk
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -83,43 +89,70 @@ async def async_cached_apk(
     return path
 
 
-def cached_universal_apk(root: Path, version: str) -> Path | None:
-    """The cached universal APK of `version`, if any (#71 leaves only these;
-    a #70 split-only directory has none)."""
-    folder = root / version
+def _cached_apks(folder: Path) -> list[Path]:
     if not folder.is_dir():
-        return None
-    return next(
-        (p for p in sorted(folder.iterdir()) if p.is_file() and is_universal_apk(p.name)), None
-    )
+        return []
+    return [p for p in sorted(folder.iterdir()) if p.is_file() and p.name.endswith(".apk")]
+
+
+def cached_device_apk(root: Path, version: str, abis: Iterable[str]) -> Path | None:
+    """KSM-BEHAVE-107 (#74): a cached APK of `version` a device with `abis`
+    runs -- a split for one of its ABIs, in its order, else a universal APK
+    (a #71 cache holds only these). None when neither is cached."""
+    files = _cached_apks(root / version)
+    for abi in abis:
+        if abi in SPLIT_ABIS:
+            if split := next((p for p in files if split_apk(p.name, abi)), None):
+                return split
+    return next((p for p in files if is_universal_apk(p.name)), None)
 
 
 def cached_versions(root: Path) -> list[str]:
-    """KSM-BEHAVE-114: every cached version with a universal APK, newest first."""
+    """KSM-BEHAVE-114: every cached version holding an APK, newest first."""
     if not root.is_dir():
         return []
-    versions = [
-        p.name for p in root.iterdir() if p.is_dir() and cached_universal_apk(root, p.name)
-    ]
+    versions = [p.name for p in root.iterdir() if p.is_dir() and _cached_apks(p)]
     return sorted(versions, key=version_key, reverse=True)
 
 
-async def async_release_apk(hass: HomeAssistant, release: ReleaseInfo) -> Path:
-    """KSM-BEHAVE-107: the cached universal APK of `release` (#71). A pinned
-    release (KSM-BEHAVE-114) is served from the cache only, never downloaded."""
-    if release.pinned:
-        return await async_pinned_apk(hass, release.version)
-    name, url = universal_apk(release.assets)
+def install_version_choices(
+    cached: Iterable[str], recent: Iterable[str], minimum: int = INSTALL_VERSION_CHOICES_MIN
+) -> list[str]:
+    """KSM-BEHAVE-116 (#74): the Install version list -- every cached version,
+    then the newest releases not yet downloaded until there are `minimum`,
+    newest first."""
+    choices = set(cached)
+    for version in recent:
+        if len(choices) >= minimum:
+            break
+        choices.add(version)
+    return sorted(choices, key=version_key, reverse=True)
+
+
+async def async_release_apk(
+    hass: HomeAssistant, release: ReleaseInfo, abis: Iterable[str]
+) -> Path:
+    """KSM-BEHAVE-107: the APK of `release` for a device with `abis` (#74) --
+    that device's best file (`select_release_apk`), downloaded only if it is
+    not cached. A cached universal APK (a #71 cache) is used instead of a
+    download. A release with no known assets (a pin the release check no
+    longer lists, KSM-BEHAVE-114) is served from the cache only: any cached
+    file the device runs."""
+    abis = list(abis)
+    _checked(release.version, "x.apk")
+    root = cache_root(hass)
+    if not release.assets:
+        cached = await hass.async_add_executor_job(cached_device_apk, root, release.version, abis)
+        if cached is None:
+            raise FileNotFoundError(f"Kiosk Satellite {release.version} is not in the KSM APK cache")
+        return cached
+    name, url = select_release_apk(release.assets, release.version, abis)
+    best = root / release.version / name
+    if not await hass.async_add_executor_job(best.is_file):
+        universal = await hass.async_add_executor_job(cached_device_apk, root, release.version, ())
+        if universal is not None:
+            return universal
     return await async_cached_apk(hass, async_get_clientsession(hass), release.version, name, url)
-
-
-async def async_pinned_apk(hass: HomeAssistant, version: str) -> Path:
-    """KSM-BEHAVE-114: the cached file of a pinned version; never a download."""
-    _checked(version, "x.apk")
-    apk = await hass.async_add_executor_job(cached_universal_apk, cache_root(hass), version)
-    if apk is None:
-        raise FileNotFoundError(f"Kiosk Satellite {version} is not in the KSM APK cache")
-    return apk
 
 
 def versions_to_keep(
