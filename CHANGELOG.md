@@ -57,8 +57,8 @@
   (#54). Enabling Device Owner has to remove the Portal's accounts, which also
   signed it out of Meta and FB/WhatsApp with no way back short of a factory
   reset. On a Portal Mini or Portal Go, KSM now turns kiosk mode off, brings
-  up Meta's setup screen, and tells you to finish setup and the WhatsApp login
-  on the Portal. When the login is back, KSM turns kiosk mode on again and
+  up Meta's setup screen, and tells you to finish setup and sign in
+  with Facebook or WhatsApp on the Portal. When the login is back, KSM turns kiosk mode on again and
   updates the notification. A Portal that already lost its login gets a
   **Show Meta setup** step under Configure → Enable Device Owner. Portal Go
   can now enable Device Owner too.

@@ -66,7 +66,7 @@
       },
       "onboard_device_owner": {
         "title": "Enable Device Owner for Kiosk Satellite",
-        "description": "Device Owner gives Kiosk Satellite full control of this device.\n\n**Benefits**\n- Kiosk Satellite updates install silently, with no on-screen prompt.\n- True kiosk lock: the app can pin itself so users cannot leave it.\n- Kiosk Satellite can make itself the home app without a prompt.\n- Remote reboot from Home Assistant.\n- The real Wi-Fi MAC address is readable.\n\n**Side effects**\n- It cannot be undone except by a factory reset. Kiosk Satellite cannot be uninstalled normally while it is Device Owner.\n- To enroll, the accounts below are removed from the device. Their app is removed for a moment and then reinstalled. On a Meta Portal this removes the Portal's Meta login: KSM then opens Meta's setup screen on the Portal, and you finish setup and the WhatsApp login there.\n- Some OEM features that need an account (for example Meta's calling and apps) may stop working until you sign in again.\n\n**Accounts on this device**\n{accounts}\n\nTick the box and submit to proceed. Nothing on the device changes until you do. Leave it unticked to skip Device Owner; the device is added either way.",
+        "description": "Device Owner gives Kiosk Satellite full control of this device.\n\n**Benefits**\n- Kiosk Satellite updates install silently, with no on-screen prompt.\n- True kiosk lock: the app can pin itself so users cannot leave it.\n- Kiosk Satellite can make itself the home app without a prompt.\n- Remote reboot from Home Assistant.\n- The real Wi-Fi MAC address is readable.\n\n**Side effects**\n- It cannot be undone except by a factory reset. Kiosk Satellite cannot be uninstalled normally while it is Device Owner.\n- To enroll, the accounts below are removed from the device. Their app is removed for a moment and then reinstalled. On a Meta Portal this removes the Portal's Meta login: KSM then opens Meta's setup screen on the Portal, and you finish setup and sign in with Facebook or WhatsApp there.\n- Some OEM features that need an account (for example Meta's calling and apps) may stop working until you sign in again.\n\n**Accounts on this device**\n{accounts}\n\nTick the box and submit to proceed. Nothing on the device changes until you do. Leave it unticked to skip Device Owner; the device is added either way.",
         "data": {
           "confirm": "I understand this cannot be undone without a factory reset"
         }
@@ -137,14 +137,14 @@
       },
       "device_owner": {
         "title": "Enable Device Owner for Kiosk Satellite",
-        "description": "Device Owner gives Kiosk Satellite full control of this device.\n\n**Benefits**\n- Kiosk Satellite updates install silently, with no on-screen prompt.\n- True kiosk lock: the app can pin itself so users cannot leave it.\n- Kiosk Satellite can make itself the home app without a prompt.\n- Remote reboot from Home Assistant.\n- The real Wi-Fi MAC address is readable.\n\n**Side effects**\n- It cannot be undone except by a factory reset. Kiosk Satellite cannot be uninstalled normally while it is Device Owner.\n- To enroll, the accounts below are removed from the device. Their app is removed for a moment and then reinstalled. On a Meta Portal this removes the Portal's Meta login: KSM then opens Meta's setup screen on the Portal, and you finish setup and the WhatsApp login there.\n- Some OEM features that need an account (for example Meta's calling and apps) may stop working until you sign in again.\n\n**Accounts on this device**\n{accounts}\n\nTick the box and submit to proceed. Nothing on the device changes until you do.",
+        "description": "Device Owner gives Kiosk Satellite full control of this device.\n\n**Benefits**\n- Kiosk Satellite updates install silently, with no on-screen prompt.\n- True kiosk lock: the app can pin itself so users cannot leave it.\n- Kiosk Satellite can make itself the home app without a prompt.\n- Remote reboot from Home Assistant.\n- The real Wi-Fi MAC address is readable.\n\n**Side effects**\n- It cannot be undone except by a factory reset. Kiosk Satellite cannot be uninstalled normally while it is Device Owner.\n- To enroll, the accounts below are removed from the device. Their app is removed for a moment and then reinstalled. On a Meta Portal this removes the Portal's Meta login: KSM then opens Meta's setup screen on the Portal, and you finish setup and sign in with Facebook or WhatsApp there.\n- Some OEM features that need an account (for example Meta's calling and apps) may stop working until you sign in again.\n\n**Accounts on this device**\n{accounts}\n\nTick the box and submit to proceed. Nothing on the device changes until you do.",
         "data": {
           "confirm": "I understand this cannot be undone without a factory reset"
         }
       },
       "meta_setup": {
         "title": "Set up the Portal's Meta login again",
-        "description": "Kiosk Satellite is already Device Owner, but this Portal's Meta login is gone (Device Owner enrollment removes it). KSM can put Meta's setup screen back on the Portal: it turns kiosk mode off, resets Meta's setup app and opens it. You then finish setup and the WhatsApp login on the Portal, and KSM turns kiosk mode back on once the Meta login is back.\n\nTick the box and submit to show the setup screen.",
+        "description": "Kiosk Satellite is already Device Owner, but this Portal's Meta login is gone (Device Owner enrollment removes it). KSM can put Meta's setup screen back on the Portal: it turns kiosk mode off, resets Meta's setup app and opens it. You then finish setup and sign in with Facebook or WhatsApp on the Portal, and KSM turns kiosk mode back on once the Meta login is back.\n\nTick the box and submit to show the setup screen.",
         "data": {
           "confirm": "Show Meta's setup screen on the Portal"
         }
@@ -169,9 +169,9 @@
       "device_owner_failed": "Device Owner was not enabled: {reason}",
       "adb_unavailable": "Could not connect to ADB at {address}. Enable network ADB on the device (it turns off after a reboot) and try again.",
       "install_in_progress": "A Kiosk Satellite install is running on this device. Try again when it finishes.",
-      "device_owner_enabled_meta_setup": "Kiosk Satellite is now Device Owner. The Portal is showing Meta's setup screen: finish setup and the WhatsApp login there. A notification follows it and turns kiosk mode back on when the Meta login is back.",
+      "device_owner_enabled_meta_setup": "Kiosk Satellite is now Device Owner. The Portal is showing Meta's setup screen: finish setup and sign in with Facebook or WhatsApp there. A notification follows it and turns kiosk mode back on when the Meta login is back.",
       "device_owner_enabled_meta_failed": "Kiosk Satellite is now Device Owner, but the Meta login must be set up again and the setup screen was not shown: {reason} Open Configure → Enable Device Owner to try again.",
-      "meta_setup_started": "The Portal is showing Meta's setup screen: finish setup and the WhatsApp login there. A notification follows it and turns kiosk mode back on when the Meta login is back.",
+      "meta_setup_started": "The Portal is showing Meta's setup screen: finish setup and sign in with Facebook or WhatsApp there. A notification follows it and turns kiosk mode back on when the Meta login is back.",
       "meta_setup_failed": "Meta's setup screen was not shown: {reason}",
       "not_supported": "Configure a physical device from its device subentry."
     }
@@ -221,14 +221,14 @@
         },
         "device_owner": {
           "title": "Enable Device Owner for Kiosk Satellite",
-          "description": "Device Owner gives Kiosk Satellite full control of this device.\n\n**Benefits**\n- Kiosk Satellite updates install silently, with no on-screen prompt.\n- True kiosk lock: the app can pin itself so users cannot leave it.\n- Kiosk Satellite can make itself the home app without a prompt.\n- Remote reboot from Home Assistant.\n- The real Wi-Fi MAC address is readable.\n\n**Side effects**\n- It cannot be undone except by a factory reset. Kiosk Satellite cannot be uninstalled normally while it is Device Owner.\n- To enroll, the accounts below are removed from the device. Their app is removed for a moment and then reinstalled. On a Meta Portal this removes the Portal's Meta login: KSM then opens Meta's setup screen on the Portal, and you finish setup and the WhatsApp login there.\n- Some OEM features that need an account (for example Meta's calling and apps) may stop working until you sign in again.\n\n**Accounts on this device**\n{accounts}\n\nTick the box and submit to proceed. Nothing on the device changes until you do.",
+          "description": "Device Owner gives Kiosk Satellite full control of this device.\n\n**Benefits**\n- Kiosk Satellite updates install silently, with no on-screen prompt.\n- True kiosk lock: the app can pin itself so users cannot leave it.\n- Kiosk Satellite can make itself the home app without a prompt.\n- Remote reboot from Home Assistant.\n- The real Wi-Fi MAC address is readable.\n\n**Side effects**\n- It cannot be undone except by a factory reset. Kiosk Satellite cannot be uninstalled normally while it is Device Owner.\n- To enroll, the accounts below are removed from the device. Their app is removed for a moment and then reinstalled. On a Meta Portal this removes the Portal's Meta login: KSM then opens Meta's setup screen on the Portal, and you finish setup and sign in with Facebook or WhatsApp there.\n- Some OEM features that need an account (for example Meta's calling and apps) may stop working until you sign in again.\n\n**Accounts on this device**\n{accounts}\n\nTick the box and submit to proceed. Nothing on the device changes until you do.",
           "data": {
             "confirm": "I understand this cannot be undone without a factory reset"
           }
         },
         "meta_setup": {
           "title": "Set up the Portal's Meta login again",
-          "description": "Kiosk Satellite is already Device Owner, but this Portal's Meta login is gone (Device Owner enrollment removes it). KSM can put Meta's setup screen back on the Portal: it turns kiosk mode off, resets Meta's setup app and opens it. You then finish setup and the WhatsApp login on the Portal, and KSM turns kiosk mode back on once the Meta login is back.\n\nTick the box and submit to show the setup screen.",
+          "description": "Kiosk Satellite is already Device Owner, but this Portal's Meta login is gone (Device Owner enrollment removes it). KSM can put Meta's setup screen back on the Portal: it turns kiosk mode off, resets Meta's setup app and opens it. You then finish setup and sign in with Facebook or WhatsApp on the Portal, and KSM turns kiosk mode back on once the Meta login is back.\n\nTick the box and submit to show the setup screen.",
           "data": {
             "confirm": "Show Meta's setup screen on the Portal"
           }
@@ -253,9 +253,9 @@
         "device_owner_failed": "Device Owner was not enabled: {reason}",
         "adb_unavailable": "Could not connect to ADB at {address}. Enable network ADB on the device (it turns off after a reboot) and try again.",
         "install_in_progress": "A Kiosk Satellite install is running on this device. Try again when it finishes.",
-        "device_owner_enabled_meta_setup": "Kiosk Satellite is now Device Owner. The Portal is showing Meta's setup screen: finish setup and the WhatsApp login there. A notification follows it and turns kiosk mode back on when the Meta login is back.",
+        "device_owner_enabled_meta_setup": "Kiosk Satellite is now Device Owner. The Portal is showing Meta's setup screen: finish setup and sign in with Facebook or WhatsApp there. A notification follows it and turns kiosk mode back on when the Meta login is back.",
         "device_owner_enabled_meta_failed": "Kiosk Satellite is now Device Owner, but the Meta login must be set up again and the setup screen was not shown: {reason} Open Configure → Enable Device Owner to try again.",
-        "meta_setup_started": "The Portal is showing Meta's setup screen: finish setup and the WhatsApp login there. A notification follows it and turns kiosk mode back on when the Meta login is back.",
+        "meta_setup_started": "The Portal is showing Meta's setup screen: finish setup and sign in with Facebook or WhatsApp there. A notification follows it and turns kiosk mode back on when the Meta login is back.",
         "meta_setup_failed": "Meta's setup screen was not shown: {reason}",
         "not_supported": "Configure a physical device from its device subentry.",
         "reconfigure_successful": "Device configuration updated."

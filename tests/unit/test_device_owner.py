@@ -3,6 +3,9 @@ preflight and enrollment against a scripted ADB shell.
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from custom_components.kiosk_satellite_manager import device_owner
@@ -375,3 +378,22 @@ async def test_restart_meta_setup_step_failures(override, detail):
         await device_owner.restart_meta_setup(dev, "portal_mini")
     assert err.value.code == "meta_setup_failed"
     assert detail in err.value.detail
+
+_PKG = Path(__file__).resolve().parents[2] / "custom_components" / "kiosk_satellite_manager"
+
+
+def _texts(node):
+    if isinstance(node, dict):
+        for value in node.values():
+            yield from _texts(value)
+    elif isinstance(node, str):
+        yield node
+
+
+def test_meta_login_text_offers_facebook_and_whatsapp():
+    """[KSM-TEST-217] A Meta Portal signs in with Facebook or WhatsApp, so
+    no dialog may tell the user WhatsApp is the only way (#54)."""
+    strings = json.loads((_PKG / "strings.json").read_text())
+    whatsapp = [t for t in _texts(strings) if "WhatsApp" in t]
+    assert whatsapp, "positive control: the Meta setup text names WhatsApp"
+    assert [t for t in whatsapp if "Facebook" not in t] == []

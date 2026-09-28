@@ -119,6 +119,7 @@ async def test_lock_off_setup_shown_watch_restores_lock(hass):
     assert ks.patches[0] == {"kiosk.enabled": False}
     assert portal.front == SETUP_ACTIVITY
     assert "showing Meta's setup screen" in started[-1]
+    assert "Facebook or WhatsApp" in started[-1]
     assert "Kiosk mode is off" in started[-1]
     assert ks.patches[-1] == {"kiosk.enabled": True}
     assert "lockdown.enabled" not in str(ks.patches)

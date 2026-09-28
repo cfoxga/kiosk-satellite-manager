@@ -10,7 +10,7 @@ Meta identity (docs/SPEC/device-management-strategy.md section 6). KSM:
 3. watches, over one held ADB connection, for the Meta login accounts to come
    back, then turns the lock settings it changed back on and says so.
 
-A person finishes setup and the WhatsApp login on the Portal; KSM cannot.
+A person finishes setup and the Meta sign-in on the Portal; KSM cannot.
 Every outcome is reported in the device's Device Owner notification.
 """
 from __future__ import annotations
@@ -120,8 +120,9 @@ async def async_start(
     notify(
         hass,
         target,
-        "The Portal is showing Meta's setup screen. Finish setup and the "
-        f"WhatsApp login on the Portal. {lock_note} This notice updates when "
+        "The Portal is showing Meta's setup screen. Finish setup there and sign "
+        "in with Facebook or WhatsApp. "
+        f"{lock_note} This notice updates when "
         f"the Meta login is back (checked for {int(WATCH_TIMEOUT_S // 60)} minutes).",
     )
     hass.async_create_background_task(
