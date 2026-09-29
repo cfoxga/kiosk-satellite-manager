@@ -137,7 +137,9 @@ async def test_adoption_copies_the_manager_option(hass, ks_health_probe, tls_mig
     manager = {} if option is None else {CONF_ESPHOME_NEW_DEVICES: option}
     with patch(f"{FLOW}._manager_options", return_value=manager), patch(
         f"{FLOW}.login", new=AsyncMock(return_value="tok")
-    ), patch(HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.88"})):
+    ), patch(HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.88"})), patch(
+        f"{FLOW}.esphome_adopt.async_adopt", new=AsyncMock(return_value="added")
+    ):
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": config_entries.SOURCE_USER}
         )

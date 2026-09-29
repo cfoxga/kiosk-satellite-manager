@@ -19,10 +19,12 @@
           "token_mode": "Home Assistant access token",
           "ha_url": "Home Assistant URL",
           "auto_update": "Auto-update on this device",
+          "enable_esphome": "Enable ESPHome",
           "enable_device_owner": "Enable Device Owner (advanced)"
         },
         "data_description": {
           "password": "Admin password for Kiosk Satellite's Web UI.",
+          "enable_esphome": "Turn on ESPHome in Kiosk Satellite and add the device to Home Assistant's ESPHome integration with its encryption key. Defaults to the manager's Enable ESPHome option.",
           "enable_device_owner": "Off by default. After installing, check whether Kiosk Satellite can become Device Owner and ask you to confirm before anything changes. Device Owner lets it make itself the Home screen and update silently, but can only be undone by a factory reset."
         }
       },
@@ -41,10 +43,12 @@
           "ha_url": "Home Assistant URL",
           "auto_update": "Auto-update on this device",
           "token_mode": "Home Assistant access token",
+          "enable_esphome": "Enable ESPHome",
           "enable_device_owner": "Enable Device Owner (advanced)"
         },
         "data_description": {
           "password": "The existing admin password for Kiosk Satellite's Web UI on port 2324.",
+          "enable_esphome": "Turn on ESPHome in Kiosk Satellite and add the device to Home Assistant's ESPHome integration with its encryption key. Defaults to the manager's Enable ESPHome option.",
           "enable_device_owner": "Off by default. After installing, check whether Kiosk Satellite can become Device Owner and ask you to confirm before anything changes. Device Owner lets it make itself the Home screen and update silently, but can only be undone by a factory reset."
         }
       },
@@ -52,10 +56,12 @@
         "title": "Connect Kiosk Satellite Manager",
         "description": "Kiosk Satellite is already running on this device, so it is added without ADB and its settings are left unchanged.\nDetected device type: {device_model}\nAndroid version: {android_version}\n\nEnter its existing Web UI password. Enable ADB later only if you need Install/Reinstall, Uninstall or Device Owner.",
         "data": {
-          "password": "Existing Password"
+          "password": "Existing Password",
+          "enable_esphome": "Enable ESPHome"
         },
         "data_description": {
-          "password": "The existing admin password for Kiosk Satellite's Web UI on port 2324."
+          "password": "The existing admin password for Kiosk Satellite's Web UI on port 2324.",
+          "enable_esphome": "Turn on ESPHome in Kiosk Satellite and add the device to Home Assistant's ESPHome integration with its encryption key. Defaults to the manager's Enable ESPHome option."
         }
       },
       "confirm": {
@@ -72,7 +78,8 @@
       }
     },
     "progress": {
-      "installing": "Installing Kiosk Satellite and connecting it to Home Assistant."
+      "installing": "Installing Kiosk Satellite and connecting it to Home Assistant.",
+      "esphome": "Turning on ESPHome and adding the device to Home Assistant."
     },
     "error": {
       "cannot_connect": "Failed to connect to the device",
@@ -121,7 +128,7 @@
         "data": {
           "existing_install_action": "Existing installation",
           "auto_update": "Auto-update new devices",
-          "esphome_new_devices": "Turn on ESPHome on new devices",
+          "esphome_new_devices": "Enable ESPHome",
           "hide_follower_updates": "Hide follower updates",
           "password": "Kiosk Satellite password",
           "ha_url": "Home Assistant URL",

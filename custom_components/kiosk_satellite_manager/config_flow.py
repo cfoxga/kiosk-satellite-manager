@@ -47,12 +47,13 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.helpers.network import get_url
 
-from . import apk_cache, device_owner, fleet, ks_api_client, ks_tls, meta_setup
+from . import apk_cache, device_owner, esphome_adopt, fleet, ks_api_client, ks_tls, meta_setup
 from .helpers import recent_releases
 from .adb_client import AdbAuthPending, AdbClient, AdbConnectFailed, ensure_adb_key
 from .const import (
     CONF_AREA_ID,
     CONF_AUTO_UPDATE,
+    CONF_ENABLE_ESPHOME,
     CONF_ESPHOME_ENABLE_PENDING,
     CONF_ESPHOME_NEW_DEVICES,
     CONF_HIDE_FOLLOWER_UPDATES,
@@ -780,6 +781,10 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._ha_url: str | None = None
         self._auto_update: bool = False
         self._want_device_owner: bool = False
+        self._want_esphome: bool = False
+        self._esphome_task: asyncio.Task | None = None
+        self._esphome_outcome: str | None = None
+        self._ks_entry: tuple[dict, dict] | None = None
         self._selected_fleet_id: str | None = None
         self._invitation_attempted: bool = False
 
@@ -1009,6 +1014,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_AUTO_UPDATE, self._global.get(CONF_AUTO_UPDATE, False)
                 )
                 self._want_device_owner = bool(user_input.get(CONF_ENABLE_DEVICE_OWNER, False))
+                self._want_esphome = bool(user_input.get(CONF_ENABLE_ESPHOME, self._esphome_default()))
                 return await self.async_step_install()
 
         fields: dict[vol.Marker, Any] = {
@@ -1032,6 +1038,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if self._global:
             fields[vol.Optional(CONF_HA_URL, default=self._global.get(CONF_HA_URL, ""))] = str
             fields[vol.Required(CONF_AUTO_UPDATE, default=self._global.get(CONF_AUTO_UPDATE, False))] = bool
+        fields[vol.Required(CONF_ENABLE_ESPHOME, default=self._esphome_default())] = selector.BooleanSelector()
         fields[vol.Required(CONF_ENABLE_DEVICE_OWNER, default=False)] = selector.BooleanSelector()
 
         return self.async_show_form(
@@ -1118,6 +1125,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not errors:
                 self._password = password
                 self._tls_pin = pin
+                self._want_esphome = bool(user_input.get(CONF_ENABLE_ESPHOME, self._esphome_default()))
                 await self._async_maybe_invite()
                 global_opts = self._global or {}
                 data = {
@@ -1130,15 +1138,14 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_PASSWORD: password,
                     CONF_HA_URL: global_opts.get(CONF_HA_URL),
                     # KSM-BEHAVE-110: copied at creation like auto-update.
-                    CONF_ESPHOME_ENABLE_PENDING: bool(global_opts.get(CONF_ESPHOME_NEW_DEVICES, False)),
+                    CONF_ESPHOME_ENABLE_PENDING: self._want_esphome,
                 }
                 if pin:
                     data[CONF_TLS_SPKI] = pin
-                return self.async_create_entry(
-                    title=self._discovered_name,
-                    data=data,
-                    options={CONF_AUTO_UPDATE: global_opts.get(CONF_AUTO_UPDATE, False)},
-                )
+                self._ks_entry = (data, {CONF_AUTO_UPDATE: global_opts.get(CONF_AUTO_UPDATE, False)})
+                if self._want_esphome:
+                    return await self.async_step_esphome()
+                return self._async_create_ks_entry()
 
         return self.async_show_form(
             step_id="ks_device_info",
@@ -1146,6 +1153,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_PASSWORD): selector.TextSelector(
                     selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
                 ),
+                vol.Required(CONF_ENABLE_ESPHOME, default=self._esphome_default()): selector.BooleanSelector(),
             }),
             errors=errors,
             description_placeholders={
@@ -1225,6 +1233,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._token_mode = token_mode
             self._credential = credential
             self._want_device_owner = bool(user_input.get(CONF_ENABLE_DEVICE_OWNER, False))
+            self._want_esphome = bool(user_input.get(CONF_ENABLE_ESPHOME, self._esphome_default()))
             return await self.async_step_install()
 
         fields = {
@@ -1242,6 +1251,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 ))
             )
+        fields[vol.Required(CONF_ENABLE_ESPHOME, default=self._esphome_default())] = selector.BooleanSelector()
         fields[vol.Required(CONF_ENABLE_DEVICE_OWNER, default=False)] = selector.BooleanSelector()
         return self.async_show_form(
             step_id="existing_device_info",
@@ -1336,9 +1346,67 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # never reaches it, so must not fall through to an invitation here.
         if self._existing_install_action == EXISTING_INSTALL_REUSE:
             await self._async_maybe_invite()
+        if self._want_esphome:
+            return await self.async_step_esphome()
+        return await self._async_after_esphome()
+
+    async def _async_after_esphome(self) -> FlowResult:
+        if self._ks_entry is not None:
+            return self._async_create_ks_entry()
         if self._want_device_owner:
             return await self.async_step_onboard_device_owner()
         return self._async_create_device_entry()
+
+    def _esphome_default(self) -> bool:
+        return bool((self._global or {}).get(CONF_ESPHOME_NEW_DEVICES, False))
+
+    def _async_create_ks_entry(self) -> FlowResult:
+        data, options = self._ks_entry
+        return self.async_create_entry(title=self._discovered_name, data=data, options=options)
+
+    async def async_step_esphome(self, user_input: dict | None = None) -> FlowResult:
+        """KSM-BEHAVE-135: add the kiosk to HA's ESPHome integration. Best-effort."""
+        if not self._esphome_task:
+            self._esphome_task = self.hass.async_create_task(self._async_do_esphome())
+
+        if not self._esphome_task.done():
+            return self.async_show_progress(
+                step_id="esphome",
+                progress_action="esphome",
+                progress_task=self._esphome_task,
+            )
+
+        return self.async_show_progress_done(next_step_id="esphome_done")
+
+    async def _async_do_esphome(self) -> None:
+        name = self._name or self._discovered_name
+        try:
+            outcome = await esphome_adopt.async_adopt(
+                self.hass,
+                host=self._host,
+                name=name,
+                password=self._password,
+                pin=self._tls_pin,
+            )
+        except Exception:  # noqa: BLE001 -- best-effort, the entry is still created
+            _LOGGER.exception("adding %s to ESPHome failed", self._host)
+            outcome = esphome_adopt.FAILED
+        self._esphome_outcome = outcome
+        if outcome not in (esphome_adopt.ADDED, esphome_adopt.ALREADY_ADDED):
+            persistent_notification.async_create(
+                self.hass,
+                message=(
+                    f"{name} could not be added to the ESPHome integration automatically "
+                    f"({outcome}). It was still added to Kiosk Satellite Manager. Turn on "
+                    "ESPHome in Kiosk Satellite and add the discovered device in Settings > "
+                    "Devices & services."
+                ),
+                title="Kiosk Satellite ESPHome setup incomplete",
+                notification_id=f"{DOMAIN}_esphome_failed_{self._host}",
+            )
+
+    async def async_step_esphome_done(self, user_input: dict | None = None) -> FlowResult:
+        return await self._async_after_esphome()
 
     async def _async_maybe_invite(self) -> None:
         """Send one invitation after the new KS admin endpoint is reachable."""
@@ -1469,7 +1537,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_AREA_ID: self._area_id,
             CONF_PASSWORD: self._password,
             CONF_HA_URL: self._ha_url,
-            CONF_ESPHOME_ENABLE_PENDING: bool((self._global or {}).get(CONF_ESPHOME_NEW_DEVICES, False)),
+            CONF_ESPHOME_ENABLE_PENDING: self._want_esphome,
         }
         if self._tls_pin:
             data[CONF_TLS_SPKI] = self._tls_pin

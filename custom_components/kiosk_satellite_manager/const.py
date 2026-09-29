@@ -27,6 +27,7 @@ CONF_HA_REFRESH_TOKEN_ID: Final = "ha_refresh_token_id"
 CONF_HA_TOKEN_OWNED: Final = "ha_token_owned"
 CONF_REUSE_ENTRY_ID: Final = "reuse_entry_id"
 CONF_ENABLE_DEVICE_OWNER: Final = "enable_device_owner"
+CONF_ENABLE_ESPHOME: Final = "enable_esphome"
 # KSM-BEHAVE-073: per-entry opt-in, stored in entry.options, default off.
 CONF_AUTO_UPDATE: Final = "auto_update"
 # KSM-BEHAVE-080: manager-entry option, default off; while on, every device's
