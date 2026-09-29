@@ -16,6 +16,12 @@
   ESPHome update entity covers both. KSM removes those two entities from existing devices at
   startup. Auto-update, Update all and the Install version pin are unchanged.
 
+- Every add form has an **Enable ESPHome** checkbox that defaults to the manager's
+  Enable ESPHome option (formerly "Turn on ESPHome on new devices") (#96). When ticked, the wizard turns
+  ESPHome on in Kiosk Satellite, waits for its encryption key and for Home Assistant to discover the
+  device, adds it with that key, and waits for it to load. Any failure raises a notification (never
+  showing the key) and the device is still added to KSM.
+
 - KSM no longer offers a Home launcher toggle or changes `home.enabled` or Android's
   default Home app during install and updates (#94). Configure Home in Kiosk
   Satellite itself. Portal recipe keys have no version numbers.

@@ -670,8 +670,8 @@ async def test_user_flow_kept_install_collects_only_existing_connection_details(
         assert result["type"] == data_entry_flow.FlowResultType.FORM
         assert result["step_id"] == "existing_device_info"
         schema_fields = {field.schema for field in result["data_schema"].schema}
-        # KSM-BEHAVE-098 (#62): the Device Owner opt-in is the one addition.
-        assert schema_fields == {CONF_PASSWORD, CONF_ENABLE_DEVICE_OWNER}
+        # KSM-BEHAVE-098 (#62), KSM-BEHAVE-135: the Device Owner and ESPHome opt-ins.
+        assert schema_fields == {CONF_PASSWORD, CONF_ENABLE_DEVICE_OWNER, "enable_esphome"}
 
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
@@ -693,6 +693,50 @@ async def test_user_flow_kept_install_collects_only_existing_connection_details(
     assert CONF_HA_TOKEN not in result["data"]
     mock_install.assert_not_awaited()
     mock_client.uninstall_ks.assert_not_awaited()
+
+
+async def test_adb_flow_adds_esphome_after_install_when_ticked(hass):
+    """[KSM-TEST-262] KSM-BEHAVE-135: the ADB path runs the ESPHome step after
+    the install and records the pending flag from the box."""
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
+    ) as mock_client_cls, patch(
+        "custom_components.kiosk_satellite_manager.fetch_health",
+        new=AsyncMock(return_value={"appVersion": "2026.9.62"}),
+    ), patch(
+        "custom_components.kiosk_satellite_manager.config_flow.install_and_launch"
+    ), patch(
+        "custom_components.kiosk_satellite_manager.config_flow.esphome_adopt.async_adopt",
+        new=AsyncMock(return_value="added"),
+    ) as adopt:
+        mock_client = mock_client_cls.return_value
+        mock_client.connect = AsyncMock()
+        mock_client.getprop = _getprop(**_GTV_PROPS)
+        mock_client.shell = AsyncMock(return_value="Living Room TV")
+        mock_client.is_ks_installed = AsyncMock(return_value=True)
+        mock_client.close = AsyncMock()
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "192.168.50.64", "port": 5555}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_EXISTING_INSTALL_ACTION: EXISTING_INSTALL_REUSE}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_PASSWORD: "hunter222", "enable_esphome": True}
+        )
+        while result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS:
+            await hass.async_block_till_done()
+            result = await hass.config_entries.flow.async_configure(result["flow_id"])
+        await hass.async_block_till_done()
+
+    assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert result["data"]["esphome_enable_pending"] is True
+    adopt.assert_awaited_once()
+    assert adopt.await_args.kwargs["host"] == "192.168.50.64"
 
 
 async def test_user_flow_reinstall_uninstalls_before_install(hass):
@@ -854,7 +898,7 @@ async def test_ks_running_device_is_added_without_adb(hass, ks_health_probe, tls
         result = await _start_ks_flow(hass)
         assert result["type"] == data_entry_flow.FlowResultType.FORM
         assert result["step_id"] == "ks_device_info"
-        assert {field.schema for field in result["data_schema"].schema} == {CONF_PASSWORD}
+        assert {field.schema for field in result["data_schema"].schema} == {CONF_PASSWORD, "enable_esphome"}
 
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {CONF_PASSWORD: "hunter222"}
