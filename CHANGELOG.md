@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add native KSM Settings diagnostic entities for the exact device catalog and
+  install recipes (#104). Per-device Install recipe diagnostics now show typed
+  settings and operations. New operator pages document model assignments,
+  qualification limits, and recipe behavior; the integration documentation
+  link now points to OneDev.
+
 - Rename the manager entry and device to **KSM Settings** and add **Backup All**
   (#101). The button saves each loaded device's configuration through its
   existing backup path and reports failures without stopping other backups.

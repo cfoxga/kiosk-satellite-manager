@@ -31,8 +31,9 @@ from .const import (
     CONF_AREA_ID, CONF_DEVICE_PROFILE, CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_MANAGER,
     ENTRY_TYPE_UNMANAGED, ENTRY_TYPE_FLEET, RELEASE_COORDINATOR_KEY,
 )
-from .device_catalog import NoApprovedRecipe, require_recipe
-from .device_models import get_device_model
+from .device_catalog import CATALOG, NoApprovedRecipe, require_recipe
+from .device_models import DEVICE_MODELS, get_device_model
+from .install_recipes import INSTALL_RECIPES, InstallRecipe
 from .helpers import resolve_area_name
 from . import fleet
 
@@ -43,7 +44,11 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
-        async_add_entities([KioskSatelliteLatestReleaseSensor(hass, entry)])
+        async_add_entities([
+            KioskSatelliteLatestReleaseSensor(hass, entry),
+            KioskSatelliteCatalogSensor(entry, "models"),
+            KioskSatelliteCatalogSensor(entry, "recipes"),
+        ])
         return
     if entry.data.get(CONF_ENTRY_TYPE) in (ENTRY_TYPE_UNMANAGED, ENTRY_TYPE_FLEET):
         async_add_entities([FleetStatusSensor(hass, entry, kind) for kind in (
@@ -210,7 +215,84 @@ class KioskSatelliteRecipeSensor(SensorEntity):
         self._attr_extra_state_attributes = {
             "recipe_key": recipe.recipe_key,
             "recipe_name": recipe.name,
+            **_recipe_details(recipe),
         }
+
+
+def _recipe_details(recipe: InstallRecipe) -> dict:
+    """Expose only typed, source-maintained policy; never live KS settings."""
+    return {
+        "artifact_policy": recipe.artifact_policy,
+        "device_name_source": recipe.device_name_source,
+        "start_url_path": recipe.start_url_path,
+        "install_strategy": recipe.install_strategy,
+        "update_strategy": recipe.update_strategy,
+        "reinstall_strategy": recipe.reinstall_strategy,
+        "uninstall_behavior": recipe.uninstall_behavior,
+        "permission_policy": recipe.permission_policy,
+        "appops_policy": recipe.appops_policy,
+        "repurpose_policy": recipe.repurpose_policy,
+        "battery_exemption": recipe.battery_exemption,
+        "sets_device_admin": recipe.sets_device_admin,
+        "verifier_retry_on_failure": recipe.verifier_retry_on_failure,
+        "operations": list(recipe.operations),
+        "parameters": dict(recipe.parameters),
+        "postconditions": list(recipe.postconditions),
+    }
+
+
+class KioskSatelliteCatalogSensor(SensorEntity):
+    """Read-only catalog browser on the native manager entry."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_should_poll = False
+
+    def __init__(self, entry: ConfigEntry, kind: str) -> None:
+        self._attr_unique_id = f"{entry.entry_id}_catalog_{kind}"
+        self._attr_name = "Device catalog" if kind == "models" else "Install recipes"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)}, name=entry.title
+        )
+        if kind == "models":
+            rows = []
+            for model in DEVICE_MODELS:
+                try:
+                    recipe = require_recipe(model.model_key)
+                except NoApprovedRecipe:
+                    recipe = None
+                rows.append({
+                    "model_key": model.model_key,
+                    "model_name": model.name,
+                    "recipe_key": recipe.recipe_key if recipe else None,
+                    "qualification_records": sum(
+                        q.model_key == model.model_key and recipe is not None
+                        and q.recipe_key == recipe.recipe_key
+                        for q in CATALOG.qualifications
+                    ),
+                })
+            self._attr_extra_state_attributes = {"models": rows}
+        else:
+            self._attr_extra_state_attributes = {"recipes": [
+                {
+                    "recipe_key": recipe.recipe_key,
+                    "recipe_name": recipe.name,
+                    "assigned_models": [
+                        model.model_key for model in DEVICE_MODELS
+                        if _model_has_recipe(model.model_key, recipe.recipe_key)
+                    ],
+                    **_recipe_details(recipe),
+                }
+                for recipe in INSTALL_RECIPES
+            ]}
+        self._attr_native_value = len(rows) if kind == "models" else len(INSTALL_RECIPES)
+
+
+def _model_has_recipe(model_key: str, recipe_key: str) -> bool:
+    try:
+        return require_recipe(model_key).recipe_key == recipe_key
+    except NoApprovedRecipe:
+        return False
 
 
 class KioskSatelliteLatestReleaseSensor(CoordinatorEntity, SensorEntity):

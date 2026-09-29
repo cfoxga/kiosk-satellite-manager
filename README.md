@@ -4,6 +4,18 @@ A Home Assistant custom integration that provisions [Kiosk Satellite](https://gi
 devices using network ADB for installation and onboarding, then the authenticated Kiosk Satellite
 management API for routine configuration.
 
+## Device and recipe reference
+
+The KSM Settings entry has native diagnostic entities for the
+[device catalog](docs/supported-devices.md) and
+[install recipes and settings](docs/install-recipes.md). Open **KSM Settings**
+from the integration page, then select a diagnostic entity and choose
+**Menu → Details** to browse its attributes. Each managed
+device also has an **Install recipe** diagnostic entity with that device's
+approved recipe policy. Assignment and build-specific qualification are
+separate; the [device catalog page](docs/supported-devices.md) explains the
+boundary and known limitations.
+
 ## Three manual steps you can't script away
 
 Everything else is automated, but these three happen on the physical device and cannot be driven
