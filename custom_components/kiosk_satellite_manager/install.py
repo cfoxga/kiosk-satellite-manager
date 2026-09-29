@@ -170,6 +170,17 @@ async def _converge_notification_listener(
     return "needs_user_interaction"
 
 
+async def grant_recipe_permissions(client: AdbClient, sdk: int, recipe: InstallRecipe) -> None:
+    """The mutating half of convergence: request every grant. Callers must
+    read the result back; a shell exit is never evidence."""
+    for perm in recipe.permissions_for_sdk(sdk):
+        await client.shell(f"pm grant {KS_PACKAGE} {perm}")
+    for op in recipe.appops_for_sdk(sdk):
+        await client.shell(f"appops set {KS_PACKAGE} {op} allow")
+    if recipe.battery_exemption:
+        await client.shell(f"dumpsys deviceidle whitelist +{KS_PACKAGE}")
+
+
 async def converge_permissions(
     client: AdbClient, sdk: int, recipe: InstallRecipe
 ) -> PermissionConvergenceResult:
@@ -180,24 +191,19 @@ async def converge_permissions(
     only when the installed KS build actually declares such a service
     (read from the device, never guessed), recording rather than claiming
     success when an on-device tap is still required."""
+    await grant_recipe_permissions(client, sdk, recipe)
     perms = recipe.permissions_for_sdk(sdk)
-    for perm in perms:
-        await client.shell(f"pm grant {KS_PACKAGE} {perm}")
     granted_now = await client.granted_permissions()
     granted_permissions = [p for p in perms if p in granted_now]
     denied_permissions = [p for p in perms if p not in granted_now]
 
     appops = recipe.appops_for_sdk(sdk)
-    for op in appops:
-        await client.shell(f"appops set {KS_PACKAGE} {op} allow")
     granted_appops = []
     denied_appops = []
     for op in appops:
         mode = await client.appop_mode(op)
         (granted_appops if mode == "allow" else denied_appops).append(op)
 
-    if recipe.battery_exemption:
-        await client.shell(f"dumpsys deviceidle whitelist +{KS_PACKAGE}")
     battery_exempt = await client.is_battery_exempt()
 
     declared = await client.declared_bound_services()

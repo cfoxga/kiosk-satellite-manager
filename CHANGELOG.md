@@ -8,6 +8,13 @@
   qualification limits, and recipe behavior; the integration documentation
   link now points to OneDev.
 
+- Add a per-device **Permissions** problem sensor and **Fix permissions** button
+  (#102). The sensor reads the device's own permission, AppOp and battery
+  exemption state every 15 minutes and lists what is not granted; the button
+  re-grants and re-reads. Permissions the installed KS does not declare are
+  listed as `not_declared` and never raise the problem. Also fixes the AppOp
+  readback misreading Android's `allow; time=…` output as not granted.
+
 - Rename the manager entry and device to **KSM Settings** and add **Backup All**
   (#101). The button saves each loaded device's configuration through its
   existing backup path and reports failures without stopping other backups.

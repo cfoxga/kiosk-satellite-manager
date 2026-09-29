@@ -621,10 +621,38 @@ async def test_granted_permissions_returns_only_granted_true(tmp_path):
     assert "android.permission.READ_EXTERNAL_STORAGE" not in granted
 
 
+_LIVE_REQUESTED_PERMISSIONS_BLOCK = """\
+    requested permissions:
+      android.permission.INTERNET
+      android.permission.CAMERA
+      android.permission.READ_LOGS
+    install permissions:
+      android.permission.INTERNET: granted=true
+"""
+
+
+async def test_KSM_TEST_276_declared_permissions_reads_only_the_manifest_block(tmp_path):
+    """Only the `requested permissions:` block counts; an undeclared name
+    (POST_NOTIFICATIONS) is absent even though runtime lines exist."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(
+        client._device, "shell", new=AsyncMock(return_value=_LIVE_REQUESTED_PERMISSIONS_BLOCK)
+    ):
+        declared = await client.declared_permissions()
+    assert declared == {
+        "android.permission.INTERNET",
+        "android.permission.CAMERA",
+        "android.permission.READ_LOGS",
+    }
+    assert "android.permission.POST_NOTIFICATIONS" not in declared
+
+
 @pytest.mark.parametrize(
     "output,expected",
     [
         ("SYSTEM_ALERT_WINDOW: allow", "allow"),
+        ("WRITE_SETTINGS: allow; time=+6h22m28s485ms ago", "allow"),
         ("WRITE_SETTINGS: ignore", "ignore"),
         ("GET_USAGE_STATS: deny", "deny"),
         ("", "unknown"),
