@@ -147,7 +147,7 @@ def test_android10_portal_models_share_the_same_behavior():
 
 
 def test_android9_and_android10_portal_recipes_are_distinct():
-    """[KSM-TEST-266] The Android 9 cleanup capability has its own recipe key."""
+    """[KSM-TEST-268] The Android 9 cleanup capability has its own recipe key."""
     from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
 
     assert require_recipe("portal_gen1").recipe_key == "meta_portal_android9"
