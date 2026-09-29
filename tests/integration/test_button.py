@@ -8,11 +8,14 @@ the version sensor afterward.
 """
 from __future__ import annotations
 
+from types import MappingProxyType, SimpleNamespace
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.kiosk_satellite_manager.adb_client import AdbConnectFailed
 from custom_components.kiosk_satellite_manager.const import (
@@ -31,6 +34,8 @@ from custom_components.kiosk_satellite_manager.const import (
 )
 from custom_components.kiosk_satellite_manager.credentials import TokenCredential
 from custom_components.kiosk_satellite_manager.device_catalog import NoApprovedRecipe
+from custom_components.kiosk_satellite_manager import fleet
+from custom_components.kiosk_satellite_manager.button import async_install_entry
 from custom_components.kiosk_satellite_manager.ks_api import ReleaseInfo
 
 from .conftest import init_integration
@@ -38,6 +43,131 @@ from .conftest import init_integration
 _LOGIN = "custom_components.kiosk_satellite_manager.ks_update.ks_api_client.login"
 _RUN_COMMAND = "custom_components.kiosk_satellite_manager.ks_update.ks_api_client.run_command"
 _POLL_HEALTH = "custom_components.kiosk_satellite_manager.ks_update.fetch_health"
+
+
+@pytest.mark.parametrize("native_subentry", [False, True])
+async def test_KSM_TEST_271_install_recovers_missing_profile_from_live_exact_facts(hass, native_subentry):
+    """An old fleet subentry gets the same repair as an old direct entry."""
+    data = {"host": "192.168.99.99", "port": 5555, "key_path": "/tmp/test-key",
+            CONF_DEVICE_PROFILE: None}
+    parent = MockConfigEntry(domain=DOMAIN, data={CONF_ENTRY_TYPE: "fleet"})
+    parent.add_to_hass(hass)
+    if native_subentry:
+        hass.config_entries.async_add_subentry(parent, ConfigSubentry(
+            data=MappingProxyType(data), subentry_id="gtv-ha", subentry_type="device",
+            title="Theater GTV", unique_id="gtv-ha",
+        ))
+        entry = fleet.DeviceEntry(hass, parent, parent.subentries["gtv-ha"])
+    else:
+        entry = MockConfigEntry(domain=DOMAIN, data=data, title="Theater GTV")
+        entry.add_to_hass(hass)
+    props = {"ro.product.manufacturer": "onn", "ro.product.model": "onn 4K Pro Streaming Device",
+             "ro.product.device": "jarvis2", "ro.build.version.sdk": "34"}
+    with patch("custom_components.kiosk_satellite_manager.button.AdbClient") as cls, patch(
+        "custom_components.kiosk_satellite_manager.button.install_and_launch",
+        new=AsyncMock(return_value=None),
+    ) as install, patch("custom_components.kiosk_satellite_manager.button.async_get_clientsession"):
+        client = cls.return_value
+        client.connect = AsyncMock()
+        client.close = AsyncMock()
+        client.getprop = AsyncMock(side_effect=lambda name: props.get(name, ""))
+        await async_install_entry(hass, entry)
+    assert install.await_args.kwargs["device_model"] == "onn_4k_pro_android14"
+    assert entry.data[CONF_DEVICE_PROFILE] == "onn_4k_pro_android14"
+    client.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("unreadable", [False, True])
+async def test_KSM_TEST_271_unknown_live_identity_remains_unprovisioned(hass, unreadable):
+    entry = MockConfigEntry(domain=DOMAIN, title="Unknown TV", data={
+        "host": "192.168.99.99", "port": 5555, "key_path": "/tmp/test-key",
+        CONF_DEVICE_PROFILE: None,
+    })
+    entry.add_to_hass(hass)
+    with patch("custom_components.kiosk_satellite_manager.button.AdbClient") as cls, patch(
+        "custom_components.kiosk_satellite_manager.button.install_and_launch",
+        new=AsyncMock(),
+    ) as install, patch("custom_components.kiosk_satellite_manager.button.async_get_clientsession"):
+        client = cls.return_value
+        client.connect = AsyncMock()
+        client.close = AsyncMock()
+        client.getprop = (
+            AsyncMock(side_effect=RuntimeError("unreadable")) if unreadable
+            else AsyncMock(return_value="")
+        )
+        with pytest.raises(NoApprovedRecipe):
+            await async_install_entry(hass, entry)
+    install.assert_not_awaited()
+    assert entry.data[CONF_DEVICE_PROFILE] is None
+    client.close.assert_awaited_once()
+
+
+async def test_KSM_TEST_271_exact_but_unassigned_model_remains_unprovisioned(hass):
+    entry = MockConfigEntry(domain=DOMAIN, title="Unassigned TV", data={
+        "host": "192.168.99.99", "port": 5555, "key_path": "/tmp/test-key",
+        CONF_DEVICE_PROFILE: None,
+    })
+    entry.add_to_hass(hass)
+    unresolved = SimpleNamespace(model_key="unassigned_model", executable=False,
+                                 reason="no approved assignment")
+    with patch("custom_components.kiosk_satellite_manager.button.AdbClient") as cls, patch(
+        "custom_components.kiosk_satellite_manager.button.resolve_catalog_entry",
+        return_value=unresolved,
+    ), patch("custom_components.kiosk_satellite_manager.button.install_and_launch",
+             new=AsyncMock()) as install, patch(
+        "custom_components.kiosk_satellite_manager.button.async_get_clientsession"
+    ):
+        client = cls.return_value
+        client.connect = AsyncMock()
+        client.close = AsyncMock()
+        client.getprop = AsyncMock(return_value="")
+        with pytest.raises(NoApprovedRecipe, match="no approved assignment"):
+            await async_install_entry(hass, entry)
+    install.assert_not_awaited()
+    assert entry.data[CONF_DEVICE_PROFILE] is None
+
+
+async def test_KSM_TEST_271_install_failure_does_not_persist_recovered_model(hass):
+    entry = MockConfigEntry(domain=DOMAIN, title="Theater GTV", data={
+        "host": "192.168.99.99", "port": 5555, "key_path": "/tmp/test-key",
+        CONF_DEVICE_PROFILE: None,
+    })
+    entry.add_to_hass(hass)
+    props = {"ro.product.manufacturer": "onn", "ro.product.model": "onn 4K Pro Streaming Device",
+             "ro.build.version.sdk": "34"}
+    with patch("custom_components.kiosk_satellite_manager.button.AdbClient") as cls, patch(
+        "custom_components.kiosk_satellite_manager.button.install_and_launch",
+        new=AsyncMock(side_effect=RuntimeError("install failed")),
+    ) as install, patch("custom_components.kiosk_satellite_manager.button.async_get_clientsession"):
+        client = cls.return_value
+        client.connect = AsyncMock()
+        client.close = AsyncMock()
+        client.getprop = AsyncMock(side_effect=lambda name: props.get(name, ""))
+        with pytest.raises(RuntimeError, match="install failed"):
+            await async_install_entry(hass, entry)
+    assert install.await_args.kwargs["device_model"] == "onn_4k_pro_android14"
+    assert entry.data[CONF_DEVICE_PROFILE] is None
+    client.close.assert_awaited_once()
+
+
+async def test_KSM_TEST_271_stored_profile_is_not_replaced_on_install(hass):
+    entry = MockConfigEntry(domain=DOMAIN, title="Portal", data={
+        "host": "192.168.99.99", "port": 5555, "key_path": "/tmp/test-key",
+        CONF_DEVICE_PROFILE: "portal_go",
+    })
+    entry.add_to_hass(hass)
+    with patch("custom_components.kiosk_satellite_manager.button.AdbClient") as cls, patch(
+        "custom_components.kiosk_satellite_manager.button.install_and_launch",
+        new=AsyncMock(return_value=None),
+    ) as install, patch("custom_components.kiosk_satellite_manager.button.async_get_clientsession"):
+        client = cls.return_value
+        client.connect = AsyncMock()
+        client.close = AsyncMock()
+        client.getprop = AsyncMock(side_effect=AssertionError("stored model must not be reprofiled"))
+        await async_install_entry(hass, entry)
+    assert install.await_args.kwargs["device_model"] == "portal_go"
+    assert entry.data[CONF_DEVICE_PROFILE] == "portal_go"
+    client.getprop.assert_not_awaited()
 
 
 def _refuses_adb():
@@ -200,7 +330,7 @@ async def test_press_persists_only_a_new_device_token(
     async def fake_fetch_health(session, host, *, pin=None):
         return {"appVersion": "old"}
 
-    entry_data = {}
+    entry_data = {CONF_DEVICE_PROFILE: "portal_go"}
     if stored_token is not None:
         entry_data[CONF_HA_TOKEN] = stored_token
 
@@ -237,6 +367,7 @@ async def test_auto_credential_recovery_rotates_after_the_replacement_is_verifie
         return {"appVersion": "old"}
 
     entry_data = {
+        CONF_DEVICE_PROFILE: "portal_go",
         CONF_HA_TOKEN: "old-kiosk-token",
         CONF_HA_REFRESH_TOKEN_ID: "old-refresh",
         CONF_HA_TOKEN_OWNED: True,
@@ -277,7 +408,7 @@ async def test_press_retries_health_until_success_without_a_terminal_delay(hass)
         return {"appVersion": "old"}
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
-        ctx = await init_integration(hass)
+        ctx = await init_integration(hass, data={CONF_DEVICE_PROFILE: "portal_go"})
         ent_reg = er.async_get(hass)
         install_entry = next(
             entry
@@ -325,7 +456,7 @@ async def test_press_stops_health_retries_at_the_first_success(hass):
         return {"appVersion": "old"}
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
-        ctx = await init_integration(hass)
+        ctx = await init_integration(hass, data={CONF_DEVICE_PROFILE: "portal_go"})
         ent_reg = er.async_get(hass)
         install_entry = next(
             entry
@@ -374,7 +505,7 @@ async def test_press_cleans_up_installing_state_and_connection_after_install_fai
         return {"appVersion": "old"}
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
-        ctx = await init_integration(hass)
+        ctx = await init_integration(hass, data={CONF_DEVICE_PROFILE: "portal_go"})
         ent_reg = er.async_get(hass)
         install_entry = next(
             entry
@@ -446,7 +577,7 @@ async def test_press_succeeds_when_the_entry_coordinator_is_missing(hass):
         return {"appVersion": "old"}
 
     with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
-        ctx = await init_integration(hass)
+        ctx = await init_integration(hass, data={CONF_DEVICE_PROFILE: "portal_go"})
         ent_reg = er.async_get(hass)
         install_entry = next(
             entry

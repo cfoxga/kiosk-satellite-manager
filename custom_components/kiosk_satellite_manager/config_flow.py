@@ -97,7 +97,7 @@ from .const import (
 
 from .device_catalog import require_recipe, resolve_catalog_entry
 from .credentials import TokenCredential, async_revoke_owned_credential
-from .device_models import DeviceFacts
+from .device_models import DeviceFacts, collect_identity_facts
 from .install import install_and_launch
 from .ks_api_client import KsApiError, login
 from .provisioning import fetch_health
@@ -129,36 +129,6 @@ async def _async_probe_ks_health(
     if not isinstance(health, dict) or not health.get("appVersion"):
         return None
     return pin, health
-
-
-async def _collect_identity_facts(client) -> DeviceFacts:
-    """Read the allowlisted getprop identity facts the catalog matches on.
-
-    Each probe is independent: one unreadable property leaves that fact empty
-    rather than aborting discovery, and an empty fact never satisfies a match
-    constraint.
-    """
-
-    async def _prop(name: str) -> str:
-        try:
-            return (await client.getprop(name)).strip()
-        except Exception:  # noqa: BLE001 -- an unreadable prop is missing evidence
-            return ""
-
-    sdk_raw = await _prop("ro.build.version.sdk")
-    return DeviceFacts(
-        manufacturer=await _prop("ro.product.manufacturer"),
-        brand=await _prop("ro.product.brand"),
-        model=await _prop("ro.product.model"),
-        product=await _prop("ro.product.name"),
-        device=await _prop("ro.product.device"),
-        board=await _prop("ro.product.board"),
-        hardware=await _prop("ro.hardware"),
-        characteristics=await _prop("ro.build.characteristics"),
-        abi=await _prop("ro.product.cpu.abi"),
-        sdk=int(sdk_raw) if sdk_raw.isdigit() else 0,
-        fingerprint=await _prop("ro.build.fingerprint"),
-    )
 
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
@@ -959,7 +929,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
 
             try:
-                facts = await _collect_identity_facts(client)
+                facts = await collect_identity_facts(client)
                 sdk = facts.sdk
                 try:
                     android_release = await client.getprop("ro.build.version.release")

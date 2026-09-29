@@ -105,6 +105,33 @@ class DeviceFacts:
         )
 
 
+async def collect_identity_facts(client) -> DeviceFacts:
+    """Read the same allowlisted ADB identity facts for onboarding and repair.
+
+    A failed probe leaves its fact empty, which cannot satisfy a match rule.
+    """
+    async def prop(name: str) -> str:
+        try:
+            return (await client.getprop(name)).strip()
+        except Exception:  # noqa: BLE001 -- an unreadable prop is missing evidence
+            return ""
+
+    sdk_raw = await prop("ro.build.version.sdk")
+    return DeviceFacts(
+        manufacturer=await prop("ro.product.manufacturer"),
+        brand=await prop("ro.product.brand"),
+        model=await prop("ro.product.model"),
+        product=await prop("ro.product.name"),
+        device=await prop("ro.product.device"),
+        board=await prop("ro.product.board"),
+        hardware=await prop("ro.hardware"),
+        characteristics=await prop("ro.build.characteristics"),
+        abi=await prop("ro.product.cpu.abi"),
+        sdk=int(sdk_raw) if sdk_raw.isdigit() else 0,
+        fingerprint=await prop("ro.build.fingerprint"),
+    )
+
+
 @dataclass(frozen=True)
 class DeviceModel:
     """One exact hardware model/SKU."""
