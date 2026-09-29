@@ -689,6 +689,52 @@ async def test_KSM_TEST_270_declared_bound_services_detects_new_ks_listener(tmp_
         }
 
 
+async def test_KSM_TEST_273_notification_listener_readback_requires_active_binding(tmp_path):
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    component = "me.jxl.kiosk_satellite/.MediaSessionListener"
+    listed = "ComponentInfo{me.jxl.kiosk_satellite/me.jxl.kiosk_satellite.MediaSessionListener}\n"
+    active = listed + (
+        "ComponentInfo{me.jxl.kiosk_satellite/me.jxl.kiosk_satellite.MediaSessionListener} "
+        "(user 0): android.service.notification.INotificationListener$Stub$Proxy@12c356f\n"
+    )
+
+    async def listed_shell(command):
+        return "0" if command == "am get-current-user" else listed
+
+    async def active_shell(command):
+        return "0" if command == "am get-current-user" else active
+
+    with patch.object(client._device, "shell", new=AsyncMock(side_effect=listed_shell)):
+        assert await client.is_notification_listener_bound(component) is False
+    with patch.object(client._device, "shell", new=AsyncMock(side_effect=active_shell)):
+        assert await client.is_notification_listener_bound(component) is True
+
+
+async def test_KSM_TEST_273_notification_listener_for_another_user_is_not_granted(tmp_path):
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    component = "me.jxl.kiosk_satellite/.MediaSessionListener"
+    other_user_binding = (
+        "ComponentInfo{me.jxl.kiosk_satellite/me.jxl.kiosk_satellite.MediaSessionListener} "
+        "(user 10): android.service.notification.INotificationListener$Stub$Proxy@12c356f\n"
+    )
+
+    async def shell(command):
+        return "0" if command == "am get-current-user" else other_user_binding
+
+    with patch.object(client._device, "shell", new=AsyncMock(side_effect=shell)):
+        assert await client.is_notification_listener_bound(component) is False
+
+    async def unknown_user(command):
+        if command == "am get-current-user":
+            return "Error: current user unavailable"
+        return other_user_binding
+
+    with patch.object(client._device, "shell", new=AsyncMock(side_effect=unknown_user)):
+        assert await client.is_notification_listener_bound(component) is False
+
+
 async def test_declared_bound_services_empty_when_none_declared(tmp_path):
     key_path = ensure_adb_key(str(tmp_path / "keys"))
     client = AdbClient("1.2.3.4", 5555, key_path)

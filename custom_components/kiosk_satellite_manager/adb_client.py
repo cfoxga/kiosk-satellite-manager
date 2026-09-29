@@ -493,6 +493,30 @@ class AdbClient:
             if pkg == KS_PACKAGE
         }
 
+    async def is_notification_listener_bound(self, component: str) -> bool:
+        """Read Android's active listener binding, not its secure-setting hint.
+
+        A direct write to `enabled_notification_listeners` can appear to stick
+        while NotificationManager never binds the service. The active
+        `INotificationListener` line in `dumpsys notification` is the
+        postcondition observed on Android 9 and 10 Test Portals.
+        """
+        package, separator, service = component.partition("/")
+        if not separator or package != KS_PACKAGE or not service:
+            return False
+        if service.startswith("."):
+            service = f"{package}{service}"
+        current_user = (await self.shell("am get-current-user")).strip()
+        if not current_user.isdecimal():
+            return False
+        output = await self.shell("dumpsys notification")
+        binding = re.compile(
+            re.escape(f"ComponentInfo{{{package}/{service}}}")
+            + rf"\s+\(user {re.escape(current_user)}\): "
+            + r"android\.service\.notification\.INotificationListener"
+        )
+        return bool(binding.search(output))
+
     async def get_secure_setting(self, key: str) -> str:
         output = (await self.shell(f"settings get secure {key}")).strip()
         return "" if output == "null" else output

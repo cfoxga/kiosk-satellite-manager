@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fix Notification Access convergence on all recipes (#98). Install now grants
+  KS's declared listener through Android's notification command and verifies
+  that the service actually binds, instead of trusting a secure-setting entry
+  that can appear granted while the listener remains inactive.
+
 - Restore configuration no longer undoes itself on a second click (#100). The
   safety backup taken before a restore is now named `..._pre-restore_...`,
   stays listed and selectable, but is never the default: the Configuration

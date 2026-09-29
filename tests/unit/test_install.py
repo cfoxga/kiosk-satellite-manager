@@ -1033,20 +1033,43 @@ async def test_KSM_TEST_270_notification_access_converges_for_every_recipe(recip
     client = _converging_client()
     client.granted_permissions = AsyncMock(return_value=set(recipe.permissions_for_sdk(34)))
     component = "me.jxl.kiosk_satellite/.MediaSessionListener"
-    existing = "com.google.android.apps.tv.launcherx/.TvNotificationListenerService"
     client.declared_bound_services = AsyncMock(return_value={
         "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE": component,
     })
-    state = {"enabled_notification_listeners": existing}
-    client.get_secure_setting = AsyncMock(side_effect=lambda key: state.get(key, ""))
-
-    async def put(key, value):
-        state[key] = value
-
-    client.put_secure_setting = AsyncMock(side_effect=put)
+    client.is_notification_listener_bound = AsyncMock(side_effect=[False, True])
     result = await converge_permissions(client, sdk=34, recipe=recipe)
     assert result.notification_listener == "granted"
-    assert set(state["enabled_notification_listeners"].split(":")) == {existing, component}
+    assert any(
+        call.args[0] == f"cmd notification allow_listener {component}"
+        for call in client.shell.await_args_list
+    )
+    client.put_secure_setting.assert_not_awaited()
+
+
+async def test_KSM_TEST_273_secure_setting_alone_cannot_claim_notification_access():
+    client = _converging_client()
+    component = "me.jxl.kiosk_satellite/.MediaSessionListener"
+    client.declared_bound_services = AsyncMock(return_value={
+        "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE": component,
+    })
+    client.get_secure_setting = AsyncMock(return_value=component)
+    client.is_notification_listener_bound = AsyncMock(return_value=False)
+    result = await converge_permissions(client, sdk=29, recipe=PORTAL_RECIPE)
+    assert result.notification_listener == "needs_user_interaction"
+    assert result.fully_converged is False
+
+
+async def test_KSM_TEST_273_bound_notification_listener_is_left_alone():
+    client = _converging_client()
+    component = "me.jxl.kiosk_satellite/.MediaSessionListener"
+    client.declared_bound_services = AsyncMock(return_value={
+        "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE": component,
+    })
+    client.is_notification_listener_bound = AsyncMock(return_value=True)
+    result = await converge_permissions(client, sdk=29, recipe=PORTAL_RECIPE)
+    assert result.notification_listener == "granted"
+    assert not any("cmd notification allow_listener" in c.args[0] for c in client.shell.await_args_list)
+    client.put_secure_setting.assert_not_awaited()
 
 
 # KSM-BEHAVE-046 (Phase 5, "functional verification"): verify_functional_capabilities

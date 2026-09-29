@@ -152,6 +152,24 @@ async def _converge_consent_service(
     return "granted"
 
 
+async def _converge_notification_listener(
+    client: AdbClient, declared: dict[str, str]
+) -> str:
+    """Use NotificationManager's grant path and verify the active binding."""
+    component = declared.get(_BIND_NOTIFICATION_LISTENER_SERVICE)
+    if component is None:
+        return "not_applicable"
+    if await client.is_notification_listener_bound(component):
+        return "granted"
+    await client.shell(f"cmd notification allow_listener {component}")
+    for attempt in range(3):
+        if await client.is_notification_listener_bound(component):
+            return "granted"
+        if attempt < 2:
+            await asyncio.sleep(0.25)
+    return "needs_user_interaction"
+
+
 async def converge_permissions(
     client: AdbClient, sdk: int, recipe: InstallRecipe
 ) -> PermissionConvergenceResult:
@@ -190,13 +208,7 @@ async def converge_permissions(
         _BIND_ACCESSIBILITY_SERVICE,
         declared,
     )
-    notification_listener = await _converge_consent_service(
-        client,
-        "enabled_notification_listeners",
-        None,
-        _BIND_NOTIFICATION_LISTENER_SERVICE,
-        declared,
-    )
+    notification_listener = await _converge_notification_listener(client, declared)
 
     result = PermissionConvergenceResult(
         granted_permissions=granted_permissions,
