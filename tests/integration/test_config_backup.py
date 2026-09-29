@@ -317,10 +317,60 @@ async def test_restore_imports_selected_backup_with_current_credentials(
     assert sent["settings"]["remote.password"] == "live-pw"
     assert sent["settings"]["ha.token"] == "live-token"
     assert ks_api.imp.await_args.kwargs == {"pin": None}
-    # The pre-restore safety backup of zoom=3 exists and is now the newest option.
-    pre = f"{slug}_2026-09-28_12-00-00.json"
+    # The pre-restore safety backup of zoom=3 exists, listed first but not the default.
+    pre = f"{slug}_pre-restore_2026-09-28_12-00-00.json"
     assert pre in _files(hass, entry)
     assert hass.states.get(select).attributes["options"][0] == pre
+    assert hass.states.get(select).state == older
+
+
+async def test_second_restore_never_imports_the_safety_backup(
+    hass, config_dir, ks_api, clock, request
+):
+    """[KSM-TEST-272] The pre-restore safety file is never the default restore source."""
+    entry = await _device(hass)
+    health = patch(_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.1"}))
+    health.start()
+    request.addfinalizer(health.stop)
+    select = _entity(hass, entry, "config_backup")
+    restore = _entity(hass, entry, "restore_config")
+    slug = config_backup.slugify(entry.title)
+    ks_api.export.return_value = _export(**{"fleet.followers": "[roster]"})
+    await _press(hass, _entity(hass, entry, "backup_config"))
+    good = f"{slug}_2026-09-28_10-00-00.json"
+
+    clock.advance(hours=1)  # device was factory reset: no roster now
+    ks_api.export.return_value = _export(**{"fleet.followers": ""})
+    await _press(hass, restore)
+    pre = f"{slug}_pre-restore_2026-09-28_11-00-00.json"
+    assert pre in _files(hass, entry)
+    assert hass.states.get(select).state == good
+    assert ks_api.imp.await_args.args[3]["settings"]["fleet.followers"] == "[roster]"
+
+    clock.advance(hours=1)
+    await _press(hass, restore)  # second click, nothing chosen
+    assert ks_api.imp.await_count == 2
+    assert [f for f in _files(hass, entry) if "pre-restore" in f] == [pre]  # equal state: no new copy
+    assert ks_api.imp.await_args.args[3]["settings"]["fleet.followers"] == "[roster]"
+
+    # Safety state equal to the newest backup: no extra safety file, predecessor kept.
+    clock.advance(hours=1)
+    ks_api.export.return_value = _export(**{"fleet.followers": "[roster]"})
+    await _press(hass, _entity(hass, entry, "backup_config"))  # regular backup, newest again
+    regular = [f for f in _files(hass, entry) if "pre-restore" not in f]
+    before = set(_files(hass, entry))
+    clock.advance(hours=1)
+    await _press(hass, restore)  # live state equals the newest regular backup
+    assert set(_files(hass, entry)) == before
+    assert regular and all(f in _files(hass, entry) for f in regular)
+
+    # Only safety backups left: Restore with no choice refuses.
+    for name in _files(hass, entry):
+        if "pre-restore" not in name:
+            (config_backup.backup_dir(hass, entry) / name).unlink()
+    config_backup.set_selected_backup(hass, entry, None)
+    with pytest.raises(HomeAssistantError, match="no configuration backup"):
+        await config_backup.async_restore_entry(hass, entry)
 
 
 async def test_restore_failures_and_select_rejects_unknown_option(

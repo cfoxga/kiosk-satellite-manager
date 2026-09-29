@@ -42,6 +42,7 @@ class KioskSatelliteConfigBackupSelect(SelectEntity):
         self._attr_unique_id = f"{entry.entry_id}_config_backup"
         self._attr_options = []
         self._attr_current_option = None
+        self._newest_regular: str | None = None
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
@@ -65,9 +66,14 @@ class KioskSatelliteConfigBackupSelect(SelectEntity):
             config_backup.list_backups, config_backup.backup_dir(self.hass, self._entry)
         )
         self._attr_options = [p.name for p in backups]
-        # A new backup becomes the default; a pruned choice falls back to it.
-        if write or self._attr_current_option not in self._attr_options:
-            self._attr_current_option = self._attr_options[0] if self._attr_options else None
+        # A new regular backup becomes the default; a pruned choice falls back
+        # to it. A pre-restore safety copy is never the default (#100).
+        newest = config_backup.default_backup(self._attr_options)
+        if (write and newest != self._newest_regular) or (
+            self._attr_current_option not in self._attr_options
+        ):
+            self._attr_current_option = newest
+        self._newest_regular = newest
         config_backup.set_selected_backup(self.hass, self._entry, self._attr_current_option)
         if write:
             self.async_write_ha_state()

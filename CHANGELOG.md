@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Restore configuration no longer undoes itself on a second click (#100). The
+  safety backup taken before a restore is now named `..._pre-restore_...`,
+  stays listed and selectable, but is never the default: the Configuration
+  backup select and Restore with nothing chosen use the newest regular
+  backup. A safety copy equal to the newest backup is not written.
+
 - Recognize Android 14 onn 4K Pro devices by their live-confirmed model and
   assign a dedicated provisioning recipe (#98). All recipes converge KS
   Notification Access when the installed app declares its listener service;

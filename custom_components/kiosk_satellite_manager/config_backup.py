@@ -51,6 +51,7 @@ EXPORT_KIND = "kiosk-satellite-config"
 # device's current values so an old backup cannot lock KSM out or revive a
 # token KSM has since rotated.
 LIVE_CREDENTIAL_KEYS = ("remote.password", "ha.token")
+SAFETY_MARK = "pre-restore"
 _STAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
 _NAME_RE = re.compile(r"^.+_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.json$")
 _ERRORS = (KsApiError, aiohttp.ClientError, asyncio.TimeoutError)
@@ -84,6 +85,17 @@ def list_backups(directory: Path) -> list[Path]:
     return [p for _, p in sorted(dated, reverse=True)]
 
 
+def is_safety(backup: Path | str) -> bool:
+    """A pre-restore safety copy, never a default restore source (#100)."""
+    name = backup.name if isinstance(backup, Path) else backup
+    return f"_{SAFETY_MARK}_" in name
+
+
+def default_backup(backups: list) -> "Path | str | None":
+    """The newest backup that is not a pre-restore safety copy."""
+    return next((b for b in backups if not is_safety(b)), None)
+
+
 def _comparable(payload: dict) -> str:
     return json.dumps(
         {k: v for k, v in payload.items() if k != "exportedAt"}, sort_keys=True
@@ -96,10 +108,22 @@ def _manager_options(hass: HomeAssistant) -> dict:
     return dict(entry.options) if entry is not None else {}
 
 
-def _write_backup(directory: Path, name: str, payload: dict, keep: int) -> Path:
-    """Write, collapse an identical predecessor, trim to `keep` (executor)."""
+def _write_backup(
+    directory: Path, name: str, payload: dict, keep: int, safety: bool = False
+) -> Path:
+    """Write, collapse an identical predecessor, trim to `keep` (executor).
+
+    A safety copy equal to the newest file is not written at all: collapsing
+    would replace that regular backup with a file the default skips."""
     existing = list_backups(directory)
     directory.mkdir(parents=True, exist_ok=True)
+    if safety and existing:
+        try:
+            previous = json.loads(existing[0].read_text())
+        except (OSError, ValueError):
+            previous = None
+        if isinstance(previous, dict) and _comparable(previous) == _comparable(payload):
+            return existing[0]
     path = directory / name
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as handle:
@@ -160,13 +184,16 @@ async def _export(hass: HomeAssistant, entry: ConfigEntry) -> dict:
     return payload
 
 
-async def _async_backup(hass: HomeAssistant, entry: ConfigEntry) -> tuple[Path, dict]:
+async def _async_backup(
+    hass: HomeAssistant, entry: ConfigEntry, safety: bool = False
+) -> tuple[Path, dict]:
     async with _entry_lock(hass, entry):
         payload = await _export(hass, entry)
         keep = int(_manager_options(hass).get(CONF_BACKUP_KEEP, DEFAULT_BACKUP_KEEP))
-        name = f"{slugify(entry.title)}_{_now().strftime(_STAMP_FORMAT)}.json"
+        mark = f"{SAFETY_MARK}_" if safety else ""
+        name = f"{slugify(entry.title)}_{mark}{_now().strftime(_STAMP_FORMAT)}.json"
         path = await hass.async_add_executor_job(
-            _write_backup, backup_dir(hass, entry), name, payload, keep
+            _write_backup, backup_dir(hass, entry), name, payload, keep, safety
         )
     async_dispatcher_send(hass, SIGNAL_BACKUPS_CHANGED, entry.entry_id)
     return path, payload
@@ -185,7 +212,7 @@ async def async_restore_entry(
     directory = backup_dir(hass, entry)
     backups = await hass.async_add_executor_job(list_backups, directory)
     if filename is None:
-        source = backups[0] if backups else None
+        source = default_backup(backups)
     else:
         source = next((p for p in backups if p.name == filename), None)
     if source is None:
@@ -200,7 +227,7 @@ async def async_restore_entry(
         raise HomeAssistantError(f"{source.name} is not a Kiosk Satellite configuration backup")
 
     # Safety net first; that export supplies the live credentials too.
-    _, current = await _async_backup(hass, entry)
+    _, current = await _async_backup(hass, entry, safety=True)
     settings = dict(payload.get("settings") or {})
     for key in LIVE_CREDENTIAL_KEYS:
         if key in current["settings"]:
