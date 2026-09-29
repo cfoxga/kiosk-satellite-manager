@@ -41,6 +41,14 @@ _KEY_STEPS = frozenset({"encryption_key", "reauth_confirm"})
 _MAX_FLOW_STEPS = 6
 
 
+def _shows_node(shown: str | None, node_name: str) -> bool:
+    """HA titles a discovery "<friendly name> (<node>)", or just the node."""
+    if not shown:
+        return False
+    shown, node = shown.lower(), node_name.lower()
+    return shown == node or shown.endswith(f"({node})")
+
+
 async def _poll(check: Callable[[], Awaitable], timeout: float):
     """The first truthy result of `check`, or None once `timeout` passes."""
     loop = asyncio.get_running_loop()
@@ -115,7 +123,7 @@ async def async_adopt(
         async def find_flow() -> dict | None:
             for flow in hass.config_entries.flow.async_progress_by_handler(ESPHOME_DOMAIN):
                 shown = (flow.get("context", {}).get("title_placeholders") or {}).get("name")
-                if shown and shown.lower() == node_name.lower():
+                if _shows_node(shown, node_name):
                     return flow
             return None
 

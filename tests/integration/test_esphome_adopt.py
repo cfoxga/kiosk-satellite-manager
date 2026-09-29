@@ -145,6 +145,24 @@ async def test_adopt_leaves_settings_that_are_already_right(hass, ks):
     patch_settings.assert_not_awaited()
 
 
+@pytest.mark.parametrize("shown", [f"Great Room Kiosk ({NODE})", f"great room kiosk ({NODE.upper()})"])
+async def test_a_discovery_titled_with_a_friendly_name_is_matched(hass, ks, shown):
+    """[KSM-TEST-263] HA titles a discovery "<friendly name> (<node>)" when the
+    device advertises a friendly name; the node in parentheses must still match."""
+    flows = FakeFlows(hass, [_flow(shown)], [_form("encryption_key"), _created(hass)])
+    flows.install()
+    assert await _adopt(hass) == esphome_adopt.ADDED
+    assert flows.configured[0][0] == "f1"
+
+
+async def test_a_node_name_that_only_prefixes_another_is_not_matched(hass, ks):
+    """[KSM-TEST-263] Negative control: the parenthesised part must equal the node."""
+    flows = FakeFlows(hass, [_flow(f"Other ({NODE}-2)", flow_id="other")], [])
+    flows.install()
+    assert await _adopt(hass) == esphome_adopt.DISCOVERY_TIMEOUT
+    assert flows.configured == []
+
+
 async def test_a_key_that_never_appears_times_out_without_touching_a_flow(hass, ks):
     """[KSM-TEST-262] Negative: no `btproxy.key` -> key_timeout, no flow
     configured."""
