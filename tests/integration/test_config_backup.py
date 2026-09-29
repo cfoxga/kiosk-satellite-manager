@@ -2,28 +2,35 @@
 kiosk-satellite-manager#69)."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import stat
+from types import MappingProxyType, SimpleNamespace
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
 import voluptuous as vol
 from homeassistant import data_entry_flow
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.kiosk_satellite_manager import config_backup
+from custom_components.kiosk_satellite_manager import config_backup, fleet
 from custom_components.kiosk_satellite_manager.const import (
     CONF_BACKUP_INTERVAL_HOURS,
     CONF_BACKUP_KEEP,
+    CONF_ENTRY_TYPE,
     CONF_HA_URL,
     CONF_TOKEN_MODE,
     DOMAIN,
     TOKEN_MODE_AUTO,
 )
 from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
+from custom_components.kiosk_satellite_manager.button import KioskSatelliteBackupAllButton
 
 from .conftest import init_integration
 from .test_global_settings import _entity, _manager
@@ -396,3 +403,85 @@ async def test_restore_failures_and_select_rejects_unknown_option(
     ks_api.imp.side_effect = KsApiError("import rejected")
     with pytest.raises(HomeAssistantError, match="import rejected"):
         await _press(hass, _entity(hass, entry, "restore_config"))
+
+
+async def test_manager_backup_all_names_settings_and_backs_up_every_loaded_device(
+    hass, config_dir, ks_api, clock
+):
+    """[KSM-TEST-274] Existing manager renamed; all devices backed up once."""
+    manager = await _manager(hass)  # fixture models an existing title
+    assert manager.title == "KSM Settings"
+    manager_device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, manager.entry_id), manager.entry_id)
+    assert manager_device.name == "KSM Settings"
+    first = await _device(hass)
+    second = await _device(hass, data={"host": "192.168.99.100"})
+    await _press(hass, _entity(hass, manager, "backup_all"))
+    assert len(_files(hass, first)) == len(_files(hass, second)) == 1
+    assert ks_api.export.await_count == 2
+
+
+async def test_manager_backup_all_continues_after_one_device_fails(
+    hass, config_dir, ks_api, clock
+):
+    """[KSM-TEST-274] One failed export does not prevent another backup."""
+    manager = await _manager(hass)
+    first = await _device(hass)
+    second = await _device(hass, data={"host": "192.168.99.100"})
+    ks_api.export.side_effect = [KsApiError("offline"), _export()]
+    with pytest.raises(HomeAssistantError, match="offline"):
+        await _press(hass, _entity(hass, manager, "backup_all"))
+    assert ks_api.export.await_count == 2
+    assert len(_files(hass, first)) + len(_files(hass, second)) == 1
+
+
+async def test_manager_backup_all_includes_fleet_subentry_once(hass, config_dir, ks_api, clock):
+    """[KSM-TEST-274] Fleet subentries resolve as physical devices once."""
+    manager = await _manager(hass)
+    parent = MockConfigEntry(
+        domain=DOMAIN, title="Fleet - Office", data={CONF_ENTRY_TYPE: "fleet", "leader_id": "ks-1"},
+    )
+    parent.add_to_hass(hass)
+    hass.config_entries.async_add_subentry(parent, ConfigSubentry(
+        data=MappingProxyType({"host": "192.168.99.101", "password": "synthetic-test-password"}),
+        subentry_id="office-kiosk", subentry_type="device", title="Office Kiosk",
+        unique_id="office-kiosk",
+    ))
+    hass.data.setdefault(DOMAIN, {})["office-kiosk"] = SimpleNamespace(last_update_success=False)
+    await _press(hass, _entity(hass, manager, "backup_all"))
+    [device] = fleet.device_entries(hass, parent)
+    assert len(_files(hass, device)) == 1
+    assert ks_api.export.await_count == 1
+
+
+async def test_existing_manager_device_name_is_migrated(hass):
+    """[KSM-TEST-274] Existing registry record and entry keep their IDs."""
+    manager = MockConfigEntry(
+        domain=DOMAIN, title="Kiosk Satellite Manager", unique_id="ksm_manager",
+        data={CONF_ENTRY_TYPE: "manager"},
+    )
+    manager.add_to_hass(hass)
+    registry = dr.async_get(hass)
+    old = registry.async_get_or_create(
+        config_entry_id=manager.entry_id, identifiers={(DOMAIN, manager.entry_id)},
+        name="Kiosk Satellite Manager",
+    )
+    assert await hass.config_entries.async_setup(manager.entry_id)
+    assert manager.title == "KSM Settings"
+    new = registry.async_get_device_by_identifier((DOMAIN, manager.entry_id), manager.entry_id)
+    assert new.id == old.id and new.name == "KSM Settings"
+
+
+async def test_manager_backup_all_propagates_cancellation(hass):
+    """[KSM-TEST-274] Cancellation never appears as a successful backup."""
+    manager = await _manager(hass)
+    await _device(hass)
+    with patch.object(config_backup, "async_backup_entry", new=AsyncMock(side_effect=asyncio.CancelledError)):
+        with pytest.raises(asyncio.CancelledError):
+            await KioskSatelliteBackupAllButton(hass, manager).async_press()
+
+
+async def test_manager_backup_all_with_no_devices_makes_no_export(hass, ks_api):
+    """[KSM-TEST-274] The manager is never a backup target."""
+    manager = await _manager(hass)
+    await _press(hass, _entity(hass, manager, "backup_all"))
+    ks_api.export.assert_not_awaited()

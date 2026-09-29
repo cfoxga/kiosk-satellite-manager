@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Rename the manager entry and device to **KSM Settings** and add **Backup All**
+  (#101). The button saves each loaded device's configuration through its
+  existing backup path and reports failures without stopping other backups.
+
 - Fix Notification Access convergence on all recipes (#98). Install now grants
   KS's declared listener through Android's notification command and verifies
   that the service actually binds, instead of trusting a secure-setting entry

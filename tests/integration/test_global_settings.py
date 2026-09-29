@@ -76,6 +76,7 @@ async def test_manager_entry_auto_created_when_missing(hass, release_check):
             if e.data.get(CONF_ENTRY_TYPE) == "manager"
         ]
         assert len(managers) == 1
+        assert managers[0].title == "KSM Settings"
         manager_entities = er.async_entries_for_config_entry(
             er.async_get(hass), managers[0].entry_id
         )
@@ -99,6 +100,7 @@ async def test_manager_flow_is_unique_and_device_flow_stays_available(hass):
         result["flow_id"], {"entry_type": "manager"}
     )
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert result["title"] == "KSM Settings"
     entry = MockConfigEntry(domain=DOMAIN, data=result["data"], unique_id="ksm_manager")
     entry.add_to_hass(hass)
     result = await hass.config_entries.flow.async_init(

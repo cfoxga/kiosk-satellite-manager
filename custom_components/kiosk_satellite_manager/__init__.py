@@ -38,6 +38,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -483,6 +484,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up a config entry: start the health-poll coordinator, then the
     button/sensor/switch/update platforms."""
     if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MANAGER:
+        # Migrate existing manager entries in place, retaining their stable ID.
+        if entry.title != "KSM Settings":
+            hass.config_entries.async_update_entry(entry, title="KSM Settings")
         if not any(
             other.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_UNMANAGED
             for other in hass.config_entries.async_entries(DOMAIN)
@@ -496,6 +500,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.async_on_unload(entry.add_update_listener(_async_manager_options_updated))
         entry.async_on_unload(follower_updates.async_setup(hass))
         await hass.config_entries.async_forward_entry_setups(entry, MANAGER_PLATFORMS)
+        device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, entry.entry_id), entry.entry_id)
+        if device is not None and device.name != "KSM Settings":
+            dr.async_get(hass).async_update_device(device.id, name="KSM Settings")
 
         async def _backup_tick(_now) -> None:
             # KSM-BEHAVE-105: filename dates decide what is due, not this timer.

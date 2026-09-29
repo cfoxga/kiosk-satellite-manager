@@ -862,7 +862,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(MANAGER_UNIQUE_ID)
         self._abort_if_unique_id_configured()
         return self.async_create_entry(
-            title="Kiosk Satellite Manager", data={CONF_ENTRY_TYPE: ENTRY_TYPE_MANAGER}
+            title="KSM Settings", data={CONF_ENTRY_TYPE: ENTRY_TYPE_MANAGER}
         )
 
     async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
@@ -875,7 +875,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(MANAGER_UNIQUE_ID)
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
-                    title="Kiosk Satellite Manager", data={CONF_ENTRY_TYPE: ENTRY_TYPE_MANAGER}
+                    title="KSM Settings", data={CONF_ENTRY_TYPE: ENTRY_TYPE_MANAGER}
                 )
             if not user_input.get(CONF_HOST):
                 errors[CONF_HOST] = "host_required"

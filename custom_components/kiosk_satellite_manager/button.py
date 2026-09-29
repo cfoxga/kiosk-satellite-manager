@@ -79,6 +79,7 @@ async def async_setup_entry(
         async_add_entities(
             [
                 KioskSatelliteUpdateAllButton(hass, entry),
+                KioskSatelliteBackupAllButton(hass, entry),
                 KioskSatelliteCheckForUpdatesButton(hass, entry),
             ]
         )
@@ -287,6 +288,41 @@ class KioskSatelliteRestoreConfigButton(ButtonEntity):
         await config_backup.async_restore_entry(
             self.hass, self._entry, config_backup.selected_backup(self.hass, self._entry)
         )
+
+
+class KioskSatelliteBackupAllButton(ButtonEntity):
+    """KSM-BEHAVE-140: back up every loaded physical device once."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Backup All"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        self.hass = hass
+        self._attr_unique_id = f"{entry.entry_id}_backup_all"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)}, name=entry.title
+        )
+
+    async def async_press(self) -> None:
+        devices = [
+            device for entry_id in tuple(self.hass.data.get(DOMAIN, {}))
+            if (device := fleet.resolve_device(self.hass, entry_id)) is not None
+        ]
+        results = await asyncio.gather(
+            *(config_backup.async_backup_entry(self.hass, device) for device in devices),
+            return_exceptions=True,
+        )
+        failed = [
+            f"{device.title}: {result}"
+            for device, result in zip(devices, results)
+            if isinstance(result, Exception)
+        ]
+        if failed:
+            raise HomeAssistantError("Backup All failed on " + "; ".join(failed))
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
 
 class KioskSatelliteUpdateAllButton(ButtonEntity):
