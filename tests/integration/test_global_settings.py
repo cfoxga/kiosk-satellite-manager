@@ -253,7 +253,7 @@ async def test_update_all_skips_unreachable_installing_and_ha_skipped(hass, rele
 
 async def test_manager_options_mask_password_preserve_blank_and_reject_bad_url(hass):
     """[KSM-TEST-142] Secret edits preserve blank and URL must be absolute HTTP(S)."""
-    manager = await _manager(hass, options={CONF_PASSWORD: "saved-secret"})
+    manager = await _manager(hass, options={CONF_PASSWORD: "saved-secret", "home_launcher": True})
     result = await hass.config_entries.options.async_init(manager.entry_id)
     assert result["step_id"] == "init"
     password_field = next(k for k in result["data_schema"].schema if k == CONF_PASSWORD)
@@ -271,6 +271,7 @@ async def test_manager_options_mask_password_preserve_blank_and_reject_bad_url(h
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert manager.options[CONF_PASSWORD] == "saved-secret"
     assert manager.options[CONF_HA_URL] == "https://ha.example.test"
+    assert "home_launcher" not in manager.options
     assert "ha_token" not in manager.options
 
 

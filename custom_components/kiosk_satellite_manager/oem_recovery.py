@@ -3,7 +3,7 @@
 Keyed on `device_models.DeviceModel.model_key` -- the *exact* model, never a
 fallback classification and never an install recipe. Destructive qualification
 does not inherit through a shared install recipe: Portal Go and Portal Mini both
-run `meta_portal_standard:v2`, and Portal Mini's live-confirmed Test Harness
+run `meta_portal`, and Portal Mini's live-confirmed Test Harness
 behavior still qualifies only Portal Mini (KSM-BEHAVE-052).
 `device_catalog.validate_catalog` enforces that every key below is a real model.
 

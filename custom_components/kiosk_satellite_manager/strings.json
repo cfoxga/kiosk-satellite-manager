@@ -13,10 +13,9 @@
       },
       "device_info": {
         "title": "Configure Kiosk Satellite device",
-        "description": "Detected device type: {device_model}\nAndroid version: {android_version}\n\nHome Assistant will collect this device's Name and Area on its next screen. The password is set as Kiosk Satellite's own admin password once it is installed, and used to connect it to this Home Assistant instance automatically.\n\nNote: If \"Enable as Default Launcher\" is enabled, Android requires you to select Kiosk Satellite as the default home app on the device screen when prompted.",
+        "description": "Detected device type: {device_model}\nAndroid version: {android_version}\n\nHome Assistant will collect this device's Name and Area on its next screen. The password is set as Kiosk Satellite's own admin password once it is installed, and used to connect it to this Home Assistant instance automatically.",
         "data": {
           "password": "Admin password",
-          "home_launcher": "Enable as Default Launcher",
           "token_mode": "Home Assistant access token",
           "ha_url": "Home Assistant URL",
           "auto_update": "Auto-update on this device",
@@ -24,7 +23,6 @@
         },
         "data_description": {
           "password": "Admin password for Kiosk Satellite's Web UI.",
-          "home_launcher": "Important: Enabling Kiosk Satellite as the default launcher requires selecting it on the device screen when prompted (or in Android Settings -> Default apps).",
           "enable_device_owner": "Off by default. After installing, check whether Kiosk Satellite can become Device Owner and ask you to confirm before anything changes. Device Owner lets it make itself the Home screen and update silently, but can only be undone by a factory reset."
         }
       },
@@ -37,7 +35,7 @@
       },
       "existing_device_info": {
         "title": "Connect Kiosk Satellite Manager",
-        "description": "Kiosk Satellite is already installed, so its Home Launcher and Home Assistant token settings will be left unchanged. Enter its existing Web UI password so Kiosk Satellite Manager can connect to port 2324 when needed. Home Assistant will collect this device's Name and Area on its next screen.",
+        "description": "Kiosk Satellite is already installed, so its own Home settings and Home Assistant token will be left unchanged. Enter its existing Web UI password so Kiosk Satellite Manager can connect to port 2324 when needed. Home Assistant will collect this device's Name and Area on its next screen.",
         "data": {
           "password": "Existing Password",
           "ha_url": "Home Assistant URL",
@@ -62,7 +60,7 @@
       },
       "confirm": {
         "title": "Confirm device onboarding",
-        "description": "Device: {device}\nInstall action: {action}\nHome launcher: {launcher}\nHome Assistant URL: {ha_url}\n\nConfirm to apply these settings.",
+        "description": "Device: {device}\nInstall action: {action}\nHome Assistant URL: {ha_url}\n\nConfirm to apply these settings.",
         "data": {}
       },
       "onboard_device_owner": {
@@ -74,7 +72,7 @@
       }
     },
     "progress": {
-      "installing": "Installing Kiosk Satellite and connecting it to Home Assistant. If Home Launcher was selected, please watch the device screen to confirm Kiosk Satellite as your default home app."
+      "installing": "Installing Kiosk Satellite and connecting it to Home Assistant."
     },
     "error": {
       "cannot_connect": "Failed to connect to the device",
@@ -122,7 +120,6 @@
         "description": "Install version and backup settings apply to every device now; the other settings apply to future devices only. Leave the password empty to retain it. A backup period of 0 turns automatic backups off.",
         "data": {
           "existing_install_action": "Existing installation",
-          "home_launcher": "Enable home launcher",
           "auto_update": "Auto-update new devices",
           "esphome_new_devices": "Turn on ESPHome on new devices",
           "password": "Kiosk Satellite password",

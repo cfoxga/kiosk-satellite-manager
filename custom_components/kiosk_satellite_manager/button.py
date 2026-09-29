@@ -34,7 +34,6 @@ from .const import (
     CONF_HA_TOKEN,
     CONF_HA_URL,
     CONF_TOKEN_MODE,
-    CONF_HOME_LAUNCHER,
     CONF_HOST,
     CONF_KEY_PATH,
     CONF_NAME,
@@ -145,7 +144,6 @@ async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 # are never replaced or revoked.
                 ha_token=None if rotate_managed_credential else (credential.access_token if credential else None),
                 token_credential=None if rotate_managed_credential else credential,
-                home_launcher=entry.data.get(CONF_HOME_LAUNCHER, True),
                 device_model=entry.data.get(CONF_DEVICE_PROFILE),
                 ha_url=entry.data.get(CONF_HA_URL),
                 on_tls_pinned=lambda pin: _store_tls_pin(hass, entry, pin),

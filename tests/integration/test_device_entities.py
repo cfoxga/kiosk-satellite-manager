@@ -47,12 +47,9 @@ async def test_device_type_recipe_and_ip_for_a_supported_model(hass):
 
     recipe = require_recipe("portal_go")
     recipe_state = _state(hass, ctx.entry, "recipe")
-    assert recipe_state.state == f"{recipe.recipe_key} {recipe.version}"
-    # recipe versions carry their own "v"; never render "vv3"
-    assert recipe.version.startswith("v")
-    assert " vv" not in recipe_state.state
+    assert recipe_state.state == recipe.recipe_key
     assert recipe_state.attributes["recipe_key"] == recipe.recipe_key
-    assert recipe_state.attributes["recipe_version"] == recipe.version
+    assert "recipe_version" not in recipe_state.attributes
     assert recipe_state.attributes["recipe_name"] == recipe.name
 
     assert _state(hass, ctx.entry, "ip_address").state == "192.168.40.224"

@@ -16,7 +16,7 @@ from custom_components.kiosk_satellite_manager.install_recipes import (
 
 
 def _recipe(**overrides):
-    base = get_recipe("meta_portal_standard", "v2")
+    base = get_recipe("meta_portal")
     return dataclasses.replace(base, **overrides)
 
 
@@ -28,7 +28,18 @@ def test_every_shipped_recipe_validates():
         validate_recipe(recipe)
 
 
-def test_recipe_keys_and_versions_are_unique():
+def test_native_ks_owns_home_settings_and_portals_share_one_recipe():
+    """[KSM-TEST-257] KSM neither versions Portal recipes nor owns KS Home."""
+    portal_recipes = [r for r in INSTALL_RECIPES if r.recipe_key.startswith("meta_portal")]
+    assert len(portal_recipes) == 1
+    portal = portal_recipes[0]
+    assert portal.recipe_key == "meta_portal"
+    assert not hasattr(portal, "version")
+    assert not hasattr(portal, "home_launcher_supported")
+    assert "home.enabled" not in dict(portal.parameters)
+
+
+def test_recipe_keys_are_unique():
     identities = [r.identity for r in INSTALL_RECIPES]
     assert len(identities) == len(set(identities))
 
@@ -55,6 +66,19 @@ def test_recipe_rejects_arbitrary_shell_text_smuggled_into_a_typed_field():
     assert "device_name_source" in str(err.value)
 
 
+def test_recipe_validator_rejects_a_new_command_field(monkeypatch):
+    """[KSM-TEST-056] A future schema edit cannot expose shell commands."""
+    from custom_components.kiosk_satellite_manager.install_recipes import InstallRecipe
+
+    monkeypatch.setattr(
+        InstallRecipe,
+        "__dataclass_fields__",
+        {**InstallRecipe.__dataclass_fields__, "command": InstallRecipe.__dataclass_fields__["recipe_key"]},
+    )
+    with pytest.raises(RecipeError, match="field 'command'"):
+        validate_recipe(_recipe())
+
+
 def test_recipe_rejects_an_unknown_typed_parameter():
     bad = _recipe(parameters=(("arbitrary_payload", "anything"),))
     with pytest.raises(RecipeError):
@@ -79,10 +103,9 @@ def test_recipes_are_immutable():
         recipe.start_url_path = "/nope"  # type: ignore[misc]
 
 
-def test_portal_standard_recipe_reproduces_the_pre_catalog_portal_behavior():
-    """KSM-TEST-063 (unit half): the migrated recipe must resolve the exact
-    permission/appop/launcher/name behavior `DeviceProfile` shipped."""
-    recipe = get_recipe("meta_portal_standard", "v2")
+def test_portal_recipe_retains_permissions_and_naming():
+    """KSM-TEST-063: Portal permission/AppOp/name behavior remains shared."""
+    recipe = get_recipe("meta_portal")
     perms = recipe.permissions_for_sdk(29)
     assert perms == [
         "android.permission.RECORD_AUDIO",
@@ -102,44 +125,30 @@ def test_portal_standard_recipe_reproduces_the_pre_catalog_portal_behavior():
     assert "android.permission.MANAGE_EXTERNAL_STORAGE" not in perms
     assert recipe.appops_for_sdk(30)[-1] == "MANAGE_EXTERNAL_STORAGE"
     assert recipe.start_url_path == "/portal"
-    assert recipe.home_launcher_supported is True
     assert recipe.device_name_source == "secure:bluetooth_name"
     assert recipe.device_name_command == "settings get secure bluetooth_name"
     assert recipe.sets_device_admin is True
 
 
 def test_sdk_33_portal_adds_the_modern_media_and_notification_permissions():
-    perms = get_recipe("meta_portal_standard", "v2").permissions_for_sdk(33)
+    perms = get_recipe("meta_portal").permissions_for_sdk(33)
     assert "android.permission.POST_NOTIFICATIONS" in perms
     assert "android.permission.READ_MEDIA_IMAGES" in perms
     assert "android.permission.BLUETOOTH_SCAN" in perms
     assert "android.permission.WRITE_EXTERNAL_STORAGE" not in perms
 
 
-def test_portal_tv_recipe_is_not_launcher_capable():
-    """KSM-TEST-058: Portal TV's recipe differs precisely in launcher behavior."""
-    tv = get_recipe("meta_portal_tv", "v2")
-    assert tv.home_launcher_supported is False
-    assert tv.start_url_path == "/portal"
-
-
-def test_portal_go_v3_removes_only_unachievable_launcher_takeover():
-    """[KSM-TEST-125] Portal Go retains Portal behavior except HOME takeover."""
-    v2 = get_recipe("meta_portal_standard", "v2")
-    v3 = get_recipe("meta_portal_standard", "v3")
-
-    assert v2.home_launcher_supported is True
-    assert v3.home_launcher_supported is False
-    assert dict(v3.parameters) == {"browser.ignore_ssl_errors": True}
-    assert v3.permissions_for_sdk(29) == v2.permissions_for_sdk(29)
-    assert v3.appops_for_sdk(29) == v2.appops_for_sdk(29)
-    assert v3.start_url_path == v2.start_url_path == "/portal"
+def test_all_portal_models_share_the_same_behavior():
+    """[KSM-TEST-257] No Portal variant changes KSM install behavior."""
+    from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
+    for model in ("portal_go", "portal_mini", "portal_gen1", "portal_gen2", "portal_plus_gen1", "portal_plus_gen2", "portal_tv"):
+        assert require_recipe(model) is get_recipe("meta_portal")
 
 
 def test_android_tv_recipe_exists_but_is_not_portal_shaped():
-    """The `android_tv:v1` recipe is declared for future exact onn/Chromecast
+    """The `android_tv` recipe is declared for future exact onn/Chromecast
     model rows; it must not carry the Portal device-admin/start-URL behavior."""
-    recipe = get_recipe("android_tv", "v1")
+    recipe = get_recipe("android_tv")
     assert recipe.sets_device_admin is False
     assert recipe.start_url_path == ""
     assert recipe.device_name_source == "global:device_name"
@@ -147,18 +156,16 @@ def test_android_tv_recipe_exists_but_is_not_portal_shaped():
 
 
 def test_device_name_normalization_strips_the_model_suffix_android_appends():
-    recipe = get_recipe("meta_portal_standard", "v2")
+    recipe = get_recipe("meta_portal")
     assert recipe.normalize_device_name("Kitchen PortalGo") == "Kitchen"
     assert recipe.normalize_device_name("Kitchen") == "Kitchen"
     # A label that is only the suffix is left alone rather than emptied.
     assert recipe.normalize_device_name("PortalGo") == "PortalGo"
 
 
-def test_get_recipe_returns_none_for_an_unknown_key_or_version():
-    assert get_recipe("meta_portal_standard", "v99") is None
-    assert get_recipe("no_such_recipe", "v1") is None
-    assert get_recipe(None, "v1") is None
-    assert get_recipe("meta_portal_standard", None) is None
+def test_get_recipe_returns_none_for_an_unknown_key():
+    assert get_recipe("no_such_recipe") is None
+    assert get_recipe(None) is None
 
 
 def test_recipe_validation_scans_every_string_field_not_an_enrolled_subset():
@@ -170,21 +177,21 @@ def test_recipe_validation_scans_every_string_field_not_an_enrolled_subset():
     Proven field-by-field: every non-prose string field rejects a smuggled
     command, and the two prose fields accept ordinary punctuation.
     """
-    recipe = get_recipe("meta_portal_standard", "v2")
+    recipe = get_recipe("meta_portal")
     scanned = [
         f.name
         for f in dataclasses.fields(recipe)
         if f.name not in ("name", "postconditions")
         and isinstance(getattr(recipe, f.name), str)
     ]
-    assert len(scanned) >= 8, scanned
+    assert len(scanned) >= 7, scanned
     for field_name in scanned:
         smuggled = dataclasses.replace(recipe, **{field_name: "x; rm -rf /data"})
-        # `recipe_key`/`version` have stricter format rules that reject first;
+        # `recipe_key` has a stricter format rule that rejects first;
         # every other field is caught by the metacharacter scan itself.
         expected = (
             "not a stable lower_snake key|must look like"
-            if field_name in ("recipe_key", "version")
+            if field_name == "recipe_key"
             else "shell metacharacter"
         )
         with pytest.raises(RecipeError, match=expected):
@@ -200,7 +207,7 @@ def test_recipe_operations_cannot_drift_from_what_install_actually_branches_on()
     reads; the booleans are what `install.py` executes. If the two can
     disagree the list is decoration, so `validate_recipe` rejects both
     directions of drift."""
-    recipe = get_recipe("meta_portal_standard", "v2")
+    recipe = get_recipe("meta_portal")
     assert OP_SET_DEVICE_ADMIN in recipe.operations and recipe.sets_device_admin
 
     undeclared = dataclasses.replace(
@@ -209,7 +216,7 @@ def test_recipe_operations_cannot_drift_from_what_install_actually_branches_on()
     with pytest.raises(RecipeError, match="does not declare operation"):
         validate_recipe(undeclared)
 
-    tv = get_recipe("android_tv", "v1")
+    tv = get_recipe("android_tv")
     assert OP_SET_DEVICE_ADMIN not in tv.operations and tv.sets_device_admin is False
     overclaimed = dataclasses.replace(tv, operations=tv.operations + (OP_SET_DEVICE_ADMIN,))
     with pytest.raises(RecipeError, match="sets_device_admin is False"):

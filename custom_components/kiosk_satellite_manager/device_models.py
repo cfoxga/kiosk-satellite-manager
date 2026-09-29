@@ -107,12 +107,7 @@ class DeviceFacts:
 
 @dataclass(frozen=True)
 class DeviceModel:
-    """One exact hardware model/SKU.
-
-    `home_launcher_capable` is a hardware fact (Portal TV has no replaceable
-    Home launcher), not a behavior choice -- `device_catalog.validate_catalog`
-    refuses to assign a launcher-using recipe to launcher-incapable hardware.
-    """
+    """One exact hardware model/SKU."""
 
     model_key: str
     name: str
@@ -127,7 +122,6 @@ class DeviceModel:
     min_sdk: int | None = None
     max_sdk: int | None = None
     match_priority: int = 100
-    home_launcher_capable: bool = True
     catalog_state: str = CATALOG_STATE_PROVISIONAL
     observed_facts: tuple[tuple[str, str], ...] = ()
     evidence_refs: tuple[str, ...] = ()
@@ -204,7 +198,6 @@ DEVICE_MODELS: tuple[DeviceModel, ...] = (
         manufacturer=("facebook",),
         models=("portalgo",),
         match_priority=10,
-        home_launcher_capable=True,
         catalog_state=CATALOG_STATE_QUALIFIED_IDENTITY,
         observed_facts=(
             ("ro.product.device", "terry"),
@@ -226,7 +219,6 @@ DEVICE_MODELS: tuple[DeviceModel, ...] = (
         manufacturer=("facebook",),
         models=("portalmini",),
         match_priority=10,
-        home_launcher_capable=True,
         catalog_state=CATALOG_STATE_QUALIFIED_IDENTITY,
         observed_facts=(("ro.build.version.sdk", "29"),),
         evidence_refs=("docs/SPEC/oem-recovery.md",),
@@ -242,7 +234,6 @@ DEVICE_MODELS: tuple[DeviceModel, ...] = (
         models=("portal",),
         min_sdk=29,
         match_priority=20,
-        home_launcher_capable=True,
         evidence_refs=("docs/developer/android-support/device-playbooks.md",),
         limitations=(_PORTAL_MATCH_NOTE,),
     ),
@@ -254,7 +245,6 @@ DEVICE_MODELS: tuple[DeviceModel, ...] = (
         min_sdk=24,
         max_sdk=28,
         match_priority=20,
-        home_launcher_capable=True,
         evidence_refs=("docs/developer/android-support/device-playbooks.md",),
         limitations=(_PORTAL_MATCH_NOTE, _PORTAL_GEN_SDK_FLOOR_LIMITATION),
     ),
@@ -265,7 +255,6 @@ DEVICE_MODELS: tuple[DeviceModel, ...] = (
         models=("portal+", "portalplus"),
         min_sdk=29,
         match_priority=20,
-        home_launcher_capable=True,
         evidence_refs=("docs/developer/android-support/device-playbooks.md",),
         limitations=(_PORTAL_MATCH_NOTE,),
     ),
@@ -277,7 +266,6 @@ DEVICE_MODELS: tuple[DeviceModel, ...] = (
         min_sdk=24,
         max_sdk=28,
         match_priority=20,
-        home_launcher_capable=True,
         evidence_refs=("docs/developer/android-support/device-playbooks.md",),
         limitations=(_PORTAL_MATCH_NOTE, _PORTAL_GEN_SDK_FLOOR_LIMITATION),
     ),
@@ -287,9 +275,6 @@ DEVICE_MODELS: tuple[DeviceModel, ...] = (
         manufacturer=("facebook",),
         models=("portaltv",),
         match_priority=10,
-        # Behaviorally significant: this SKU has no replaceable Home launcher,
-        # which is why it cannot share the standard Portal recipe (#20).
-        home_launcher_capable=False,
         evidence_refs=("docs/developer/android-support/device-playbooks.md",),
         limitations=(_PORTAL_MATCH_NOTE,),
     ),

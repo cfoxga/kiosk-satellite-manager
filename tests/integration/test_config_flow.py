@@ -26,7 +26,6 @@ from custom_components.kiosk_satellite_manager.const import (
     CONF_ENABLE_DEVICE_OWNER,
     CONF_EXISTING_INSTALL_ACTION,
     CONF_HA_TOKEN,
-    CONF_HOME_LAUNCHER,
     CONF_HOST,
     CONF_NAME,
     CONF_PASSWORD,
@@ -243,7 +242,7 @@ async def test_user_flow_identifies_portal_models_and_defaults_password(hass):
     assert result["type"] == data_entry_flow.FlowResultType.FORM
     assert result["step_id"] == "device_info"
     assert result["description_placeholders"]["device_model"] == "Meta Portal Go"
-    assert CONF_HOME_LAUNCHER not in {
+    assert "home_launcher" not in {
         field.schema for field in result["data_schema"].schema
     }
     schema_pass = next(k for k in result["data_schema"].schema if k == CONF_PASSWORD)
@@ -628,7 +627,7 @@ async def test_user_flow_uses_selected_long_lived_token(hass):
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_TOKEN_MODE] == "existing-token-id"
     assert result["data"][CONF_HA_TOKEN] == "selected-access-token"
-    assert result["data"][CONF_HOME_LAUNCHER] is False
+    assert "home_launcher" not in result["data"]
     assert not persistent_notification._async_get_or_create_notifications(hass)  # noqa: SLF001
 
 
@@ -690,7 +689,7 @@ async def test_user_flow_kept_install_collects_only_existing_connection_details(
 
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result["title"] == "Living Room TV"
-    assert CONF_HOME_LAUNCHER not in result["data"]
+    assert "home_launcher" not in result["data"]
     assert CONF_HA_TOKEN not in result["data"]
     mock_install.assert_not_awaited()
     mock_client.uninstall_ks.assert_not_awaited()
@@ -745,7 +744,7 @@ async def test_user_flow_reinstall_uninstalls_before_install(hass):
         assert result["type"] == data_entry_flow.FlowResultType.FORM
         assert result["step_id"] == "device_info"
         schema_fields = {field.schema for field in result["data_schema"].schema}
-        assert CONF_HOME_LAUNCHER not in schema_fields
+        assert "home_launcher" not in schema_fields
         assert CONF_TOKEN_MODE in schema_fields
         assert CONF_HA_TOKEN not in schema_fields
 
@@ -870,7 +869,7 @@ async def test_ks_running_device_is_added_without_adb(hass, ks_health_probe, tls
     assert data[CONF_PASSWORD] == "hunter222"
     assert data["tls_spki_sha256"] == _PIN
     assert data["port"] == 5555 and data["key_path"]
-    assert CONF_HOME_LAUNCHER not in data and CONF_HA_TOKEN not in data
+    assert "home_launcher" not in data and CONF_HA_TOKEN not in data
     mock_client_cls.assert_not_called()
     mock_install.assert_not_called()
     tls_migration.assert_awaited_once()

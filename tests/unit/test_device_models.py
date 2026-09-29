@@ -144,13 +144,6 @@ def test_device_model_records_carry_no_provisioning_behavior():
         assert forbidden not in fields
 
 
-def test_portal_tv_is_recorded_as_launcher_incapable_hardware():
-    """KSM-TEST-058 (identity half): launcher capability is a hardware fact on
-    the model; whether a recipe uses it is recipe behavior."""
-    assert get_device_model("portal_tv").home_launcher_capable is False
-    assert get_device_model("portal_go").home_launcher_capable is True
-
-
 def test_from_health_maps_kiosk_satellite_self_report_to_catalog_facts():
     """[KSM-TEST-187] KSM-BEHAVE-096: health reports `model` as
     "<brand> <model>"; the brand prefix is stripped so the catalog's

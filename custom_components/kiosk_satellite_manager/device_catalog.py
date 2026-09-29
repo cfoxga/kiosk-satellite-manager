@@ -3,7 +3,7 @@
 Four logical tables, all frozen Python source data under this package:
 
 * device models   -- `device_models.DEVICE_MODELS` (exact hardware identity)
-* install recipes -- `install_recipes.INSTALL_RECIPES` (versioned behavior)
+* install recipes -- `install_recipes.INSTALL_RECIPES` (behavior keys)
 * assignments     -- `RECIPE_ASSIGNMENTS` (which model may use which version)
 * qualifications  -- `QUALIFICATIONS` (per-model, per-version, per-build evidence)
 
@@ -53,7 +53,6 @@ SCENARIO_EXISTING_REUSE = "existing_reuse"
 SCENARIO_UPDATE = "update"
 SCENARIO_REINSTALL = "reinstall"
 SCENARIO_PERMISSION_CONVERGENCE = "permission_convergence"
-SCENARIO_LAUNCHER_SELECTION = "launcher_selection"
 SCENARIO_HEALTH_VERSION_READBACK = "health_version_readback"
 SCENARIO_UNINSTALL = "uninstall"
 SCENARIOS = frozenset(
@@ -63,7 +62,6 @@ SCENARIOS = frozenset(
         SCENARIO_UPDATE,
         SCENARIO_REINSTALL,
         SCENARIO_PERMISSION_CONVERGENCE,
-        SCENARIO_LAUNCHER_SELECTION,
         SCENARIO_HEALTH_VERSION_READBACK,
         SCENARIO_UNINSTALL,
     }
@@ -85,7 +83,7 @@ class CatalogError(ValueError):
 
 
 class NoApprovedRecipe(Exception):
-    """No approved recipe version covers this device, so nothing may run.
+    """No approved recipe covers this device, so nothing may run.
 
     Raised instead of falling back to a default recipe. Before the catalog, an
     unmatched device received the Portal permission/Device Admin set on no
@@ -96,7 +94,7 @@ class NoApprovedRecipe(Exception):
 
 @dataclass(frozen=True)
 class RecipeAssignment:
-    """One versioned model/recipe relationship, with its history preserved.
+    """One model/recipe relationship, with its history preserved.
 
     A retired or proposed row is kept rather than deleted: which recipe a model
     used to be approved for is what makes a later `revalidation_required`
@@ -105,19 +103,18 @@ class RecipeAssignment:
 
     model_key: str
     recipe_key: str
-    recipe_version: str
     state: str
     effective_date: str
     rationale: str
 
     @property
     def recipe_identity(self) -> str:
-        return f"{self.recipe_key}:{self.recipe_version}"
+        return self.recipe_key
 
 
 @dataclass(frozen=True)
 class QualificationRecord:
-    """One scenario's evidence for one model, recipe version and build scope.
+    """One scenario's evidence for one model, recipe key and build scope.
 
     `min_sdk`/`max_sdk`/`fingerprint_prefixes` are the build scope. An empty
     scope means "unscoped", which is only honest for evidence that genuinely
@@ -127,7 +124,6 @@ class QualificationRecord:
 
     model_key: str
     recipe_key: str
-    recipe_version: str
     scenario: str
     result: str
     verified_on: str
@@ -142,7 +138,7 @@ class QualificationRecord:
 
     @property
     def recipe_identity(self) -> str:
-        return f"{self.recipe_key}:{self.recipe_version}"
+        return self.recipe_key
 
     def covers(self, sdk: int = 0, fingerprint: str = "") -> bool:
         """True when this evidence applies to the build actually in front of us."""
@@ -184,7 +180,7 @@ class CatalogResolution:
 
     `model_key`/`classification` are what was *identified*; `support_state` is
     what was *derived*. A caller that wants to act reads `executable`, which is
-    true only for an approved assignment to a real recipe version.
+    true only for an approved assignment to a real recipe.
     """
 
     model_key: str | None
@@ -212,7 +208,6 @@ class CatalogResolution:
             "model_name": self.model_name,
             "classification": self.classification,
             "recipe_key": self.recipe.recipe_key if self.recipe else None,
-            "recipe_version": self.recipe.version if self.recipe else None,
             "assignment_state": self.assignment_state,
             "support_state": self.support_state,
             "reason": self.reason,
@@ -221,96 +216,68 @@ class CatalogResolution:
 
 
 RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
-    # Migrated 1:1 from the pre-catalog DeviceProfile records: every Portal
-    # model below already received exactly this behavior before the split, so
-    # approving the assignment preserves shipped behavior rather than
-    # extending it (issue #20 Acceptance: "Current Portal Go provisioning
-    # remains behaviorally unchanged"). What is NOT carried over is any support
-    # claim -- see QUALIFICATIONS.
+    # KSM-BEHAVE-132: all Portal models share KSM install behavior. Native KS
+    # settings, not this assignment, own Home behavior. Qualification stays
+    # scoped to each exact model; see QUALIFICATIONS.
     RecipeAssignment(
         model_key="portal_go",
-        recipe_key="meta_portal_standard",
-        recipe_version="v3",
+        recipe_key="meta_portal",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-22",
-        rationale=(
-            "Portal Go's observed Android 10 build keeps Meta DeviceSetupActivity "
-            "as HOME even after KS enables HomeAlias and package manager reports "
-            "set-home-activity Success. v3 removes launcher takeover from this "
-            "exact model's required behavior; sibling Portal models retain v2 "
-            "until their own live evidence says otherwise (issue #41)."
-        ),
+        rationale="Portal provisioning without KSM Home control (KSM-BEHAVE-132).",
     ),
     RecipeAssignment(
         model_key="portal_mini",
-        recipe_key="meta_portal_standard",
-        recipe_version="v2",
+        recipe_key="meta_portal",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
-        rationale=(
-            "Same Android 10 'omni' Portal platform and identical pre-catalog "
-            "DeviceProfile behavior. Shares the recipe; shares no evidence -- "
-            "its live evidence is Test Harness recovery only."
-        ),
+        rationale="Shares Portal install behavior, not qualification evidence.",
     ),
     RecipeAssignment(
         model_key="portal_gen1",
-        recipe_key="meta_portal_standard",
-        recipe_version="v2",
+        recipe_key="meta_portal",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
-        rationale="Behavior migrated verbatim from the portal_gen1 DeviceProfile.",
+        rationale="Shares Portal install behavior without KSM Home control.",
     ),
     RecipeAssignment(
         model_key="portal_gen2",
-        recipe_key="meta_portal_standard",
-        recipe_version="v3",
+        recipe_key="meta_portal",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-27",
-        rationale=(
-            "Great Room Portal (prod, 2026-09-27): after set-home-activity the "
-            "HOME resolver stayed com.facebook.alohaapps.launcher, as on Portal "
-            "Go. v3 removes launcher takeover for this exact model (#61)."
-        ),
+        rationale="Shares Portal install behavior without KSM Home control.",
     ),
     RecipeAssignment(
         model_key="portal_plus_gen1",
-        recipe_key="meta_portal_standard",
-        recipe_version="v2",
+        recipe_key="meta_portal",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Behavior migrated verbatim from the portal_plus_gen1 DeviceProfile.",
     ),
     RecipeAssignment(
         model_key="portal_plus_gen2",
-        recipe_key="meta_portal_standard",
-        recipe_version="v2",
+        recipe_key="meta_portal",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Behavior migrated verbatim from the portal_plus_gen2 DeviceProfile.",
     ),
     RecipeAssignment(
         model_key="portal_tv",
-        recipe_key="meta_portal_tv",
-        recipe_version="v2",
+        recipe_key="meta_portal",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
-        rationale=(
-            "home_launcher_supported=False is behaviorally significant, so "
-            "Portal TV cannot share the standard Portal recipe (issue #20)."
-        ),
+        rationale="Shares Portal install behavior; KS owns native Home settings.",
     ),
 )
 
 # Exact-device negative qualification from issues #40/#41. This is installed-app
 # and OEM-build evidence, not a claim about sibling Portal hardware. The issue
-# #41 live run re-exercised the unchanged permission policy on v3 while proving
-# the OEM HOME resolver cannot safely be replaced on this build.
+# #41 live run re-exercised the unchanged permission policy. KSM-BEHAVE-132
+# removes only the Home mutation; the failed permission remains applicable.
 QUALIFICATIONS: tuple[QualificationRecord, ...] = (
     QualificationRecord(
         model_key="portal_go",
-        recipe_key="meta_portal_standard",
-        recipe_version="v3",
+        recipe_key="meta_portal",
         scenario=SCENARIO_PERMISSION_CONVERGENCE,
         result=RESULT_FAIL,
         verified_on="2026-09-22",
@@ -360,12 +327,7 @@ CATALOG = Catalog(
 
 
 def required_scenarios(recipe: InstallRecipe) -> frozenset[str]:
-    """The matrix a model must pass on this recipe version to be `supported`.
-
-    Launcher selection is required only where the recipe actually takes over
-    the Home launcher; demanding it of Portal TV would make a `supported` state
-    unreachable for hardware that cannot do it.
-    """
+    """The matrix a model must pass on this recipe to be `supported`."""
     required = {
         SCENARIO_CLEAN_INSTALL,
         SCENARIO_EXISTING_REUSE,
@@ -375,16 +337,12 @@ def required_scenarios(recipe: InstallRecipe) -> frozenset[str]:
         SCENARIO_HEALTH_VERSION_READBACK,
         SCENARIO_UNINSTALL,
     }
-    if recipe.home_launcher_supported:
-        required.add(SCENARIO_LAUNCHER_SELECTION)
     return frozenset(required)
 
 
-def _find_recipe(
-    catalog: Catalog, recipe_key: str, version: str
-) -> InstallRecipe | None:
+def _find_recipe(catalog: Catalog, recipe_key: str) -> InstallRecipe | None:
     for recipe in catalog.recipes:
-        if recipe.recipe_key == recipe_key and recipe.version == version:
+        if recipe.recipe_key == recipe_key:
             return recipe
     return None
 
@@ -442,28 +400,18 @@ def validate_catalog(catalog: Catalog = CATALOG) -> None:
             raise CatalogError(
                 f"assignment references unknown device model {assignment.model_key!r}"
             )
-        recipe = _find_recipe(catalog, assignment.recipe_key, assignment.recipe_version)
+        recipe = _find_recipe(catalog, assignment.recipe_key)
         if recipe is None:
             raise CatalogError(
                 f"assignment for {assignment.model_key!r} references unknown install "
                 f"recipe {assignment.recipe_identity!r}"
-            )
-        # Checked for every state, not just approved: a proposed assignment of
-        # a launcher-capable recipe to launcher-incapable hardware is a source
-        # defect now, and discovering it at the moment someone flips it to
-        # approved is the worst possible time.
-        if recipe.home_launcher_supported and not model.home_launcher_capable:
-            raise CatalogError(
-                f"{assignment.model_key!r} cannot be assigned {recipe.identity!r}: the "
-                f"recipe takes over the home launcher and this hardware is recorded as "
-                f"home launcher incapable"
             )
         if assignment.state != ASSIGNMENT_APPROVED:
             continue
         if assignment.model_key in approved_seen:
             raise CatalogError(
                 f"device model {assignment.model_key!r} has more than one approved recipe "
-                f"assignment; exactly one recipe version may be executable"
+                f"assignment; exactly one recipe may be executable"
             )
         approved_seen.add(assignment.model_key)
 
@@ -474,7 +422,7 @@ def validate_catalog(catalog: Catalog = CATALOG) -> None:
             raise CatalogError(
                 f"qualification references unknown device model {record.model_key!r}"
             )
-        if _find_recipe(catalog, record.recipe_key, record.recipe_version) is None:
+        if _find_recipe(catalog, record.recipe_key) is None:
             raise CatalogError(
                 f"qualification for {record.model_key!r} references unknown install "
                 f"recipe {record.recipe_identity!r}"
@@ -531,10 +479,10 @@ def require_recipe(model_key: str | None, *, catalog: Catalog = CATALOG) -> Inst
             f"{model.model_key!r} has no approved recipe assignment; add one with its "
             f"rationale before provisioning this model"
         )
-    recipe = _find_recipe(catalog, assignment.recipe_key, assignment.recipe_version)
+    recipe = _find_recipe(catalog, assignment.recipe_key)
     if recipe is None:  # pragma: no cover -- validate_catalog rejects this
         raise NoApprovedRecipe(
-            f"approved assignment {assignment.recipe_identity!r} names a recipe version "
+            f"approved assignment {assignment.recipe_identity!r} names a recipe "
             f"that does not exist"
         )
     return recipe
@@ -570,30 +518,29 @@ def derive_support_state(
             f"{model.model_key} is a known model with no approved recipe assignment{detail}",
         )
 
-    recipe = _find_recipe(catalog, assignment.recipe_key, assignment.recipe_version)
+    recipe = _find_recipe(catalog, assignment.recipe_key)
     if recipe is None:  # pragma: no cover -- validate_catalog rejects this
         return (
             SUPPORT_BLOCKED,
-            f"approved assignment {assignment.recipe_identity} names a recipe version "
+            f"approved assignment {assignment.recipe_identity} names a recipe "
             f"that does not exist",
         )
 
     for_model = [q for q in catalog.qualifications if q.model_key == model.model_key]
-    for_recipe_key = [q for q in for_model if q.recipe_key == assignment.recipe_key]
-    if not for_recipe_key:
+    current = [q for q in for_model if q.recipe_key == assignment.recipe_key]
+    if not current and not for_model:
         return (
             SUPPORT_RECIPE_ASSIGNED,
             f"{model.model_key} is approved for {assignment.recipe_identity} but has no "
             f"qualification evidence of its own on file",
         )
 
-    current = [q for q in for_recipe_key if q.recipe_version == assignment.recipe_version]
     if not current:
-        stale = ", ".join(sorted({q.recipe_version for q in for_recipe_key}))
+        stale = ", ".join(sorted({q.recipe_key for q in for_model}))
         return (
             SUPPORT_REVALIDATION_REQUIRED,
-            f"qualification evidence for {model.model_key} covers {assignment.recipe_key} "
-            f"{stale} only; {assignment.recipe_identity} has none",
+            f"qualification evidence for {model.model_key} covers {stale} only; "
+            f"{assignment.recipe_identity} has none",
         )
 
     in_scope = [q for q in current if q.covers(sdk, fingerprint)]
@@ -664,7 +611,7 @@ def resolve_catalog_entry(
 
     assignment = _approved_assignment(catalog, model.model_key)
     recipe = (
-        _find_recipe(catalog, assignment.recipe_key, assignment.recipe_version)
+        _find_recipe(catalog, assignment.recipe_key)
         if assignment
         else None
     )

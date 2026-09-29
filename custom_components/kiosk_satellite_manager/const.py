@@ -26,7 +26,6 @@ CONF_HA_TOKEN: Final = "ha_token"
 CONF_HA_REFRESH_TOKEN_ID: Final = "ha_refresh_token_id"
 CONF_HA_TOKEN_OWNED: Final = "ha_token_owned"
 CONF_REUSE_ENTRY_ID: Final = "reuse_entry_id"
-CONF_HOME_LAUNCHER: Final = "home_launcher"
 CONF_ENABLE_DEVICE_OWNER: Final = "enable_device_owner"
 # KSM-BEHAVE-073: per-entry opt-in, stored in entry.options, default off.
 CONF_AUTO_UPDATE: Final = "auto_update"
@@ -79,7 +78,6 @@ HEALTH_SCAN_INTERVAL_MIN: Final = 5
 
 KS_PACKAGE: Final = "me.jxl.kiosk_satellite"
 KS_MAIN_ACTIVITY: Final = f"{KS_PACKAGE}/.MainActivity"
-KS_HOME_ACTIVITY: Final = f"{KS_PACKAGE}/.HomeAlias"
 KS_APK_REMOTE_PATH: Final = "/data/local/tmp/kiosk-satellite.apk"
 KS_GITHUB_REPO: Final = "jxlarrea/kiosk-satellite"
 

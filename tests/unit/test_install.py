@@ -48,8 +48,7 @@ _TARGET_VERSION = "2026.9.99"
 # SDK-29 output of one named recipe version, and a device only gets them by
 # resolving to a model with an approved assignment to that recipe. The
 # values below are unchanged -- that is the point of KSM-TEST-063.
-PORTAL_RECIPE = get_recipe("meta_portal_standard", "v3")
-LAUNCHER_RECIPE = get_recipe("meta_portal_standard", "v2")
+PORTAL_RECIPE = get_recipe("meta_portal")
 PORTAL_PERMISSIONS = PORTAL_RECIPE.permissions_for_sdk(29)
 PORTAL_APPOPS = PORTAL_RECIPE.appops_for_sdk(29)
 
@@ -107,7 +106,7 @@ def _fake_client():
     client.installed_version = AsyncMock(side_effect=[None, _TARGET_VERSION])
     client.shell = AsyncMock(return_value="")
     # KSM-BEHAVE-041: default "everything converges cleanly" readback for
-    # the meta_portal_standard:v2 permission/appops set -- individual
+    # the meta_portal permission/appops set -- individual
     # convergence tests override these to exercise the
     # partial/needs-user-interaction paths.
     client.granted_permissions = AsyncMock(return_value=set(PORTAL_PERMISSIONS))
@@ -231,138 +230,20 @@ async def test_install_and_launch_runs_expected_shell_sequence():
     assert "settings put global package_verifier_enable 0" not in shell_calls
 
 
-async def test_launcher_selection_uses_adb_only_and_verifies_home_resolver():
-    """[KSM-TEST-125] Launcher selection is independent of HTTP credentials."""
-    hass = _FakeHass()
-    client = _fake_client()
-    session = _fake_session()
-
-    with patch(
-        "custom_components.kiosk_satellite_manager.install.latest_release",
-        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
-    ):
-        await install_and_launch(
-            hass,
-            client,
-            session,
-            host="192.168.1.50",
-            password=None,
-            home_launcher=True,
-            device_model="portal_mini",
-        )
-
-    provision_calls = [
-        call.args[0]
-        for call in client.shell.await_args_list
-        if "ks.provision" in call.args[0]
-    ]
-    assert len(provision_calls) == 1
-    assert '"home.enabled": true' in provision_calls[0]
-    assert "password" not in provision_calls[0]
-    assert "ha.token" not in provision_calls[0]
-    client.select_ks_home.assert_awaited_once_with()
-    client.resolved_home_activity.assert_awaited_once_with()
-
-
-_NOTIFY = "custom_components.kiosk_satellite_manager.install.persistent_notification.async_create"
-_SYNC = "custom_components.kiosk_satellite_manager.install._sync_device_and_connect_ha"
-
-
-async def _install_with_resolver(resolver: str, *, password=None):
-    """Run a launcher-capable install whose HOME resolver reads `resolver`;
-    return (notify mock, sync mock)."""
-    hass = _FakeHass()
-    client = _fake_client()
-    client.resolved_home_activity = AsyncMock(return_value=resolver)
-    with patch(
-        "custom_components.kiosk_satellite_manager.install.latest_release",
-        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
-    ), patch(
-        "custom_components.kiosk_satellite_manager.install.asyncio.sleep",
-        new=AsyncMock(),
-    ), patch(_NOTIFY) as notify, patch(_SYNC, new=AsyncMock(return_value=None)) as sync:
-        await install_and_launch(
-            hass,
-            client,
-            _fake_session(),
-            host="192.168.1.50",
-            password=password,
-            device_name="Great Room Portal",
-            home_launcher=True,
-            device_model="portal_mini",
-        )
-    return notify, sync
-
-
-async def test_launcher_selection_reports_rival_home_resolver():
-    """[KSM-TEST-125][KSM-TEST-188] A Meta resolver is the independently
-    failing control: reported by name, never treated as success."""
-    rival = "com.facebook.alohaapps.launcher/.HomeActivity"
-    notify, _ = await _install_with_resolver(rival)
-    notify.assert_called_once()
-    assert rival in notify.call_args.kwargs["message"]
-
-
-async def test_launcher_selection_rejects_a_different_ks_activity():
-    """[KSM-TEST-125] Only HomeAlias satisfies the resolver postcondition."""
-    notify, _ = await _install_with_resolver("me.jxl.kiosk_satellite/.MainActivity")
-    notify.assert_called_once()
-
-
-async def test_launcher_miss_still_configures_the_device():
-    """[KSM-TEST-188] #61: a rival HOME resolver must not skip the device
-    name / password / HA connection sync that follows it."""
-    notify, sync = await _install_with_resolver(
-        "com.facebook.alohaapps.launcher/.HomeActivity", password="pw"
-    )
-    notify.assert_called_once()
-    sync.assert_awaited_once()
-    assert sync.await_args.args[4] == "pw"
-
-
-async def test_launcher_hit_raises_no_notification():
-    """[KSM-TEST-188] Negative control: HomeAlias resolving is silent."""
-    notify, sync = await _install_with_resolver(
-        "me.jxl.kiosk_satellite/.HomeAlias", password="pw"
-    )
-    notify.assert_not_called()
-    sync.assert_awaited_once()
-
-
-def test_portal_gen2_is_launcher_free():
-    """[KSM-TEST-188] #61 live evidence: Gen 2 keeps Meta's launcher."""
-    from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
-
-    recipe = require_recipe("portal_gen2")
-    assert (recipe.recipe_key, recipe.version) == ("meta_portal_standard", "v3")
-    assert recipe.home_launcher_supported is False
-
-
-async def test_launcher_selection_skips_disabled_and_incapable_recipes():
-    """[KSM-TEST-125] Neither caller opt-out nor Portal TV may mutate HOME."""
-    for model, enabled in (
-        ("portal_mini", False),
-        ("portal_go", True),
-        ("portal_tv", True),
-    ):
+async def test_install_never_changes_native_or_android_home():
+    """[KSM-TEST-257] Install leaves KS and Android Home state to KS."""
+    for model in ("portal_go", "portal_mini", "portal_gen1", "portal_gen2", "portal_tv"):
         client = _fake_client()
         with patch(
             "custom_components.kiosk_satellite_manager.install.latest_release",
             new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
         ):
             await install_and_launch(
-                _FakeHass(),
-                client,
-                _fake_session(),
-                host="192.168.1.50",
-                password=None,
-                home_launcher=enabled,
-                device_model=model,
+                _FakeHass(), client, _fake_session(), device_model=model
             )
-
-        assert all("ks.provision" not in call.args[0] for call in client.shell.await_args_list)
-        client.select_ks_home.assert_not_awaited()
-        client.resolved_home_activity.assert_not_awaited()
+        commands = [call.args[0] for call in client.shell.await_args_list]
+        assert all("ks.provision" not in command for command in commands)
+        assert all("set-home-activity" not in command for command in commands)
 
 
 async def test_install_and_launch_aborts_before_launch_on_rejected_artifact():
@@ -389,13 +270,8 @@ async def test_install_and_launch_aborts_before_launch_on_rejected_artifact():
     assert shell_calls[0].startswith("rm -f ")
 
 
-async def test_install_and_launch_uses_the_assigned_recipe_for_start_url_and_launcher():
-    """KSM-TEST-058: Portal TV resolves meta_portal_tv:v2, which is the same
-    Portal install lifecycle minus the home-launcher takeover. The launcher
-    capability must come from the recipe assigned to *this* model, never from
-    the caller's home_launcher preference alone -- home_launcher=True below is
-    deliberately the permissive input, and the payload must still omit
-    home.enabled."""
+async def test_install_and_launch_uses_the_assigned_recipe_for_start_url():
+    """[KSM-TEST-257] Portal TV shares the Portal start path without Home control."""
     hass = _FakeHass()
     client = _fake_client()
     session = _fake_session()
@@ -425,17 +301,12 @@ async def test_install_and_launch_uses_the_assigned_recipe_for_start_url_and_lau
             device_name="Portal TV",
             password="1newpass",
             device_model="portal_tv",
-            home_launcher=True,
         )
 
         settings_payload = mock_api.patch_settings.await_args[0][3]
         assert settings_payload["browser.start_url"] == "http://192.168.1.2:8123/portal"
         assert "home.enabled" not in settings_payload
 
-    # Positive control: Portal Mini retains the launcher-capable v2 recipe;
-    # Portal Go's observed OEM resolver is now assigned v3 without takeover.
-    assert LAUNCHER_RECIPE.home_launcher_supported is True
-    assert PORTAL_RECIPE.home_launcher_supported is False
 
 
 async def test_install_and_launch_fails_closed_for_a_model_with_no_approved_recipe():
@@ -544,6 +415,32 @@ async def test_install_and_launch_syncs_password_and_name_on_first_run():
         pin=None,
     )
     mock_api.check_ha_connection.assert_awaited_once_with(session, "192.168.1.50", "ks-token", pin=None)
+
+
+async def test_failed_ha_connection_check_preserves_native_home_and_reports_warning(caplog):
+    """[KSM-TEST-257] A failed HA check does not trigger Home repair."""
+    hass = _FakeHass()
+    client = _fake_client()
+    session = _fake_session()
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ), patch("custom_components.kiosk_satellite_manager.install.ks_api_client") as mock_api, patch(
+        "custom_components.kiosk_satellite_manager.install.get_url",
+        return_value="http://192.168.1.2:8123",
+    ):
+        mock_api.probe_https = AsyncMock(return_value=None)
+        mock_api.get_setup_status = AsyncMock(return_value={"passwordNeeded": True})
+        mock_api.setup_password = AsyncMock(return_value="ks-token")
+        mock_api.patch_settings = AsyncMock(return_value={})
+        mock_api.check_ha_connection = AsyncMock(return_value=False)
+        await install_and_launch(
+            hass, client, session, host="192.168.1.50", device_name="Kitchen",
+            password="hunter22", device_model="portal_go",
+        )
+    assert "HA connection check failed" in caplog.text
+    assert "home.enabled" not in mock_api.patch_settings.await_args.args[3]
+    assert all("set-home-activity" not in call.args[0] for call in client.shell.await_args_list)
 
 
 async def test_install_and_launch_mints_a_unique_managed_token_name():
@@ -776,7 +673,6 @@ async def test_install_and_launch_reuses_provided_token_and_respects_launcher_fl
             device_model="portal_go",
             ha_token="pre-existing-token",
             ha_url="https://ha.example.test",
-            home_launcher=False,
         )
 
     assert res == TokenCredential("pre-existing-token", None, owned=False)

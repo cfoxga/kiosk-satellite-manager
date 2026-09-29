@@ -80,11 +80,11 @@ def test_every_recovery_profile_is_keyed_on_an_exact_device_model():
     assert classification_keys.isdisjoint(RECOVERY_PROFILES)
 
 
-def test_distinct_install_recipes_do_not_change_recovery_evidence():
+def test_shared_install_recipe_does_not_share_recovery_evidence():
     """KSM-TEST-066: recipe assignment never owns exact-model recovery proof."""
     from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
 
-    assert require_recipe("portal_go") is not require_recipe("portal_mini")
+    assert require_recipe("portal_go") is require_recipe("portal_mini")
     assert get_recovery_profile("portal_mini").test_harness_confirmed is True
     assert get_recovery_profile("portal_go").test_harness_confirmed is True
     assert get_recovery_profile("portal_gen2").test_harness_confirmed is None

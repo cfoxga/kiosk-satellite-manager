@@ -24,10 +24,7 @@ def _catalog_block(
         "model_key": model_key,
         "model_name": "Meta Portal Go",
         "classification": None if model_key else "unknown",
-        "recipe_key": "meta_portal_standard" if executable else None,
-        "recipe_version": (
-            "v3" if model_key == "portal_go" else "v2"
-        ) if executable else None,
+        "recipe_key": "meta_portal" if executable else None,
         "assignment_state": "approved" if executable else None,
         "support_state": "recipe_assigned" if executable else "unknown",
         "reason": (
@@ -238,8 +235,7 @@ async def test_report_is_sanitized_and_marks_unsupported_probes():
         "model_key": "portal_go",
         "model_name": "Meta Portal Go",
         "classification": None,
-        "recipe_key": "meta_portal_standard",
-        "recipe_version": "v3",
+        "recipe_key": "meta_portal",
         "assignment_state": "approved",
         "support_state": "revalidation_required",
         "reason": report["catalog"]["reason"],
@@ -444,8 +440,7 @@ def test_onboarding_plan_recovery_evidence_does_not_follow_recipe_assignment():
     mini = build_onboarding_plan(_observed_report(device_model_key="portal_mini"))
     go = build_onboarding_plan(_observed_report(device_model_key="portal_go"))
 
-    assert mini["catalog"]["recipe_version"] == "v2"
-    assert go["catalog"]["recipe_version"] == "v3"
+    assert mini["catalog"]["recipe_key"] == go["catalog"]["recipe_key"] == "meta_portal"
     mini_reset = next(o for o in mini["destructive_options"] if o["id"] == "test_harness_reset")
     go_reset = next(o for o in go["destructive_options"] if o["id"] == "test_harness_reset")
     assert mini_reset["eligible_now"] is True

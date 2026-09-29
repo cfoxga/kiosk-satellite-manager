@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- KSM no longer offers a Home launcher toggle or changes `home.enabled` or Android's
+  default Home app during install and updates (#94). Configure Home in Kiosk
+  Satellite itself. All Meta Portal models now use the same `meta_portal`
+  recipe key; recipe version numbers are removed from the catalog and sensor.
+
 - A device's Configure menu has **Change host** (#93). Enter a DNS name or IP address; KSM
   checks that Kiosk Satellite answers there under the device's saved key and changes nothing
   otherwise, so a name that now points at a reverse proxy is refused rather than trusted. Use

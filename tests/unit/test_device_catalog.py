@@ -38,18 +38,12 @@ _PORTAL_MINI = DeviceFacts(manufacturer="Facebook", model="PortalMini", sdk=29)
 _PORTAL_TV = DeviceFacts(manufacturer="Facebook", model="PortalTV", characteristics="tv", sdk=29)
 
 
-def _qualifications(
-    model_key: str, recipe_version: str | None = None, *, result: str = "pass"
-):
-    recipe_version = recipe_version or ("v3" if model_key == "portal_go" else "v2")
-    recipe = get_recipe("meta_portal_standard", recipe_version) or get_recipe(
-        "meta_portal_standard", "v2"
-    )
+def _qualifications(model_key: str, recipe_key: str = "meta_portal", *, result: str = "pass"):
+    recipe = get_recipe("meta_portal")
     return tuple(
         QualificationRecord(
             model_key=model_key,
-            recipe_key="meta_portal_standard",
-            recipe_version=recipe_version,
+            recipe_key=recipe_key,
             scenario=scenario,
             result=result,
             min_sdk=29,
@@ -61,7 +55,6 @@ def _qualifications(
         )
         for scenario in sorted(required_scenarios(recipe))
     )
-
 
 def _catalog(**overrides):
     return dataclasses.replace(CATALOG, **overrides)
@@ -82,7 +75,7 @@ def test_catalog_rejects_duplicate_model_keys():
         validate_catalog(_catalog(models=models))
 
 
-def test_catalog_rejects_duplicate_recipe_versions():
+def test_catalog_rejects_duplicate_recipe_keys():
     recipes = CATALOG.recipes + (CATALOG.recipes[0],)
     with pytest.raises(CatalogError, match="duplicate install recipe"):
         validate_catalog(_catalog(recipes=recipes))
@@ -92,8 +85,7 @@ def test_catalog_rejects_an_assignment_referencing_an_unknown_model():
     assignments = CATALOG.assignments + (
         RecipeAssignment(
             model_key="no_such_model",
-            recipe_key="meta_portal_standard",
-            recipe_version="v2",
+            recipe_key="meta_portal",
             state=ASSIGNMENT_APPROVED,
             effective_date="2026-09-20",
             rationale="deliberately broken reference",
@@ -103,12 +95,11 @@ def test_catalog_rejects_an_assignment_referencing_an_unknown_model():
         validate_catalog(_catalog(assignments=assignments))
 
 
-def test_catalog_rejects_an_assignment_referencing_an_unknown_recipe_version():
+def test_catalog_rejects_an_assignment_referencing_an_unknown_recipe_key():
     assignments = CATALOG.assignments + (
         RecipeAssignment(
             model_key="portal_go",
-            recipe_key="meta_portal_standard",
-            recipe_version="v97",
+            recipe_key="unknown_recipe",
             state=ASSIGNMENT_PROPOSED,
             effective_date="2026-09-20",
             rationale="deliberately broken reference",
@@ -122,8 +113,7 @@ def test_catalog_rejects_two_approved_assignments_for_one_model():
     assignments = CATALOG.assignments + (
         RecipeAssignment(
             model_key="portal_go",
-            recipe_key="meta_portal_tv",
-            recipe_version="v2",
+            recipe_key="meta_portal",
             state=ASSIGNMENT_APPROVED,
             effective_date="2026-09-20",
             rationale="deliberately ambiguous",
@@ -134,7 +124,7 @@ def test_catalog_rejects_two_approved_assignments_for_one_model():
 
 
 def test_catalog_rejects_qualification_for_an_unassigned_recipe():
-    quals = _qualifications("portal_go", "v97")
+    quals = _qualifications("portal_go", "unknown_recipe")
     with pytest.raises(CatalogError, match="unknown install recipe"):
         validate_catalog(_catalog(qualifications=quals))
 
@@ -223,17 +213,13 @@ def test_catalog_modules_use_no_sql_or_home_assistant_storage():
 # --- KSM-TEST-057/058: resolution -------------------------------------------
 
 
-def test_portal_go_and_mini_are_distinct_models_with_build_evidence_scoped_recipes():
-    """KSM-TEST-057/125: Portal Go's no-HOME decision never leaks to Mini."""
+def test_portal_go_and_mini_share_behavior_but_retain_exact_model_identity():
+    """[KSM-TEST-257] Shared provisioning does not merge model identities."""
     go = resolve_catalog_entry(_PORTAL_GO)
     mini = resolve_catalog_entry(_PORTAL_MINI)
-
     assert go.model_key == "portal_go"
     assert mini.model_key == "portal_mini"
-    assert go.recipe_identity == "meta_portal_standard:v3"
-    assert mini.recipe_identity == "meta_portal_standard:v2"
-    assert go.recipe.home_launcher_supported is False
-    assert mini.recipe.home_launcher_supported is True
+    assert go.recipe_identity == mini.recipe_identity == "meta_portal"
     assert go.executable is True
 
 
@@ -247,34 +233,11 @@ def test_sharing_a_recipe_never_shares_qualification_evidence():
     assert go.support_state == SUPPORT_RECIPE_ASSIGNED
 
 
-def test_portal_tv_resolves_the_launcher_incapable_recipe():
-    """KSM-TEST-058."""
+def test_portal_tv_shares_portal_provisioning_recipe():
+    """[KSM-TEST-257] KSM leaves native Home behavior to KS on Portal TV too."""
     tv = resolve_catalog_entry(_PORTAL_TV)
     assert tv.model_key == "portal_tv"
-    assert tv.recipe_identity == "meta_portal_tv:v2"
-    assert tv.recipe.home_launcher_supported is False
-
-
-def test_inverted_portal_tv_assignment_fails_catalog_validation():
-    """KSM-TEST-058 negative control: assigning the launcher-capable standard
-    recipe to launcher-incapable hardware is a data error, not a runtime
-    surprise."""
-    assignments = tuple(
-        a
-        for a in CATALOG.assignments
-        if not (a.model_key == "portal_tv" and a.state == ASSIGNMENT_APPROVED)
-    ) + (
-        RecipeAssignment(
-            model_key="portal_tv",
-            recipe_key="meta_portal_standard",
-            recipe_version="v2",
-            state=ASSIGNMENT_APPROVED,
-            effective_date="2026-09-20",
-            rationale="deliberately inverted",
-        ),
-    )
-    with pytest.raises(CatalogError, match="home launcher"):
-        validate_catalog(_catalog(assignments=assignments))
+    assert tv.recipe_identity == "meta_portal"
 
 
 # --- KSM-TEST-060: fail closed ----------------------------------------------
@@ -346,27 +309,22 @@ def test_a_failed_scenario_blocks_the_model():
     assert entry.support_state == SUPPORT_BLOCKED
 
 
-def test_evidence_for_an_earlier_recipe_version_goes_stale_on_a_new_version():
-    """KSM-TEST-062: a behavior-changing v4 makes prior qualification stale
-    rather than letting it carry over on key-only matching."""
-    v4 = dataclasses.replace(
-        get_recipe("meta_portal_standard", "v3"),
-        version="v4",
-        start_url_path="/portal-v4",
-    )
+def test_evidence_for_a_previous_behavior_key_goes_stale():
+    """[KSM-TEST-062] A changed behavior key does not inherit old evidence."""
+    changed = dataclasses.replace(get_recipe("meta_portal"), recipe_key="meta_portal_next", start_url_path="/portal-next")
     assignments = tuple(
-        dataclasses.replace(a, recipe_version="v4") if a.model_key == "portal_go" else a
+        dataclasses.replace(a, recipe_key="meta_portal_next") if a.model_key == "portal_go" else a
         for a in CATALOG.assignments
     )
     catalog = _catalog(
-        recipes=CATALOG.recipes + (v4,),
+        recipes=CATALOG.recipes + (changed,),
         assignments=assignments,
-        qualifications=_qualifications("portal_go", "v3"),
+        qualifications=_qualifications("portal_go"),
     )
     entry = resolve_catalog_entry(_PORTAL_GO, catalog=catalog, sdk=29)
-    assert entry.recipe_identity == "meta_portal_standard:v4"
+    assert entry.recipe_identity == "meta_portal_next"
     assert entry.support_state == SUPPORT_REVALIDATION_REQUIRED
-    assert "v3" in entry.reason
+    assert "meta_portal" in entry.reason
 
 
 def test_evidence_outside_the_observed_build_scope_requires_revalidation():
@@ -382,16 +340,10 @@ def test_evidence_outside_the_observed_build_scope_requires_revalidation():
     assert "build scope" in out_of_scope.reason
 
 
-def test_required_scenarios_drop_launcher_selection_for_a_launcher_incapable_recipe():
-    standard = required_scenarios(get_recipe("meta_portal_standard", "v2"))
-    portal_go = required_scenarios(get_recipe("meta_portal_standard", "v3"))
-    tv = required_scenarios(get_recipe("meta_portal_tv", "v2"))
-    assert "launcher_selection" in standard
-    assert "launcher_selection" not in portal_go
-    assert "launcher_selection" not in tv
-    required_without_home = {"clean_install", "existing_reuse", "update", "reinstall", "uninstall"}
-    assert required_without_home <= portal_go
-    assert required_without_home <= tv
+def test_required_scenarios_do_not_include_native_home_selection():
+    required = required_scenarios(get_recipe("meta_portal"))
+    assert "launcher_selection" not in required
+    assert {"clean_install", "existing_reuse", "update", "reinstall", "uninstall"} <= required
 
 
 def test_shipped_catalog_claims_no_unearned_support():
@@ -436,24 +388,6 @@ def test_catalog_rejects_a_passing_qualification_with_no_build_scope():
     validate_catalog(_catalog(qualifications=_qualifications("portal_go")))
 
 
-def test_catalog_rejects_a_launcher_recipe_on_launcher_incapable_hardware_while_proposed():
-    """KSM-TEST-058: the launcher check must not wait for `approved`. A
-    proposed assignment is a source defect now; discovering it at the moment
-    somebody flips the state to approved is the worst possible time."""
-    proposed = CATALOG.assignments + (
-        RecipeAssignment(
-            model_key="portal_tv",
-            recipe_key="meta_portal_standard",
-            recipe_version="v2",
-            state=ASSIGNMENT_PROPOSED,
-            effective_date="2026-09-20",
-            rationale="deliberately wrong: Portal TV cannot host a home launcher",
-        ),
-    )
-    with pytest.raises(CatalogError, match="home launcher incapable"):
-        validate_catalog(_catalog(assignments=proposed))
-
-
 _PORTAL_GO_40_FINGERPRINT = (
     "Facebook/terry_prod/terry:10/QKQ1.210213.001/5051355900018050:user/prod-keys"
 )
@@ -479,9 +413,9 @@ def test_portal_go_secure_settings_limitation_is_exact_build_evidence():
     ):
         assert resolve_catalog_entry(facts).support_state == SUPPORT_REVALIDATION_REQUIRED
     assert resolve_catalog_entry(_PORTAL_MINI).support_state == SUPPORT_RECIPE_ASSIGNED
-    new_recipe = dataclasses.replace(entry.recipe, version="v4")
+    new_recipe = dataclasses.replace(entry.recipe, recipe_key="meta_portal_next")
     assignments = tuple(
-        dataclasses.replace(a, recipe_version="v4")
+        dataclasses.replace(a, recipe_key="meta_portal_next")
         if a.model_key == "portal_go" and a.state == ASSIGNMENT_APPROVED else a
         for a in CATALOG.assignments
     )

@@ -2,7 +2,7 @@
 
 Schema 2 (issue #20) adds the identity facts the device catalog matches on
 (brand/product/board/hardware/ABI) and a `catalog` block carrying the resolved
-exact model, fallback classification, recipe version and derived support state.
+exact model, fallback classification, recipe key and derived support state.
 
 The fact/probe-status/inference separation is unchanged and load-bearing: a
 `denied`, `unsupported` or `error` probe leaves its fact `None`, which is

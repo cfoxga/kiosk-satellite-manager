@@ -1,13 +1,13 @@
-"""Immutable, versioned provisioning recipes (KSM-BEHAVE-049, issue #20).
+"""Immutable provisioning recipes (KSM-BEHAVE-049/132).
 
 A recipe owns *behavior*: which artifact, which permissions and AppOps, whether
-Device Admin is set, whether the Home launcher is taken over, where the device
+Device Admin is set, where the device
 name is read from, and what the authoritative postconditions are. It owns no
 hardware matching and no support claim -- those are `device_models.py` and
 `device_catalog.py` respectively.
 
-Several exact models may share one recipe version (Portal Go and Portal Mini
-both use `meta_portal_standard:v2`). Sharing a recipe never transfers
+Several exact models may share one recipe (all Meta Portals use `meta_portal`).
+Sharing a recipe never transfers
 qualification or recovery status between those models; see
 `device_catalog.derive_support_state` and `oem_recovery.py`.
 
@@ -55,7 +55,6 @@ ALLOWED_OPERATIONS: frozenset[str] = frozenset(
 ALLOWED_PARAMETERS: frozenset[str] = frozenset(
     {
         "browser.ignore_ssl_errors",
-        "home.enabled",
         "ha.auto_connect",
     }
 )
@@ -79,7 +78,6 @@ REINSTALL_UNINSTALL_THEN_INSTALL = "uninstall_then_install"
 UNINSTALL_PM_UNINSTALL = "pm_uninstall"
 
 _KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-_VERSION_RE = re.compile(r"^v[0-9]+$")
 # Anything that would let a typed fragment become its own command line.
 _SHELL_METACHARACTERS = (";", "&", "|", "$", "`", "\n", "\r", ">", "<", "(", ")", "\\", "'", '"')
 _COMMANDISH_FIELD_NAMES = frozenset({"command", "commands", "shell", "script", "cmd", "exec"})
@@ -105,21 +103,14 @@ class RecipeError(ValueError):
 
 @dataclass(frozen=True)
 class InstallRecipe:
-    """One immutable, versioned provisioning behavior.
-
-    `version` is part of the identity: a behavior change is a new version, not
-    an edit, which is what makes prior qualification evidence visibly stale
-    (KSM-BEHAVE-050) instead of silently carrying over.
-    """
+    """One immutable provisioning behavior; a changed behavior gets a new key."""
 
     recipe_key: str
-    version: str
     name: str
     artifact_policy: str = ARTIFACT_GITHUB_RELEASE_BY_ABI
     device_name_source: str = NAME_SOURCE_GLOBAL_DEVICE_NAME
     redundant_name_suffixes: tuple[str, ...] = ()
     start_url_path: str = ""
-    home_launcher_supported: bool = False
     install_strategy: str = INSTALL_PRESERVE_MATCHING_VERSION
     update_strategy: str = UPDATE_REINSTALL_ON_VERSION_MISMATCH
     reinstall_strategy: str = REINSTALL_UNINSTALL_THEN_INSTALL
@@ -138,8 +129,8 @@ class InstallRecipe:
 
     @property
     def identity(self) -> str:
-        """`<recipe_key>:<version>` -- the string qualification evidence pins."""
-        return f"{self.recipe_key}:{self.version}"
+        """The stable behavior key that qualification evidence pins."""
+        return self.recipe_key
 
     @property
     def device_name_command(self) -> str:
@@ -206,8 +197,6 @@ def validate_recipe(recipe: InstallRecipe) -> None:
     """Raise `RecipeError` unless the recipe is typed, audited and shell-free."""
     if not _KEY_RE.match(recipe.recipe_key):
         raise RecipeError(f"recipe_key {recipe.recipe_key!r} is not a stable lower_snake key")
-    if not _VERSION_RE.match(recipe.version):
-        raise RecipeError(f"recipe version {recipe.version!r} must look like 'v1'")
 
     for name in _COMMANDISH_FIELD_NAMES:
         if name in recipe.__dataclass_fields__:
@@ -304,43 +293,11 @@ _PORTAL_POSTCONDITIONS: tuple[str, ...] = (
 
 INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
     InstallRecipe(
-        recipe_key="meta_portal_standard",
-        version="v2",
-        name="Meta Portal (standard, Home-launcher capable)",
+        recipe_key="meta_portal",
+        name="Meta Portal",
         device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
         redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,
         start_url_path="/portal",
-        home_launcher_supported=True,
-        permission_policy=PERMISSION_POLICY_PORTAL,
-        sets_device_admin=True,
-        verifier_retry_on_failure=True,
-        operations=_PORTAL_OPERATIONS,
-        parameters=(("browser.ignore_ssl_errors", True), ("home.enabled", True)),
-        postconditions=_PORTAL_POSTCONDITIONS,
-    ),
-    InstallRecipe(
-        recipe_key="meta_portal_standard",
-        version="v3",
-        name="Meta Portal Go (OEM HOME resolver is not replaceable)",
-        device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
-        redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,
-        start_url_path="/portal",
-        home_launcher_supported=False,
-        permission_policy=PERMISSION_POLICY_PORTAL,
-        sets_device_admin=True,
-        verifier_retry_on_failure=True,
-        operations=_PORTAL_OPERATIONS,
-        parameters=(("browser.ignore_ssl_errors", True),),
-        postconditions=_PORTAL_POSTCONDITIONS,
-    ),
-    InstallRecipe(
-        recipe_key="meta_portal_tv",
-        version="v2",
-        name="Meta Portal TV (no replaceable Home launcher)",
-        device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
-        redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,
-        start_url_path="/portal",
-        home_launcher_supported=False,
         permission_policy=PERMISSION_POLICY_PORTAL,
         sets_device_admin=True,
         verifier_retry_on_failure=True,
@@ -354,11 +311,9 @@ INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
     # there is nothing it may legitimately provision (KSM-BEHAVE-048).
     InstallRecipe(
         recipe_key="android_tv",
-        version="v1",
         name="Android TV / Google TV stick",
         device_name_source=NAME_SOURCE_GLOBAL_DEVICE_NAME,
         start_url_path="",
-        home_launcher_supported=False,
         permission_policy=PERMISSION_POLICY_STANDARD,
         sets_device_admin=False,
         operations=(
@@ -378,11 +333,11 @@ INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
 )
 
 
-def get_recipe(recipe_key: str | None, version: str | None) -> InstallRecipe | None:
-    """Look up one exact recipe version, or None -- never a stand-in default."""
-    if not recipe_key or not version:
+def get_recipe(recipe_key: str | None) -> InstallRecipe | None:
+    """Look up one exact recipe key, or None -- never a stand-in default."""
+    if not recipe_key:
         return None
     for recipe in INSTALL_RECIPES:
-        if recipe.recipe_key == recipe_key and recipe.version == version:
+        if recipe.recipe_key == recipe_key:
             return recipe
     return None

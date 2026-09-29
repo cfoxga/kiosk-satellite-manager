@@ -66,7 +66,6 @@ from .const import (
     CONF_EXISTING_INSTALL_ACTION,
     CONF_HA_URL,
     CONF_HA_TOKEN,
-    CONF_HOME_LAUNCHER,
     CONF_HOST,
     CONF_KEY_PATH,
     CONF_NAME,
@@ -292,6 +291,7 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
                 errors[CONF_HA_URL] = "invalid_ha_url"
             if not errors:
                 options = {**saved, **user_input}
+                options.pop("home_launcher", None)
                 if not user_input.get(CONF_PASSWORD):
                     options[CONF_PASSWORD] = saved.get(CONF_PASSWORD, "")
                 return self.async_create_entry(title="", data=options)
@@ -312,7 +312,6 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             vol.Required(CONF_EXISTING_INSTALL_ACTION, default=saved.get(
                 CONF_EXISTING_INSTALL_ACTION, EXISTING_INSTALL_REUSE
             )): vol.In([EXISTING_INSTALL_REUSE, EXISTING_INSTALL_REINSTALL]),
-            vol.Required(CONF_HOME_LAUNCHER, default=saved.get(CONF_HOME_LAUNCHER, True)): bool,
             vol.Required(CONF_AUTO_UPDATE, default=saved.get(CONF_AUTO_UPDATE, False)): bool,
             vol.Required(
                 CONF_ESPHOME_NEW_DEVICES, default=saved.get(CONF_ESPHOME_NEW_DEVICES, False)
@@ -765,8 +764,6 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._name: str | None = None
         self._area_id: str | None = None
         self._password: str | None = None
-        self._home_launcher: bool = True
-        self._home_launcher_supported: bool = False
         self._token_mode: str = TOKEN_MODE_AUTO
         self._credential: TokenCredential | None = None
         self._reuse_entry_id: str | None = None
@@ -908,9 +905,6 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._key_path = key_path
             self._profile_key = entry.model_key
             self._profile_name = entry.model_name or entry.classification_name
-            self._home_launcher_supported = bool(
-                entry.recipe and entry.recipe.home_launcher_supported
-            )
             self._android_version = (
                 f"Android {android_release} (SDK {sdk})"
                 if android_release
@@ -963,9 +957,6 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not errors:
                 self._name = self._discovered_name
                 self._password = self._global[CONF_PASSWORD]
-                self._home_launcher = bool(
-                    self._home_launcher_supported and self._global.get(CONF_HOME_LAUNCHER, True)
-                )
                 self._existing_install_action = action if self._ks_installed else None
                 self._token_mode = token_mode
                 self._credential = credential
@@ -976,8 +967,6 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="confirm", data_schema=vol.Schema({}), errors=errors,
             description_placeholders={
                 "device": self._discovered_name, "action": action,
-                "launcher": "yes" if self._home_launcher_supported and
-                    self._global.get(CONF_HOME_LAUNCHER, True) else "no",
                 "ha_url": self._global.get(CONF_HA_URL, "Home Assistant default"),
             },
         )
@@ -989,11 +978,6 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             password = user_input.get(CONF_PASSWORD) or self._global.get(CONF_PASSWORD, "")
-            home_launcher = (
-                user_input.get(CONF_HOME_LAUNCHER, self._global.get(CONF_HOME_LAUNCHER, True))
-                if self._home_launcher_supported
-                else False
-            )
             token_mode = user_input.get(
                 CONF_TOKEN_MODE, self._global.get(CONF_TOKEN_MODE, TOKEN_MODE_AUTO)
             )
@@ -1014,7 +998,6 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not errors:
                 self._name = self._discovered_name
                 self._password = password
-                self._home_launcher = home_launcher
                 self._token_mode = token_mode
                 self._credential = credential
                 self._ha_url = ha_url
@@ -1042,10 +1025,6 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
             ),
         }
-        if self._home_launcher_supported:
-            fields[vol.Required(CONF_HOME_LAUNCHER, default=self._global.get(CONF_HOME_LAUNCHER, True))] = (
-                selector.BooleanSelector()
-            )
         if self._global:
             fields[vol.Optional(CONF_HA_URL, default=self._global.get(CONF_HA_URL, ""))] = str
             fields[vol.Required(CONF_AUTO_UPDATE, default=self._global.get(CONF_AUTO_UPDATE, False))] = bool
@@ -1241,9 +1220,6 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             self._token_mode = token_mode
             self._credential = credential
-            self._home_launcher = bool(
-                self._home_launcher_supported and self._global.get(CONF_HOME_LAUNCHER, True)
-            )
             self._want_device_owner = bool(user_input.get(CONF_ENABLE_DEVICE_OWNER, False))
             return await self.async_step_install()
 
@@ -1320,7 +1296,6 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     password=self._password,
                     ha_token=self._credential.access_token if self._credential else None,
                     token_credential=self._credential,
-                    home_launcher=self._home_launcher,
                     device_model=self._profile_key,
                     ha_url=self._ha_url,
                     on_tls_pinned=self._set_tls_pin,
@@ -1497,7 +1472,6 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if self._existing_install_action != EXISTING_INSTALL_REUSE or self._global:
             data.update(
                 {
-                    CONF_HOME_LAUNCHER: self._home_launcher,
                     CONF_TOKEN_MODE: self._token_mode,
                     **(self._credential.as_entry_data() if self._credential else {}),
                 }

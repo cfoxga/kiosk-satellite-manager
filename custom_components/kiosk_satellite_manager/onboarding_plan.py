@@ -122,7 +122,7 @@ def build_onboarding_plan(report: dict[str, Any]) -> dict[str, Any]:
                 "Live-observed manufacturer/brand/model/product/device identity facts",
                 "An exact device-model row and an approved recipe assignment in the source catalog",
             ],
-            "The device resolves to an exact catalog model with an approved recipe version.",
+            "The device resolves to an exact catalog model with an approved recipe.",
             "Add the exact model and its qualification evidence "
             "(docs/developer/android-support/profile-workflow.md); never provision on a guess.",
             user_presence_required=True,

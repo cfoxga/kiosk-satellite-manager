@@ -236,10 +236,9 @@ class KioskSatelliteRecipeSensor(SensorEntity):
             self._attr_native_value = "none"
             self._attr_extra_state_attributes = {"reason": str(err)}
             return
-        self._attr_native_value = f"{recipe.recipe_key} {recipe.version}"
+        self._attr_native_value = recipe.recipe_key
         self._attr_extra_state_attributes = {
             "recipe_key": recipe.recipe_key,
-            "recipe_version": recipe.version,
             "recipe_name": recipe.name,
         }
 
