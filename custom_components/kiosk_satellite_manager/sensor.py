@@ -54,7 +54,6 @@ async def async_setup_entry(
     for device in fleet.platform_devices(hass, entry):
         coordinator = hass.data[DOMAIN][device.entry_id]
         fleet.add_entities(async_add_entities, device, [
-            KioskSatelliteVersionSensor(hass, coordinator, device),
             KioskSatelliteIpAddressSensor(hass, coordinator, device),
             KioskSatelliteDeviceTypeSensor(hass, device),
             KioskSatelliteRecipeSensor(hass, device),
@@ -150,35 +149,6 @@ def _device_info(hass: HomeAssistant, entry: ConfigEntry) -> DeviceInfo:
         name=entry.title,
         suggested_area=resolve_area_name(hass, entry.data.get(CONF_AREA_ID)),
     )
-
-
-class KioskSatelliteVersionSensor(CoordinatorEntity, SensorEntity):
-    """Installed Kiosk Satellite app version, read back from /api/health."""
-
-    _attr_has_entity_name = True
-    _attr_name = "Kiosk Satellite version"
-
-    def __init__(self, hass: HomeAssistant, coordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_version"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.title,
-            suggested_area=resolve_area_name(hass, entry.data.get(CONF_AREA_ID)),
-        )
-
-    @property
-    def available(self) -> bool:
-        return super().available or bool(getattr(self.coordinator, "ksm_installing", False))
-
-    @property
-    def native_value(self) -> str | None:
-        if getattr(self.coordinator, "ksm_installing", False):
-            return "Installing"
-        if self.coordinator.data is None:
-            return None
-        return self.coordinator.data.get("appVersion")
 
 
 class KioskSatelliteIpAddressSensor(CoordinatorEntity, SensorEntity):

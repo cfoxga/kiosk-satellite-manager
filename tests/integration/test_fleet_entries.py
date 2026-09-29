@@ -227,8 +227,8 @@ async def test_existing_entry_migrates_without_registry_or_option_loss(hass):
     devices.async_update_device(device.id, area_id=area.id)
     entities = er.async_get(hass)
     entity = entities.async_get_or_create(
-        "sensor", DOMAIN, f"{old.entry_id}_version", config_entry=old,
-        device_id=device.id, suggested_object_id="kitchen_display_version",
+        "sensor", DOMAIN, f"{old.entry_id}_ip_address", config_entry=old,
+        device_id=device.id, suggested_object_id="kitchen_display_ip_address",
     )
     entities.async_update_entity(
         entity.entity_id, name="My display version",
@@ -326,7 +326,7 @@ async def test_confirmed_membership_moves_without_changing_device_identity(hass)
         await hass.async_block_till_done()
     registry = er.async_get(hass)
     original_entity = next(item for item in er.async_entries_for_config_entry(
-        registry, unmanaged.entry_id) if item.unique_id == "follower-ha_version")
+        registry, unmanaged.entry_id) if item.unique_id == "follower-ha_ip_address")
     hass.data.setdefault(fleet._READ_OK_KEY, set()).add("leader-ha")
     with patch("custom_components.kiosk_satellite_manager.fetch_health",
                new=AsyncMock(return_value={"appVersion": "2026.9.87"})), patch(
@@ -376,7 +376,7 @@ async def test_confirmed_membership_moves_without_changing_device_identity(hass)
     hass.data[DOMAIN]["leader-ha"] = leader_health
     update_all = KioskSatelliteUpdateAllButton(hass, manager)
     reason = update_all._eligibility(fleet.resolve_device(hass, "follower-ha"), "2026.9.1")
-    assert reason != "update entity unavailable"
+    assert reason == "current or unavailable"
     with patch("custom_components.kiosk_satellite_manager.ks_update.async_check_device_for_update",
                new=AsyncMock(return_value="checked")) as check:
         outcomes = await ks_update.async_check_devices_for_update(hass)
@@ -480,7 +480,7 @@ async def test_failed_migration_rolls_back_and_can_retry(hass):
     row = devices.async_get_or_create(config_entry_id=old.entry_id,
                                       identifiers={(DOMAIN, old.entry_id)})
     entities = er.async_get(hass)
-    entity = entities.async_get_or_create("sensor", DOMAIN, f"{old.entry_id}_version",
+    entity = entities.async_get_or_create("sensor", DOMAIN, f"{old.entry_id}_ip_address",
                                           config_entry=old, device_id=row.id)
     with patch.object(devices, "async_update_device", side_effect=RuntimeError("injected")):
         with pytest.raises(RuntimeError, match="injected"):
@@ -519,7 +519,7 @@ async def test_failed_fleet_move_rolls_back_and_retries(hass):
                                       config_subentry_id="follower-move",
                                       identifiers={(DOMAIN, "follower-move")})
     entities = er.async_get(hass)
-    entity = entities.async_get_or_create("sensor", DOMAIN, "follower-move_version",
+    entity = entities.async_get_or_create("sensor", DOMAIN, "follower-move_ip_address",
                                           config_entry=unmanaged, device_id=row.id,
                                           config_subentry_id="follower-move")
     hass.data.setdefault(fleet._READ_OK_KEY, set()).add("leader-move")

@@ -72,7 +72,7 @@ from .const import (
     RENAME_API_KEY,
     SIGNAL_MANAGER_OPTIONS_UPDATED,
 )
-from . import config_backup, fleet, ks_tls
+from . import auto_update, config_backup, fleet, follower_updates, ks_tls
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .ks_api import latest_release_info
 from .ks_update import async_check_device_for_update, async_check_devices_for_update
@@ -336,6 +336,14 @@ async def _async_ensure_release_coordinator(hass: HomeAssistant) -> None:
     hass.data[RELEASE_COORDINATOR_KEY] = coordinator
     await coordinator.async_refresh()
 
+_AUTO_UPDATE_STOPS_KEY = f"{DOMAIN}_auto_update_stops"
+
+
+def _auto_update_key(device) -> tuple[str, str]:
+    """Owning config entry plus device id: a device migrating between parents
+    keeps its ID, and the old parent's unload must not stop the new one's."""
+    return (getattr(device, "parent", device).entry_id, device.entry_id)
+
 
 def tls_issue_id(entry: ConfigEntry) -> str:
     return f"tls_certificate_changed_{entry.entry_id}"
@@ -398,8 +406,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 
 async def _async_manager_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """KSM-BEHAVE-114: device update entities re-read the Install version."""
+    """KSM-BEHAVE-114: devices re-read the Install version; KSM-BEHAVE-133:
+    the Hide follower updates option applies at once."""
     async_dispatcher_send(hass, SIGNAL_MANAGER_OPTIONS_UPDATED)
+    await follower_updates.async_sync(hass)
 
 
 async def _async_setup_device(hass: HomeAssistant, entry: ConfigEntry | fleet.DeviceEntry) -> None:
@@ -439,6 +449,15 @@ async def _async_setup_device(hass: HomeAssistant, entry: ConfigEntry | fleet.De
     coordinator.ksm_installing = False
     await coordinator.async_refresh()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    # KSM-BEHAVE-134: KSM adds no update entity or version sensor; drop the
+    # legacy rows (these two only) and run auto-update without an entity.
+    registry = er.async_get(hass)
+    for domain, suffix in (("update", "update"), ("sensor", "version")):
+        if legacy := registry.async_get_entity_id(domain, DOMAIN, f"{entry.entry_id}_{suffix}"):
+            registry.async_remove(legacy)
+    hass.data.setdefault(_AUTO_UPDATE_STOPS_KEY, {})[_auto_update_key(entry)] = (
+        auto_update.async_setup(hass, entry, coordinator)
+    )
     if isinstance(entry, fleet.DeviceEntry):
         entry.async_on_unload(coordinator.async_add_listener(
             lambda: hass.async_create_task(fleet.async_poll_device(hass, entry.entry_id))
@@ -475,6 +494,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[MANAGER_ENTRY_KEY] = entry.entry_id
         await _async_ensure_release_coordinator(hass)
         entry.async_on_unload(entry.add_update_listener(_async_manager_options_updated))
+        entry.async_on_unload(follower_updates.async_setup(hass))
         await hass.config_entries.async_forward_entry_setups(entry, MANAGER_PLATFORMS)
 
         async def _backup_tick(_now) -> None:
@@ -614,6 +634,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry, MANAGER_PLATFORMS if manager else PLATFORMS
     )
     if unloaded:
+        stops = hass.data.get(_AUTO_UPDATE_STOPS_KEY, {})
+        # By owning entry, not current subentries: a moved or removed device
+        # is already gone from the parent when its parent reloads.
+        for key in [key for key in stops if key[0] == entry.entry_id]:
+            stops.pop(key)()
         if manager:
             hass.data.pop(MANAGER_ENTRY_KEY, None)
         elif grouping:

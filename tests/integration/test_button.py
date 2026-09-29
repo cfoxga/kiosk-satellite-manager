@@ -109,8 +109,7 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass, tmp_pa
         ent_reg = er.async_get(hass)
         entries = er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)
         button_entry = next(e for e in entries if e.domain == "button")
-        sensor_entry = next(e for e in entries if e.domain == "sensor")
-        assert hass.states.get(sensor_entry.entity_id).state == "old"
+        assert hass.data[DOMAIN][ctx.entry.entry_id].data["appVersion"] == "old"
 
         # KSM-BEHAVE-040: install_and_launch's own post-install health-poll
         # readback hits this same session (through the button's patched
@@ -183,7 +182,7 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass, tmp_pa
     assert all("set-home-activity" not in call for call in shell_calls)
     assert seen_installing_during_press is True
     assert coordinator.ksm_installing is False
-    assert hass.states.get(sensor_entry.entity_id).state == "new"
+    assert hass.data[DOMAIN][ctx.entry.entry_id].data["appVersion"] == "new"
 
 
 @pytest.mark.parametrize(

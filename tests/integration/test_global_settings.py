@@ -19,6 +19,7 @@ from custom_components.kiosk_satellite_manager.const import (
     TOKEN_MODE_AUTO,
 )
 from custom_components.kiosk_satellite_manager import apk_cache
+from custom_components.kiosk_satellite_manager.helpers import target_release
 from custom_components.kiosk_satellite_manager.ks_api import ReleaseInfo
 
 from .conftest import init_integration
@@ -147,7 +148,7 @@ async def test_update_all_skips_current_and_continues_after_failure(hass, releas
         assert install.await_count == 2
         message = notify.call_args.kwargs["message"]
         assert "Failed:" in message and "Updated:" in message and "Skipped:" in message
-        assert "current, skipped, or unavailable" in message
+        assert "current or unavailable" in message
 
 
 async def test_update_all_installs_on_every_eligible_device_at_once(hass, release_check):
@@ -215,8 +216,8 @@ async def test_update_all_refuses_overlap_and_unknown_release(hass, release_chec
         install.assert_not_called()
 
 
-async def test_update_all_skips_unreachable_installing_and_ha_skipped(hass, release_check):
-    """[KSM-TEST-145] Fleet action respects health, install lock, and HA skip."""
+async def test_update_all_skips_unreachable_installing_and_current(hass, release_check):
+    """[KSM-TEST-145] [KSM-TEST-260] Fleet action respects health, install lock, and a current device."""
     release_check.return_value = ReleaseInfo("2026.9.2", "https://example.invalid/2", "notes")
     with patch(
         "custom_components.kiosk_satellite_manager.fetch_health",
@@ -225,17 +226,11 @@ async def test_update_all_skips_unreachable_installing_and_ha_skipped(hass, rele
         manager = await _manager(hass)
         busy = await init_integration(hass, data={CONF_HOST: "192.168.99.1"})
         unreachable = await init_integration(hass, data={CONF_HOST: "192.168.99.2"})
-        skipped = await init_integration(hass, data={CONF_HOST: "192.168.99.3"})
+        current = await init_integration(hass, data={CONF_HOST: "192.168.99.3"})
+        hass.data[DOMAIN][current.entry.entry_id].async_set_updated_data({"appVersion": "2026.9.2"})
         hass.data[DOMAIN][busy.entry.entry_id].ksm_installing = True
         hass.data[DOMAIN][unreachable.entry.entry_id].async_set_update_error(
             UpdateFailed("unreachable")
-        )
-        update = next(
-            e for e in er.async_entries_for_config_entry(er.async_get(hass), skipped.entry.entry_id)
-            if e.domain == "update"
-        )
-        await hass.services.async_call(
-            "update", "skip", {"entity_id": update.entity_id}, blocking=True
         )
         button = SimpleNamespace(entity_id=_entity(hass, manager, "update_all"))
         with patch(
@@ -249,6 +244,7 @@ async def test_update_all_skips_unreachable_installing_and_ha_skipped(hass, rele
         install.assert_not_called()
         assert "unreachable" in notify.call_args.kwargs["message"]
         assert "install in progress" in notify.call_args.kwargs["message"]
+        assert "current or unavailable" in notify.call_args.kwargs["message"]
 
 
 async def test_manager_options_mask_password_preserve_blank_and_reject_bad_url(hass):
@@ -516,7 +512,7 @@ async def test_release_sensor_unavailable_before_first_success(hass, release_che
     assert hass.states.get(entity.entity_id).state == "unavailable"
 
 
-_AUTO_INSTALL = "custom_components.kiosk_satellite_manager.update.async_self_update_entry"
+_AUTO_INSTALL = "custom_components.kiosk_satellite_manager.auto_update.async_self_update_entry"
 
 
 def _health_version(version):
@@ -609,22 +605,36 @@ async def test_turning_auto_update_all_on_installs_an_available_update(hass, rel
     assert install.await_args.args[1] is device.entry
 
 
-async def test_auto_update_all_respects_a_skipped_version(hass, release_check):
-    """[KSM-TEST-152] negative case: HA's skip wins over the fleet switch."""
+async def test_auto_update_all_never_installs_a_current_device(hass, release_check):
+    """[KSM-TEST-152] [KSM-TEST-260] negative case: a device already at the
+    target is not installed when the fleet switch goes on."""
     release_check.return_value = ReleaseInfo("2026.9.77", "https://example.invalid/77", "notes")
     manager = await _manager(hass)
     with patch(
-        "custom_components.kiosk_satellite_manager.fetch_health", new=_health_version("2026.9.76")
+        "custom_components.kiosk_satellite_manager.fetch_health", new=_health_version("2026.9.77")
     ), patch(_AUTO_INSTALL, new=AsyncMock()) as install:
-        device = await init_integration(hass)
-        await hass.services.async_call(
-            "update", "skip", {"entity_id": _entity(hass, device.entry, "update")}, blocking=True
-        )
+        await init_integration(hass)
         await hass.services.async_call(
             "switch", "turn_on", {"entity_id": _entity(hass, manager, "auto_update_all")}, blocking=True
         )
         await _publish(hass, release_check, "2026.9.77")
     install.assert_not_awaited()
+
+
+async def test_manager_options_offer_hide_follower_updates_off_by_default(hass):
+    """[KSM-TEST-259] KSM-BEHAVE-133: the option exists, defaults off, and saves."""
+    manager = await _manager(hass)
+    result = await hass.config_entries.options.async_init(manager.entry_id)
+    key = next(k for k in result["data_schema"].schema if k == "hide_follower_updates")
+    assert key.default() is False
+    data = result["data_schema"]({})
+    data.update({
+        CONF_HA_URL: "https://ha.example.test", CONF_TOKEN_MODE: TOKEN_MODE_AUTO,
+        "hide_follower_updates": True,
+    })
+    result = await hass.config_entries.options.async_configure(result["flow_id"], data)
+    assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert manager.options["hide_follower_updates"] is True
 
 
 def _cache_versions(tmp_path, *versions):
@@ -670,17 +680,16 @@ async def test_install_version_offers_latest_then_cached_versions(hass, release_
 
 
 async def test_pinned_version_is_every_device_install_target(hass, release_check, tmp_path, apk_upload):
-    """[KSM-TEST-220] #72: the pin replaces the latest release as the update
-    entity's latest_version (on save, no reload) and Update all's target.
-    Negative control: Latest targets the release's version."""
+    """[KSM-TEST-220] #72: the pin replaces the latest release as the install
+    target (on save, no reload) that Update all uses. Negative control: Latest
+    targets the release's version."""
     release_check.return_value = ReleaseInfo("2026.9.88", "https://example.invalid/88", "notes")
     manager = await _manager(hass)
     with patch(
         "custom_components.kiosk_satellite_manager.fetch_health", new=_health_version("2026.9.85")
     ):
         device = await init_integration(hass)
-    update_id = _entity(hass, device.entry, "update")
-    assert hass.states.get(update_id).attributes["latest_version"] == "2026.9.88"
+    assert target_release(hass).version == "2026.9.88"
 
     with _cache_versions(tmp_path, "2026.9.86", "2026.9.88"):
         result = await hass.config_entries.options.async_init(manager.entry_id)
@@ -691,9 +700,7 @@ async def test_pinned_version_is_every_device_install_target(hass, release_check
         })
         await hass.config_entries.options.async_configure(result["flow_id"], data)
         await hass.async_block_till_done()
-    state = hass.states.get(update_id)
-    assert state.attributes["latest_version"] == "2026.9.86"
-    assert state.state == "on"
+    assert target_release(hass).version == "2026.9.86"
 
     with patch(
         "custom_components.kiosk_satellite_manager.button.async_self_update_entry",

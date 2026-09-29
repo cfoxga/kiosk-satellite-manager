@@ -55,6 +55,7 @@ from .const import (
     CONF_AUTO_UPDATE,
     CONF_ESPHOME_ENABLE_PENDING,
     CONF_ESPHOME_NEW_DEVICES,
+    CONF_HIDE_FOLLOWER_UPDATES,
     CONF_TARGET_VERSION,
     TARGET_VERSION_LATEST,
     CONF_TLS_SPKI,
@@ -315,6 +316,9 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             vol.Required(CONF_AUTO_UPDATE, default=saved.get(CONF_AUTO_UPDATE, False)): bool,
             vol.Required(
                 CONF_ESPHOME_NEW_DEVICES, default=saved.get(CONF_ESPHOME_NEW_DEVICES, False)
+            ): bool,
+            vol.Required(
+                CONF_HIDE_FOLLOWER_UPDATES, default=saved.get(CONF_HIDE_FOLLOWER_UPDATES, False)
             ): bool,
             vol.Required(CONF_TARGET_VERSION, default=(
                 saved_target if saved_target in versions else TARGET_VERSION_LATEST

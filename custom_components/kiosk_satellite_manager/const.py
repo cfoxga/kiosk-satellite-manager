@@ -36,6 +36,8 @@ CONF_AUTO_UPDATE_ALL: Final = "auto_update_all"
 # is on gets CONF_ESPHOME_ENABLE_PENDING in its entry data, and its first
 # successful setup turns Kiosk Satellite's ESPHome server on and drops the flag.
 CONF_ESPHOME_NEW_DEVICES: Final = "esphome_new_devices"
+# KSM-BEHAVE-133 (#95): manager option, default off; hides confirmed followers' ESPHome update entity.
+CONF_HIDE_FOLLOWER_UPDATES: Final = "hide_follower_updates"
 # KSM-BEHAVE-114 (#72): manager option, "latest" or a cached version.
 CONF_TARGET_VERSION: Final = "target_version"
 TARGET_VERSION_LATEST: Final = "latest"
@@ -81,7 +83,7 @@ KS_MAIN_ACTIVITY: Final = f"{KS_PACKAGE}/.MainActivity"
 KS_APK_REMOTE_PATH: Final = "/data/local/tmp/kiosk-satellite.apk"
 KS_GITHUB_REPO: Final = "jxlarrea/kiosk-satellite"
 
-PLATFORMS: Final = ["binary_sensor", "button", "select", "sensor", "switch", "update"]
+PLATFORMS: Final = ["binary_sensor", "button", "select", "sensor", "switch"]
 MANAGER_PLATFORMS: Final = ["button", "sensor", "switch"]
 # KSM-BEHAVE-080: sent when the manager's Auto-update all switch changes so
 # every device's update entity re-evaluates its auto-update rules.

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- New global setting **Hide follower updates** (#95). While on, KSM disables the ESPHome update
+  entity of every confirmed fleet follower, so a Kiosk Satellite release prompts once per fleet
+  leader instead of once per device. KSM re-enables only entities it disabled itself, when the
+  setting goes off or a device becomes a leader.
+- KSM no longer creates a **Kiosk Satellite version** sensor or an **Update** entity (#95); the
+  ESPHome update entity covers both. KSM removes those two entities from existing devices at
+  startup. Auto-update, Update all and the Install version pin are unchanged.
+
 - KSM no longer offers a Home launcher toggle or changes `home.enabled` or Android's
   default Home app during install and updates (#94). Configure Home in Kiosk
   Satellite itself. All Meta Portal models now use the same `meta_portal`

@@ -50,6 +50,7 @@ from .const import (
 from . import config_backup, fleet
 from .credentials import TokenCredential, async_replace_entry_credential
 
+from .auto_update import is_older
 from .helpers import resolve_area_name, target_release
 from .install import install_and_launch
 from .ks_update import OUTCOME_AWAITING_CONFIRMATION, async_self_update_entry
@@ -289,23 +290,8 @@ class KioskSatelliteUpdateAllButton(ButtonEntity):
             return "unreachable"
         if health.ksm_installing:
             return "install in progress"
-        registry = er.async_get(self.hass)
-        update = next(
-            (item for item in er.async_entries_for_config_entry(
-                registry, entry.parent.entry_id if isinstance(entry, fleet.DeviceEntry)
-                else entry.entry_id,
-            ) if item.domain == "update" and item.unique_id == f"{entry.entry_id}_update"
-             and (not isinstance(entry, fleet.DeviceEntry)
-                  or item.config_subentry_id == entry.subentry_id)),
-            None,
-        )
-        state = self.hass.states.get(update.entity_id) if update else None
-        if not state:
-            return "update entity unavailable"
-        if state.attributes.get("latest_version") != version:
-            return "release changed"
-        if state.state != "on":
-            return "current, skipped, or unavailable"
+        if not is_older((health.data or {}).get("appVersion"), version):
+            return "current or unavailable"
         return None
 
     async def async_press(self) -> None:

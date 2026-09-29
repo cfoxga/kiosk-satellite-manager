@@ -273,6 +273,8 @@ async def async_poll_device(hass: HomeAssistant, entry_id: str) -> None:
         )
         hass.data.setdefault(_READ_OK_KEY, set()).add(entry_id)
         await async_reconcile(hass)
+        from . import follower_updates  # local: follower_updates imports fleet
+        await follower_updates.async_sync(hass)
     finally:
         active.discard(entry_id)
 
