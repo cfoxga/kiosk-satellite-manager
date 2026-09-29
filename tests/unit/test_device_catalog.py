@@ -38,8 +38,8 @@ _PORTAL_MINI = DeviceFacts(manufacturer="Facebook", model="PortalMini", sdk=29)
 _PORTAL_TV = DeviceFacts(manufacturer="Facebook", model="PortalTV", characteristics="tv", sdk=29)
 
 
-def _qualifications(model_key: str, recipe_key: str = "meta_portal", *, result: str = "pass"):
-    recipe = get_recipe("meta_portal")
+def _qualifications(model_key: str, recipe_key: str = "meta_portal_android10", *, result: str = "pass"):
+    recipe = get_recipe("meta_portal_android10")
     return tuple(
         QualificationRecord(
             model_key=model_key,
@@ -85,7 +85,7 @@ def test_catalog_rejects_an_assignment_referencing_an_unknown_model():
     assignments = CATALOG.assignments + (
         RecipeAssignment(
             model_key="no_such_model",
-            recipe_key="meta_portal",
+            recipe_key="meta_portal_android10",
             state=ASSIGNMENT_APPROVED,
             effective_date="2026-09-20",
             rationale="deliberately broken reference",
@@ -113,7 +113,7 @@ def test_catalog_rejects_two_approved_assignments_for_one_model():
     assignments = CATALOG.assignments + (
         RecipeAssignment(
             model_key="portal_go",
-            recipe_key="meta_portal",
+            recipe_key="meta_portal_android10",
             state=ASSIGNMENT_APPROVED,
             effective_date="2026-09-20",
             rationale="deliberately ambiguous",
@@ -219,7 +219,7 @@ def test_portal_go_and_mini_share_behavior_but_retain_exact_model_identity():
     mini = resolve_catalog_entry(_PORTAL_MINI)
     assert go.model_key == "portal_go"
     assert mini.model_key == "portal_mini"
-    assert go.recipe_identity == mini.recipe_identity == "meta_portal"
+    assert go.recipe_identity == mini.recipe_identity == "meta_portal_android10"
     assert go.executable is True
 
 
@@ -237,7 +237,7 @@ def test_portal_tv_shares_portal_provisioning_recipe():
     """[KSM-TEST-257] KSM leaves native Home behavior to KS on Portal TV too."""
     tv = resolve_catalog_entry(_PORTAL_TV)
     assert tv.model_key == "portal_tv"
-    assert tv.recipe_identity == "meta_portal"
+    assert tv.recipe_identity == "meta_portal_tv"
 
 
 # --- KSM-TEST-060: fail closed ----------------------------------------------
@@ -311,7 +311,7 @@ def test_a_failed_scenario_blocks_the_model():
 
 def test_evidence_for_a_previous_behavior_key_goes_stale():
     """[KSM-TEST-062] A changed behavior key does not inherit old evidence."""
-    changed = dataclasses.replace(get_recipe("meta_portal"), recipe_key="meta_portal_next", start_url_path="/portal-next")
+    changed = dataclasses.replace(get_recipe("meta_portal_android10"), recipe_key="meta_portal_next", start_url_path="/portal-next")
     assignments = tuple(
         dataclasses.replace(a, recipe_key="meta_portal_next") if a.model_key == "portal_go" else a
         for a in CATALOG.assignments
@@ -341,7 +341,7 @@ def test_evidence_outside_the_observed_build_scope_requires_revalidation():
 
 
 def test_required_scenarios_do_not_include_native_home_selection():
-    required = required_scenarios(get_recipe("meta_portal"))
+    required = required_scenarios(get_recipe("meta_portal_android10"))
     assert "launcher_selection" not in required
     assert {"clean_install", "existing_reuse", "update", "reinstall", "uninstall"} <= required
 

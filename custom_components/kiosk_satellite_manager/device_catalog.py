@@ -216,54 +216,53 @@ class CatalogResolution:
 
 
 RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
-    # KSM-BEHAVE-132: all Portal models share KSM install behavior. Native KS
-    # settings, not this assignment, own Home behavior. Qualification stays
-    # scoped to each exact model; see QUALIFICATIONS.
+    # KSM-BEHAVE-136: Android 9's confirmed repurpose capability is distinct.
+    # Native KS settings still own Home. Qualification stays model-specific.
     RecipeAssignment(
         model_key="portal_go",
-        recipe_key="meta_portal",
+        recipe_key="meta_portal_android10",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-22",
         rationale="Portal provisioning without KSM Home control (KSM-BEHAVE-132).",
     ),
     RecipeAssignment(
         model_key="portal_mini",
-        recipe_key="meta_portal",
+        recipe_key="meta_portal_android10",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Shares Portal install behavior, not qualification evidence.",
     ),
     RecipeAssignment(
         model_key="portal_gen1",
-        recipe_key="meta_portal",
+        recipe_key="meta_portal_android9",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Shares Portal install behavior without KSM Home control.",
     ),
     RecipeAssignment(
         model_key="portal_gen2",
-        recipe_key="meta_portal",
+        recipe_key="meta_portal_android10",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-27",
         rationale="Shares Portal install behavior without KSM Home control.",
     ),
     RecipeAssignment(
         model_key="portal_plus_gen1",
-        recipe_key="meta_portal",
+        recipe_key="meta_portal_android9",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Behavior migrated verbatim from the portal_plus_gen1 DeviceProfile.",
     ),
     RecipeAssignment(
         model_key="portal_plus_gen2",
-        recipe_key="meta_portal",
+        recipe_key="meta_portal_android10",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Behavior migrated verbatim from the portal_plus_gen2 DeviceProfile.",
     ),
     RecipeAssignment(
         model_key="portal_tv",
-        recipe_key="meta_portal",
+        recipe_key="meta_portal_tv",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Shares Portal install behavior; KS owns native Home settings.",
@@ -277,7 +276,7 @@ RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
 QUALIFICATIONS: tuple[QualificationRecord, ...] = (
     QualificationRecord(
         model_key="portal_go",
-        recipe_key="meta_portal",
+        recipe_key="meta_portal_android10",
         scenario=SCENARIO_PERMISSION_CONVERGENCE,
         result=RESULT_FAIL,
         verified_on="2026-09-22",

@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from .const import KS_PACKAGE
+from .install_recipes import InstallRecipe, REPURPOSE_ANDROID9_META
 
 KS_ADMIN = f"{KS_PACKAGE}/.KioskAdminReceiver"
 
@@ -42,7 +43,51 @@ ACCOUNT_CLEAR_PACKAGES: dict[str, tuple[str, ...]] = {
     "portal_mini": ("com.facebook.alohaservices.alohausers",),
     "portal_go": ("com.facebook.alohaservices.alohausers",),
     "portal_gen2": ("com.facebook.alohaservices.alohausers",),
+    "portal_gen1": ("com.facebook.alohaservices.alohausers",),
 }
+
+# KSM-BEHAVE-136: audited Android 9 aloha packages from unmetaportal's package
+# set. These are fixed source constants, never device or recipe supplied text.
+# The Meta settings, system, input and ADB implementation packages are absent.
+ANDROID9_CLEAR_PACKAGES = (
+    "com.facebook.alohaservices.alohausers",
+    "com.facebook.alohaapps.personaluser",
+    "com.facebook.aloha.state",
+    "com.facebook.alohaapps.launcher",
+    "com.facebook.aloha.app.messenger",
+    "com.facebook.aloha.app.whatsapp",
+    "com.facebook.alohaapps.contacts",
+    "com.facebook.aloha.app.portalfeed",
+    "com.facebook.alohaservices.presence",
+)
+ANDROID9_DISABLE_PACKAGES = (
+    "com.facebook.alohaapps.launcher",
+    "com.facebook.alohaservices.abilitymanager",
+    "com.facebook.alohaservices.alohausers",
+    "com.facebook.aloha.app.messenger",
+    "com.facebook.aloha.app.whatsapp",
+    "com.facebook.aloha.app.portalfeed",
+    "com.facebook.aloha.app.storytime",
+    "com.facebook.aloha.app.cameraeditor",
+    "com.facebook.alohaapps.contacts",
+    "com.facebook.alohaapps.personaluser",
+    "com.facebook.alohaapps.superframe",
+    "com.facebook.alohaservices.presence",
+    "com.facebook.alohaservices.abilities.pages",
+    "com.facebook.aloha.analytics",
+    "com.facebook.aloha.websafety",
+    "com.facebook.alohaapps.bugreporter",
+)
+ANDROID9_REQUIRED_PACKAGES = frozenset({
+    "com.facebook.alohaservices.alohausers",
+    "com.facebook.alohaapps.launcher",
+    "com.facebook.alohaservices.abilitymanager",
+})
+_ANDROID9_HOME_QUERY = (
+    "cmd package resolve-activity --brief -a android.intent.action.MAIN "
+    "-c android.intent.category.HOME"
+)
+_KS_HOME = f"{KS_PACKAGE}/.HomeAlias"
 
 # KSM-BEHAVE-111: Meta's first-run setup app, on the models where it is
 # live-verified (Portal Mini, Portal Go, and Portal Gen 2, 2026-09-28). It disables itself once
@@ -120,6 +165,15 @@ class EnrollResult:
     # The Meta identity is gone (the purge wiped it, or it already was) and
     # restart_meta_setup applies to this model.
     meta_setup_needed: bool = False
+
+
+@dataclass(frozen=True)
+class Android9CleanupResult:
+    owner_enabled: bool
+    accounts_remaining: int
+    adb_available: bool
+    cleared_packages: tuple[str, ...]
+    disabled_packages: tuple[str, ...]
 
 
 def _account_counts(dump: str) -> dict[str, int]:
@@ -270,6 +324,96 @@ async def enable_device_owner(client: ShellClient, model_key: str | None) -> Enr
         cleared_packages=pre.clear_packages,
         meta_setup_needed=model_key in META_SETUP_MODELS
         and bool(pre.clear_packages or pre.meta_identity_missing),
+    )
+
+
+async def android9_cleanup_preflight(
+    client: ShellClient, model_key: str | None, recipe: InstallRecipe,
+    *, ks_home_enabled: bool,
+) -> None:
+    """Read-only exact-device and connection checks before erasing Meta data."""
+    if model_key != "portal_gen1" or recipe.repurpose_policy != REPURPOSE_ANDROID9_META:
+        raise DeviceOwnerError("cleanup_unsupported", "this exact Portal has not been qualified")
+    if not ks_home_enabled:
+        raise DeviceOwnerError("ks_home_required", "enable Home in Kiosk Satellite first")
+    if (await client.shell("getprop ro.build.version.sdk")).strip() != "28":
+        raise DeviceOwnerError("cleanup_unsupported", "Android 9 was not observed")
+    if (await client.shell("getprop ro.product.device")).strip() != "aloha":
+        raise DeviceOwnerError("cleanup_unsupported", "Portal Gen 1 was not observed")
+    manufacturer = (await client.shell("getprop ro.product.manufacturer")).strip().lower()
+    model = (await client.shell("getprop ro.product.model")).strip().lower()
+    if manufacturer != "facebook" or model != "portal":
+        raise DeviceOwnerError("cleanup_unsupported", "Portal Gen 1 identity did not match")
+    pre = await run_preflight(client, model_key)
+    blockers = tuple(b for b in pre.blockers if b != BLOCKER_ALREADY_OWNER)
+    if blockers:
+        raise DeviceOwnerError("preflight_blocked", ", ".join(blockers))
+    if (await client.shell("settings get global adb_enabled")).strip() != "1":
+        raise DeviceOwnerError("adb_required", "ADB is disabled")
+    if (await client.shell("getprop service.adb.tcp.port")).strip() != "5555":
+        raise DeviceOwnerError("adb_required", "network ADB is not on port 5555")
+    for package in ANDROID9_REQUIRED_PACKAGES:
+        if "package:" not in await client.shell(f"pm path {package}"):
+            raise DeviceOwnerError("package_missing", f"{package} is missing")
+    if _KS_HOME not in await client.shell(_ANDROID9_HOME_QUERY):
+        raise DeviceOwnerError(
+            "ks_home_required", "select Kiosk Satellite as Android Home first",
+        )
+
+
+async def repurpose_android9_portal(
+    client: ShellClient, model_key: str | None, recipe: InstallRecipe,
+    *, confirmed: bool, ks_home_enabled: bool,
+) -> Android9CleanupResult:
+    """Explicitly confirmed Gen 1 cleanup. Every postcondition is read back.
+
+    A failure after enrollment may leave a partially cleaned device. We never
+    claim success from command output alone or attempt to recreate Meta login.
+    """
+    if not confirmed:
+        raise DeviceOwnerError("confirmation_required")
+    await android9_cleanup_preflight(
+        client, model_key, recipe, ks_home_enabled=ks_home_enabled,
+    )
+    pre = await run_preflight(client, model_key)
+    if pre.owner_package != KS_PACKAGE:
+        await enable_device_owner(client, model_key)
+
+    cleared: list[str] = []
+    disabled: list[str] = []
+    for package in ANDROID9_CLEAR_PACKAGES:
+        if "package:" not in await client.shell(f"pm path {package}"):
+            continue
+        if "Success" not in await client.shell(f"pm clear {package}"):
+            raise DeviceOwnerError("cleanup_partial", f"could not clear {package}")
+        cleared.append(package)
+    for package in ANDROID9_DISABLE_PACKAGES:
+        if "package:" not in await client.shell(f"pm path {package}"):
+            continue
+        out = await client.shell(f"pm disable-user --user 0 {package}")
+        if "disabled" not in out:
+            raise DeviceOwnerError("cleanup_partial", f"could not disable {package}")
+        disabled.append(package)
+
+    accounts_dump = await client.shell("dumpsys account")
+    if "Accounts:" not in accounts_dump or _account_counts(accounts_dump):
+        raise DeviceOwnerError("cleanup_partial", "accounts remain or cannot be read")
+    if _owner_package(await client.shell("dumpsys device_policy")) != KS_PACKAGE:
+        raise DeviceOwnerError("cleanup_partial", "Kiosk Satellite is not Device Owner")
+    listed = set((await client.shell("pm list packages -d")).splitlines())
+    if any(f"package:{package}" not in listed for package in disabled):
+        raise DeviceOwnerError("cleanup_partial", "disabled packages did not read back")
+    home = await client.shell(_ANDROID9_HOME_QUERY)
+    if _KS_HOME not in home:
+        raise DeviceOwnerError("cleanup_partial", "Kiosk Satellite is not Android Home")
+    adb_enabled = (await client.shell("settings get global adb_enabled")).strip() == "1"
+    adb_port = (await client.shell("getprop service.adb.tcp.port")).strip() == "5555"
+    adb_echo = (await client.shell("echo ksm_adb_ready")).strip() == "ksm_adb_ready"
+    if not (adb_enabled and adb_port and adb_echo):
+        raise DeviceOwnerError("cleanup_partial", "network ADB did not read back available")
+    return Android9CleanupResult(
+        owner_enabled=True, accounts_remaining=0, adb_available=True,
+        cleared_packages=tuple(cleared), disabled_packages=tuple(disabled),
     )
 
 

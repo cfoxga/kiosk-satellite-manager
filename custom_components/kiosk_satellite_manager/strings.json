@@ -69,6 +69,13 @@
         "data": {
           "confirm": "I understand this cannot be undone without a factory reset"
         }
+      },
+      "onboard_android9_cleanup": {
+        "title": "Clean and take ownership of this Android 9 Portal",
+        "description": "This removes the Portal's Meta accounts and sign-in, clears Meta app data, disables audited Meta launcher and services, and makes Kiosk Satellite Device Owner. Device Owner requires a factory reset to undo. Native Kiosk Satellite Home must already be enabled and selected as Android Home. Network ADB is checked before and after cleanup, but whether it survives a reboot is not yet verified. Keep physical access to the Portal. Leave the box unticked to add the device without cleanup.",
+        "data": {
+          "confirm": "Erase Meta sign-in and clean this Android 9 Portal"
+        }
       }
     },
     "progress": {
@@ -151,6 +158,13 @@
           "confirm": "I understand this cannot be undone without a factory reset"
         }
       },
+      "android9_cleanup": {
+        "title": "Clean and take ownership of this Android 9 Portal",
+        "description": "This removes the Portal's Meta accounts and sign-in, clears Meta app data, disables audited Meta launcher and services, and makes Kiosk Satellite Device Owner. Device Owner requires a factory reset to undo. Native Kiosk Satellite Home must already be enabled and selected as Android Home. Network ADB is checked before and after cleanup, but whether it survives a reboot is not yet verified. Keep physical access to the Portal.",
+        "data": {
+          "confirm": "Erase Meta sign-in and clean this Android 9 Portal"
+        }
+      },
       "meta_setup": {
         "title": "Set up the Portal's Meta login again",
         "description": "Kiosk Satellite is already Device Owner, but this Portal's Meta login is gone (Device Owner enrollment removes it). KSM can put Meta's setup screen back on the Portal: it turns kiosk mode off, resets Meta's setup app and opens it. You then finish setup and sign in with Facebook or WhatsApp on the Portal, and KSM turns kiosk mode back on once the Meta login is back.\n\nTick the box and submit to show the setup screen.",
@@ -179,6 +193,9 @@
       "device_owner_already": "Kiosk Satellite is already Device Owner on this device. Nothing was changed.",
       "device_owner_blocked": "Device Owner cannot be enabled because {reason}. Nothing was changed.",
       "device_owner_failed": "Device Owner was not enabled: {reason}",
+      "android9_cleanup_done": "Android 9 Portal cleanup completed. Kiosk Satellite is Device Owner and Home; Meta accounts are gone and network ADB answered.",
+      "android9_cleanup_blocked": "Android 9 Portal cleanup cannot start: {reason}. Nothing was changed.",
+      "android9_cleanup_failed": "Android 9 Portal cleanup did not finish: {reason}. The Portal may be partially cleaned.",
       "adb_unavailable": "Could not connect to ADB at {address}. Enable network ADB on the device (it turns off after a reboot) and try again.",
       "install_in_progress": "A Kiosk Satellite install is running on this device. Try again when it finishes.",
       "device_owner_enabled_meta_setup": "Kiosk Satellite is now Device Owner. The Portal is showing Meta's setup screen: finish setup and sign in with Facebook or WhatsApp there. A notification follows it and turns kiosk mode back on when the Meta login is back.",
@@ -274,6 +291,9 @@
         "device_owner_already": "Kiosk Satellite is already Device Owner on this device. Nothing was changed.",
         "device_owner_blocked": "Device Owner cannot be enabled because {reason}. Nothing was changed.",
         "device_owner_failed": "Device Owner was not enabled: {reason}",
+        "android9_cleanup_done": "Android 9 Portal cleanup completed. Kiosk Satellite is Device Owner and Home; Meta accounts are gone and network ADB answered.",
+        "android9_cleanup_blocked": "Android 9 Portal cleanup cannot start: {reason}. Nothing was changed.",
+        "android9_cleanup_failed": "Android 9 Portal cleanup did not finish: {reason}. The Portal may be partially cleaned.",
         "adb_unavailable": "Could not connect to ADB at {address}. Enable network ADB on the device (it turns off after a reboot) and try again.",
         "install_in_progress": "A Kiosk Satellite install is running on this device. Try again when it finishes.",
         "device_owner_enabled_meta_setup": "Kiosk Satellite is now Device Owner. The Portal is showing Meta's setup screen: finish setup and sign in with Facebook or WhatsApp there. A notification follows it and turns kiosk mode back on when the Meta login is back.",

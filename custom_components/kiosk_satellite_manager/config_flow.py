@@ -251,6 +251,16 @@ def _valid_ha_url(value: str) -> bool:
     return parsed.scheme in ("http", "https") and bool(parsed.netloc) and not parsed.username
 
 
+async def _native_home_enabled(hass, host: str, password: str, pin: str | None) -> bool:
+    """Read KS's own Home choice; KSM never substitutes an Android setting."""
+    if not password:
+        return False
+    session = async_get_clientsession(hass)
+    token = await ks_api_client.login(session, host, password, pin=pin)
+    settings = await ks_api_client.get_settings(session, host, token, pin=pin)
+    return settings.get("home.enabled") is True
+
+
 def _manager_options(hass) -> dict:
     """Snapshot manager defaults without coupling an existing device to it."""
     for entry in hass.config_entries.async_entries(DOMAIN):
@@ -488,6 +498,8 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
 
         Preflight is read-only; nothing on the device changes until the user
         ticks the confirmation and submits."""
+        if self._entry.data.get(CONF_DEVICE_PROFILE) == "portal_gen1":
+            return await self.async_step_android9_cleanup(user_input)
         coordinator = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
         if coordinator is not None and getattr(coordinator, "ksm_installing", False):
             return self.async_abort(reason="install_in_progress")
@@ -565,6 +577,70 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             data_schema=vol.Schema({vol.Required("confirm", default=False): bool}),
             errors=errors,
             description_placeholders={"accounts": _owner_accounts_text(pre)},
+        )
+
+    async def async_step_android9_cleanup(self, user_input: dict | None = None) -> FlowResult:
+        """Gen 1 owner enrollment plus explicitly confirmed Meta cleanup."""
+        coordinator = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
+        if coordinator is not None and getattr(coordinator, "ksm_installing", False):
+            return self.async_abort(reason="install_in_progress")
+        data = self._entry.data
+        host = data[CONF_HOST]
+        client = self._owner_client()
+        try:
+            home = await _native_home_enabled(
+                self.hass, host, data.get(CONF_PASSWORD, ""), data.get(CONF_TLS_SPKI),
+            )
+        except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError, KeyError):
+            home = False
+        if user_input is not None and user_input.get("confirm"):
+            if coordinator is not None:
+                coordinator.ksm_installing = True
+                coordinator.async_update_listeners()
+            try:
+                await client.connect()
+                await device_owner.repurpose_android9_portal(
+                    client, "portal_gen1", require_recipe("portal_gen1"),
+                    confirmed=True, ks_home_enabled=home,
+                )
+            except (AdbAuthPending, AdbConnectFailed, OSError):
+                return self.async_abort(
+                    reason="adb_unavailable",
+                    description_placeholders={"address": f"{host}:{data[CONF_PORT]}"},
+                )
+            except device_owner.DeviceOwnerError as err:
+                _LOGGER.warning("Android 9 cleanup on %s: %s", host, err)
+                return self.async_abort(
+                    reason="android9_cleanup_failed",
+                    description_placeholders={"reason": str(err)},
+                )
+            finally:
+                await client.close()
+                if coordinator is not None:
+                    coordinator.ksm_installing = False
+                    coordinator.async_update_listeners()
+            return self.async_abort(reason="android9_cleanup_done")
+        try:
+            await client.connect()
+            await device_owner.android9_cleanup_preflight(
+                client, "portal_gen1", require_recipe("portal_gen1"),
+                ks_home_enabled=home,
+            )
+        except (AdbAuthPending, AdbConnectFailed, OSError):
+            return self.async_abort(
+                reason="adb_unavailable",
+                description_placeholders={"address": f"{host}:{data[CONF_PORT]}"},
+            )
+        except device_owner.DeviceOwnerError as err:
+            return self.async_abort(
+                reason="android9_cleanup_blocked",
+                description_placeholders={"reason": str(err)},
+            )
+        finally:
+            await client.close()
+        return self.async_show_form(
+            step_id="android9_cleanup",
+            data_schema=vol.Schema({vol.Required("confirm", default=False): bool}),
         )
 
 
@@ -1374,6 +1450,8 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """KSM-BEHAVE-098: the add form's Device Owner opt-in. Same preflight,
         confirmation and enrollment as the device entry's Configure step
         (KSM-BEHAVE-088..090), but every outcome still creates the entry."""
+        if self._profile_key == "portal_gen1":
+            return await self.async_step_onboard_android9_cleanup(user_input)
         address = f"{self._host}:{self._port}"
         unreachable = (
             f"ADB at {address} could not be reached. Device Owner was not enabled; "
@@ -1438,6 +1516,57 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="onboard_device_owner",
             data_schema=vol.Schema({vol.Required("confirm", default=False): bool}),
             description_placeholders={"accounts": _owner_accounts_text(pre)},
+        )
+
+    async def async_step_onboard_android9_cleanup(
+        self, user_input: dict | None = None,
+    ) -> FlowResult:
+        """Gen 1 onboarding routes the owner checkbox to the full cleanup."""
+        client = AdbClient(self._host, self._port, self._key_path)
+        try:
+            home = await _native_home_enabled(
+                self.hass, self._host, self._password, self._tls_pin,
+            )
+        except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError, KeyError):
+            home = False
+        if user_input is not None:
+            if not user_input.get("confirm"):
+                return self._async_create_device_entry()
+            try:
+                await client.connect()
+                await device_owner.repurpose_android9_portal(
+                    client, "portal_gen1", require_recipe("portal_gen1"),
+                    confirmed=True, ks_home_enabled=home,
+                )
+            except (AdbAuthPending, AdbConnectFailed, OSError):
+                self._owner_notice("Android 9 cleanup failed: network ADB is unavailable.")
+            except device_owner.DeviceOwnerError as err:
+                self._owner_notice(f"Android 9 cleanup did not finish: {err}")
+            else:
+                self._owner_notice(
+                    "Android 9 cleanup completed; Kiosk Satellite is Device Owner and Home, "
+                    "Meta accounts are gone, and network ADB answered."
+                )
+            finally:
+                await client.close()
+            return self._async_create_device_entry()
+        try:
+            await client.connect()
+            await device_owner.android9_cleanup_preflight(
+                client, "portal_gen1", require_recipe("portal_gen1"),
+                ks_home_enabled=home,
+            )
+        except (AdbAuthPending, AdbConnectFailed, OSError):
+            self._owner_notice("Android 9 cleanup was not offered: network ADB is unavailable.")
+            return self._async_create_device_entry()
+        except device_owner.DeviceOwnerError as err:
+            self._owner_notice(f"Android 9 cleanup was not offered: {err}")
+            return self._async_create_device_entry()
+        finally:
+            await client.close()
+        return self.async_show_form(
+            step_id="onboard_android9_cleanup",
+            data_schema=vol.Schema({vol.Required("confirm", default=False): bool}),
         )
 
     def _meta_target(self) -> "meta_setup.Target":

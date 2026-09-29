@@ -16,7 +16,7 @@ from custom_components.kiosk_satellite_manager.install_recipes import (
 
 
 def _recipe(**overrides):
-    base = get_recipe("meta_portal")
+    base = get_recipe("meta_portal_android10")
     return dataclasses.replace(base, **overrides)
 
 
@@ -28,15 +28,16 @@ def test_every_shipped_recipe_validates():
         validate_recipe(recipe)
 
 
-def test_native_ks_owns_home_settings_and_portals_share_one_recipe():
-    """[KSM-TEST-257] KSM neither versions Portal recipes nor owns KS Home."""
+def test_native_ks_owns_home_settings_and_portal_recipes_have_no_versions():
+    """[KSM-TEST-257] Portal recipes have platform names and leave Home to KS."""
     portal_recipes = [r for r in INSTALL_RECIPES if r.recipe_key.startswith("meta_portal")]
-    assert len(portal_recipes) == 1
-    portal = portal_recipes[0]
-    assert portal.recipe_key == "meta_portal"
-    assert not hasattr(portal, "version")
-    assert not hasattr(portal, "home_launcher_supported")
-    assert "home.enabled" not in dict(portal.parameters)
+    assert {r.recipe_key for r in portal_recipes} == {
+        "meta_portal_android9", "meta_portal_android10", "meta_portal_tv",
+    }
+    for portal in portal_recipes:
+        assert not hasattr(portal, "version")
+        assert not hasattr(portal, "home_launcher_supported")
+        assert "home.enabled" not in dict(portal.parameters)
 
 
 def test_recipe_keys_are_unique():
@@ -105,7 +106,7 @@ def test_recipes_are_immutable():
 
 def test_portal_recipe_retains_permissions_and_naming():
     """KSM-TEST-063: Portal permission/AppOp/name behavior remains shared."""
-    recipe = get_recipe("meta_portal")
+    recipe = get_recipe("meta_portal_android10")
     perms = recipe.permissions_for_sdk(29)
     assert perms == [
         "android.permission.RECORD_AUDIO",
@@ -131,18 +132,30 @@ def test_portal_recipe_retains_permissions_and_naming():
 
 
 def test_sdk_33_portal_adds_the_modern_media_and_notification_permissions():
-    perms = get_recipe("meta_portal").permissions_for_sdk(33)
+    perms = get_recipe("meta_portal_android10").permissions_for_sdk(33)
     assert "android.permission.POST_NOTIFICATIONS" in perms
     assert "android.permission.READ_MEDIA_IMAGES" in perms
     assert "android.permission.BLUETOOTH_SCAN" in perms
     assert "android.permission.WRITE_EXTERNAL_STORAGE" not in perms
 
 
-def test_all_portal_models_share_the_same_behavior():
-    """[KSM-TEST-257] No Portal variant changes KSM install behavior."""
+def test_android10_portal_models_share_the_same_behavior():
+    """[KSM-TEST-257] Android 10 Go, Mini and Gen 2 share behavior."""
     from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
-    for model in ("portal_go", "portal_mini", "portal_gen1", "portal_gen2", "portal_plus_gen1", "portal_plus_gen2", "portal_tv"):
-        assert require_recipe(model) is get_recipe("meta_portal")
+    for model in ("portal_go", "portal_mini", "portal_gen2", "portal_plus_gen2"):
+        assert require_recipe(model) is get_recipe("meta_portal_android10")
+
+
+def test_android9_and_android10_portal_recipes_are_distinct():
+    """[KSM-TEST-266] The Android 9 cleanup capability has its own recipe key."""
+    from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
+
+    assert require_recipe("portal_gen1").recipe_key == "meta_portal_android9"
+    assert require_recipe("portal_plus_gen1").recipe_key == "meta_portal_android9"
+    for model in ("portal_go", "portal_mini", "portal_gen2", "portal_plus_gen2"):
+        assert require_recipe(model).recipe_key == "meta_portal_android10"
+    assert require_recipe("portal_tv").recipe_key == "meta_portal_tv"
+    assert get_recipe("meta_portal_android9") is not get_recipe("meta_portal_android10")
 
 
 def test_android_tv_recipe_exists_but_is_not_portal_shaped():
@@ -156,7 +169,7 @@ def test_android_tv_recipe_exists_but_is_not_portal_shaped():
 
 
 def test_device_name_normalization_strips_the_model_suffix_android_appends():
-    recipe = get_recipe("meta_portal")
+    recipe = get_recipe("meta_portal_android10")
     assert recipe.normalize_device_name("Kitchen PortalGo") == "Kitchen"
     assert recipe.normalize_device_name("Kitchen") == "Kitchen"
     # A label that is only the suffix is left alone rather than emptied.
@@ -177,7 +190,7 @@ def test_recipe_validation_scans_every_string_field_not_an_enrolled_subset():
     Proven field-by-field: every non-prose string field rejects a smuggled
     command, and the two prose fields accept ordinary punctuation.
     """
-    recipe = get_recipe("meta_portal")
+    recipe = get_recipe("meta_portal_android10")
     scanned = [
         f.name
         for f in dataclasses.fields(recipe)
@@ -207,7 +220,7 @@ def test_recipe_operations_cannot_drift_from_what_install_actually_branches_on()
     reads; the booleans are what `install.py` executes. If the two can
     disagree the list is decoration, so `validate_recipe` rejects both
     directions of drift."""
-    recipe = get_recipe("meta_portal")
+    recipe = get_recipe("meta_portal_android10")
     assert OP_SET_DEVICE_ADMIN in recipe.operations and recipe.sets_device_admin
 
     undeclared = dataclasses.replace(

@@ -14,6 +14,7 @@ from custom_components.kiosk_satellite_manager.device_owner import (
     enable_device_owner,
     run_preflight,
 )
+from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
 
 from ksm_device_owner_fake import (  # noqa: E402
     KS_ACTIVITY, KS_ADMIN, META, SECRET, SETUP, SETUP_ACTIVITY, _META_TYPES, FakeDevice,
@@ -43,11 +44,223 @@ async def test_preflight_parses_types_packages_and_never_names():
     assert dev.mutations() == []
 
 
+class _Android9CleanupDevice(FakeDevice):
+    """Readbacks move only when the confirmed cleanup issues each command."""
+
+    def __init__(self, *, adb_enabled=True, home_ks=True, sdk="28", product="aloha",
+                 manufacturer="Facebook", model="Portal",
+                 port="5555", missing_package=None, clear_fails=False,
+                 disable_fails=False, report_disabled=True, accounts_return=False,
+                 owner_lost=False, adb_lost=False):
+        super().__init__(restore_readds_hw=True)
+        self.adb_enabled = adb_enabled
+        self.home_ks = home_ks
+        self.disabled: set[str] = set()
+        self.cleaned: set[str] = set()
+        self.sdk = sdk
+        self.product = product
+        self.manufacturer = manufacturer
+        self.model = model
+        self.port = port
+        self.missing_package = missing_package
+        self.clear_fails = clear_fails
+        self.disable_fails = disable_fails
+        self.report_disabled = report_disabled
+        self.accounts_return = accounts_return
+        self.owner_lost = owner_lost
+        self.adb_lost = adb_lost
+
+    async def shell(self, command: str) -> str:
+        if command == "getprop ro.build.version.sdk":
+            self.commands.append(command)
+            return self.sdk
+        if command == "getprop ro.product.device":
+            self.commands.append(command)
+            return self.product
+        if command == "getprop ro.product.manufacturer":
+            self.commands.append(command)
+            return self.manufacturer
+        if command == "getprop ro.product.model":
+            self.commands.append(command)
+            return self.model
+        if command == "getprop service.adb.tcp.port":
+            self.commands.append(command)
+            return self.port
+        if command == "settings get global adb_enabled":
+            self.commands.append(command)
+            return "1" if self.adb_enabled and not (self.adb_lost and self.disabled) else "0"
+        if command == "dumpsys account" and self.accounts_return and self.disabled:
+            self.account_types = ["com.facebook.aloha.hw"]
+        if command == "dumpsys device_policy" and self.owner_lost and self.disabled:
+            self.owner = None
+        if command.startswith("pm path "):
+            self.commands.append(command)
+            if command[8:] == self.missing_package:
+                return ""
+            return f"package:/system/app/{command[8:]}/base.apk"
+        if command.startswith("pm clear "):
+            self.commands.append(command)
+            package = command[9:]
+            if self.clear_fails:
+                return "Failed"
+            self.cleaned.add(package)
+            if package == META:
+                self.account_types = []
+            return "Success"
+        if command.startswith("pm disable-user --user 0 "):
+            self.commands.append(command)
+            if self.disable_fails:
+                return "Error"
+            self.disabled.add(command.split()[-1])
+            return "new state: disabled-user"
+        if command == "pm list packages -d":
+            self.commands.append(command)
+            return "\n".join(f"package:{p}" for p in sorted(self.disabled)) if self.report_disabled else ""
+        if command.startswith("cmd package resolve-activity --brief"):
+            self.commands.append(command)
+            return "me.jxl.kiosk_satellite/.HomeAlias" if self.home_ks else "com.facebook.alohaapps.launcher/.HomeActivity"
+        if command == "echo ksm_adb_ready":
+            self.commands.append(command)
+            return "ksm_adb_ready"
+        return await super().shell(command)
+
+
+async def test_android9_cleanup_requires_confirmation_and_native_home():
+    """[KSM-TEST-267] No package or owner mutation before confirmation/readiness."""
+    recipe = require_recipe("portal_gen1")
+    for confirmed, home in ((False, True), (True, False)):
+        dev = _Android9CleanupDevice()
+        with pytest.raises(DeviceOwnerError):
+            await device_owner.repurpose_android9_portal(
+                dev, "portal_gen1", recipe, confirmed=confirmed, ks_home_enabled=home
+            )
+        assert dev.mutations() == [] and dev.cleaned == set() and dev.disabled == set()
+
+
+async def test_android9_cleanup_sets_owner_clears_meta_and_preserves_adb():
+    """[KSM-TEST-267] Confirmation yields verified owner, clean accounts and ADB."""
+    dev = _Android9CleanupDevice()
+    result = await device_owner.repurpose_android9_portal(
+        dev, "portal_gen1", require_recipe("portal_gen1"),
+        confirmed=True, ks_home_enabled=True,
+    )
+    assert result.owner_enabled is True and result.adb_available is True
+    assert result.accounts_remaining == 0
+    assert dev.owner == "me.jxl.kiosk_satellite"
+    assert META in dev.cleaned and META in dev.disabled
+    assert "com.facebook.alohaapps.launcher" in dev.disabled
+    assert "com.facebook.alohaservices.abilitymanager" in dev.disabled
+    assert "com.facebook.alohaapps.settings" not in dev.disabled
+    assert "com.facebook.aloha.system.services" not in dev.disabled
+    assert "pm clear me.jxl.kiosk_satellite" not in dev.commands
+
+
+async def test_android9_cleanup_refuses_unqualified_model_and_adb_loss():
+    """[KSM-TEST-267] A shared recipe does not qualify a sibling; ADB loss fails."""
+    dev = _Android9CleanupDevice()
+    with pytest.raises(DeviceOwnerError):
+        await device_owner.repurpose_android9_portal(
+            dev, "portal_plus_gen1", require_recipe("portal_plus_gen1"),
+            confirmed=True, ks_home_enabled=True,
+        )
+    assert dev.mutations() == []
+    dev = _Android9CleanupDevice(adb_enabled=False)
+    with pytest.raises(DeviceOwnerError):
+        await device_owner.repurpose_android9_portal(
+            dev, "portal_gen1", require_recipe("portal_gen1"),
+            confirmed=True, ks_home_enabled=True,
+        )
+    assert dev.mutations() == []
+
+
+@pytest.mark.parametrize("options,code", [
+    ({"sdk": "29"}, "cleanup_unsupported"),
+    ({"product": "other"}, "cleanup_unsupported"),
+    ({"manufacturer": "Other"}, "cleanup_unsupported"),
+    ({"model": "Portal+"}, "cleanup_unsupported"),
+    ({"port": "-1"}, "adb_required"),
+    ({"missing_package": META}, "package_missing"),
+])
+async def test_android9_preflight_refuses_changed_hardware_or_adb(options, code):
+    """[KSM-TEST-267] Identity and ADB controls prevent any mutation."""
+    dev = _Android9CleanupDevice(**options)
+    with pytest.raises(DeviceOwnerError) as err:
+        await device_owner.repurpose_android9_portal(
+            dev, "portal_gen1", require_recipe("portal_gen1"),
+            confirmed=True, ks_home_enabled=True,
+        )
+    assert err.value.code == code and not dev.mutations()
+    assert not dev.cleaned and not dev.disabled
+
+
+async def test_android9_preflight_refuses_another_owner():
+    dev = _Android9CleanupDevice()
+    dev.owner = "com.example.other"
+    with pytest.raises(DeviceOwnerError) as err:
+        await device_owner.repurpose_android9_portal(
+            dev, "portal_gen1", require_recipe("portal_gen1"),
+            confirmed=True, ks_home_enabled=True,
+        )
+    assert err.value.code == "preflight_blocked" and not dev.mutations()
+
+
+async def test_android9_preflight_requires_ks_as_actual_android_home():
+    """[KSM-TEST-267] A KS toggle alone cannot authorize launcher removal."""
+    dev = _Android9CleanupDevice(home_ks=False)
+    with pytest.raises(DeviceOwnerError) as err:
+        await device_owner.repurpose_android9_portal(
+            dev, "portal_gen1", require_recipe("portal_gen1"),
+            confirmed=True, ks_home_enabled=True,
+        )
+    assert err.value.code == "ks_home_required"
+    assert not dev.mutations() and not dev.cleaned and not dev.disabled
+
+
+@pytest.mark.parametrize("options", [
+    {"clear_fails": True}, {"disable_fails": True},
+    {"report_disabled": False},
+    {"accounts_return": True}, {"owner_lost": True}, {"adb_lost": True},
+])
+async def test_android9_cleanup_detects_partial_application(options):
+    """[KSM-TEST-267] Command and readback failures never claim cleanup success."""
+    dev = _Android9CleanupDevice(**options)
+    with pytest.raises(DeviceOwnerError) as err:
+        await device_owner.repurpose_android9_portal(
+            dev, "portal_gen1", require_recipe("portal_gen1"),
+            confirmed=True, ks_home_enabled=True,
+        )
+    assert err.value.code == "cleanup_partial"
+
+
+async def test_android9_cleanup_accepts_existing_ks_owner():
+    """[KSM-TEST-267] A prior owner enrollment does not cause a second dpm call."""
+    dev = _Android9CleanupDevice()
+    dev.owner = "me.jxl.kiosk_satellite"
+    result = await device_owner.repurpose_android9_portal(
+        dev, "portal_gen1", require_recipe("portal_gen1"),
+        confirmed=True, ks_home_enabled=True,
+    )
+    assert result.owner_enabled
+    assert not any(c.startswith("dpm set") for c in dev.commands)
+
+
+@pytest.mark.parametrize("missing", [
+    "com.facebook.aloha.state", "com.facebook.aloha.app.storytime",
+])
+async def test_android9_cleanup_skips_absent_optional_meta_packages(missing):
+    """[KSM-TEST-267] Optional app variants do not block audited cleanup."""
+    dev = _Android9CleanupDevice(missing_package=missing)
+    result = await device_owner.repurpose_android9_portal(
+        dev, "portal_gen1", require_recipe("portal_gen1"),
+        confirmed=True, ks_home_enabled=True,
+    )
+    assert result.owner_enabled and missing not in result.cleared_packages
+    assert missing not in result.disabled_packages
+
+
 @pytest.mark.parametrize("model_key,types", [
     # An account registered by a package no model lists.
     ("portal_mini", ("com.facebook.aloha.sso", "com.example.other")),
-    # The Meta package, but on a model with no live evidence for clearing it.
-    ("portal_gen1", tuple(f"com.facebook.aloha.{t}" for t in _META_TYPES)),
     (None, ("com.facebook.aloha.sso",)),
     # An account type with no registered authenticator at all.
     ("portal_mini", ("com.unknown.type",)),

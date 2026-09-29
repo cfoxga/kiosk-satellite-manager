@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Android 9 Portal Gen 1 now has a separate `meta_portal_android9` recipe and
+  a confirmed cleanup flow (#97). It enrolls Kiosk Satellite as Device Owner,
+  clears Meta accounts and app data, disables audited Meta launcher/services,
+  and checks native KS Home and network ADB. Android 10 Go, Mini and Gen 2
+  models share `meta_portal_android10`; Portal TV remains separate.
+
 - New global setting **Hide follower updates** (#95). While on, KSM disables the ESPHome update
   entity of every confirmed fleet follower, so a Kiosk Satellite release prompts once per fleet
   leader instead of once per device. KSM re-enables only entities it disabled itself, when the
@@ -12,8 +18,7 @@
 
 - KSM no longer offers a Home launcher toggle or changes `home.enabled` or Android's
   default Home app during install and updates (#94). Configure Home in Kiosk
-  Satellite itself. All Meta Portal models now use the same `meta_portal`
-  recipe key; recipe version numbers are removed from the catalog and sensor.
+  Satellite itself. Portal recipe keys have no version numbers.
 
 - A device's Configure menu has **Change host** (#93). Enter a DNS name or IP address; KSM
   checks that Kiosk Satellite answers there under the device's saved key and changes nothing

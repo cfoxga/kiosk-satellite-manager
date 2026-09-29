@@ -48,7 +48,7 @@ _TARGET_VERSION = "2026.9.99"
 # SDK-29 output of one named recipe version, and a device only gets them by
 # resolving to a model with an approved assignment to that recipe. The
 # values below are unchanged -- that is the point of KSM-TEST-063.
-PORTAL_RECIPE = get_recipe("meta_portal")
+PORTAL_RECIPE = get_recipe("meta_portal_android10")
 PORTAL_PERMISSIONS = PORTAL_RECIPE.permissions_for_sdk(29)
 PORTAL_APPOPS = PORTAL_RECIPE.appops_for_sdk(29)
 

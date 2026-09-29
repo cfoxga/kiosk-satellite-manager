@@ -6,7 +6,7 @@ name is read from, and what the authoritative postconditions are. It owns no
 hardware matching and no support claim -- those are `device_models.py` and
 `device_catalog.py` respectively.
 
-Several exact models may share one recipe (all Meta Portals use `meta_portal`).
+Several exact models may share one recipe.
 Sharing a recipe never transfers
 qualification or recovery status between those models; see
 `device_catalog.derive_support_state` and `oem_recovery.py`.
@@ -71,6 +71,8 @@ _NAME_SOURCE_COMMANDS: dict[str, str] = {
 
 PERMISSION_POLICY_PORTAL = "portal_sdk_gated"
 PERMISSION_POLICY_STANDARD = "standard_sdk_gated"
+REPURPOSE_NONE = "none"
+REPURPOSE_ANDROID9_META = "android9_meta_confirmed"
 
 INSTALL_PRESERVE_MATCHING_VERSION = "preserve_matching_version"
 UPDATE_REINSTALL_ON_VERSION_MISMATCH = "reinstall_on_version_mismatch"
@@ -117,6 +119,7 @@ class InstallRecipe:
     uninstall_behavior: str = UNINSTALL_PM_UNINSTALL
     permission_policy: str = PERMISSION_POLICY_STANDARD
     appops_policy: str = PERMISSION_POLICY_STANDARD
+    repurpose_policy: str = REPURPOSE_NONE
     # Conditional behavior. Each is read by `install.py` and is
     # cross-checked against `operations` by `validate_recipe`, so the audited
     # operation list can never drift away from what actually executes.
@@ -237,6 +240,8 @@ def validate_recipe(recipe: InstallRecipe) -> None:
                     f"{recipe.identity} field {f.name!r} contains shell "
                     f"metacharacter(s) {bad!r}; recipe data is typed, not executable"
                 )
+    if recipe.repurpose_policy not in (REPURPOSE_NONE, REPURPOSE_ANDROID9_META):
+        raise RecipeError(f"repurpose_policy {recipe.repurpose_policy!r} is not approved")
 
     for key, value in recipe.parameters:
         if key not in ALLOWED_PARAMETERS:
@@ -293,8 +298,35 @@ _PORTAL_POSTCONDITIONS: tuple[str, ...] = (
 
 INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
     InstallRecipe(
-        recipe_key="meta_portal",
-        name="Meta Portal",
+        recipe_key="meta_portal_android10",
+        name="Meta Portal (Android 10)",
+        device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
+        redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,
+        start_url_path="/portal",
+        permission_policy=PERMISSION_POLICY_PORTAL,
+        sets_device_admin=True,
+        verifier_retry_on_failure=True,
+        operations=_PORTAL_OPERATIONS,
+        parameters=(("browser.ignore_ssl_errors", True),),
+        postconditions=_PORTAL_POSTCONDITIONS,
+    ),
+    InstallRecipe(
+        recipe_key="meta_portal_android9",
+        name="Meta Portal (Android 9)",
+        device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
+        redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,
+        start_url_path="/portal",
+        permission_policy=PERMISSION_POLICY_PORTAL,
+        repurpose_policy=REPURPOSE_ANDROID9_META,
+        sets_device_admin=True,
+        verifier_retry_on_failure=True,
+        operations=_PORTAL_OPERATIONS,
+        parameters=(("browser.ignore_ssl_errors", True),),
+        postconditions=_PORTAL_POSTCONDITIONS,
+    ),
+    InstallRecipe(
+        recipe_key="meta_portal_tv",
+        name="Meta Portal TV (cleanup unqualified)",
         device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
         redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,
         start_url_path="/portal",

@@ -11,8 +11,11 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.kiosk_satellite_manager import device_owner
 from custom_components.kiosk_satellite_manager.adb_client import AdbConnectFailed
+from custom_components.kiosk_satellite_manager.config_flow import (
+    KioskSatelliteManagerConfigFlow, _native_home_enabled,
+)
 from custom_components.kiosk_satellite_manager.const import (
-    CONF_DEVICE_PROFILE, CONF_HOST, CONF_KEY_PATH, CONF_NAME, CONF_PORT, DOMAIN,
+    CONF_DEVICE_PROFILE, CONF_HOST, CONF_KEY_PATH, CONF_NAME, CONF_PASSWORD, CONF_PORT, DOMAIN,
 )
 from ksm_device_owner_fake import FakeDevice, KS_ADMIN, META, SECRET
 
@@ -80,6 +83,222 @@ async def _open_owner_step(hass, device):
     return await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "device_owner"}
     )
+
+
+async def test_gen1_owner_flow_requires_separate_cleanup_confirmation(hass, device):
+    """[KSM-TEST-267] Gen 1 owner action routes to cleanup, gated by KS Home."""
+    hass.config_entries.async_update_entry(device, data={
+        **device.data, CONF_DEVICE_PROFILE: "portal_gen1", CONF_PASSWORD: "secret",
+    })
+    fake = FakeDevice()
+    adb_patch, _ = _adb(fake)
+    with adb_patch, patch(
+        "custom_components.kiosk_satellite_manager.config_flow._native_home_enabled",
+        new=AsyncMock(return_value=True),
+    ), patch.object(device_owner, "android9_cleanup_preflight", new=AsyncMock()) as pre, patch.object(
+        device_owner, "repurpose_android9_portal", new=AsyncMock()
+    ) as cleanup:
+        result = await _open_owner_step(hass, device)
+        assert result["step_id"] == "android9_cleanup"
+        pre.assert_awaited_once()
+        cleanup.assert_not_awaited()
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {CONFIRM: True}
+        )
+    assert result["reason"] == "android9_cleanup_done"
+    assert cleanup.await_args.kwargs == {"confirmed": True, "ks_home_enabled": True}
+
+
+async def test_gen1_owner_flow_blocks_when_native_home_off(hass, device):
+    """[KSM-TEST-267] The native KS Home setting is a hard preflight gate."""
+    hass.config_entries.async_update_entry(device, data={
+        **device.data, CONF_DEVICE_PROFILE: "portal_gen1", CONF_PASSWORD: "secret",
+    })
+    fake = FakeDevice()
+    adb_patch, _ = _adb(fake)
+    with adb_patch, patch(
+        "custom_components.kiosk_satellite_manager.config_flow._native_home_enabled",
+        new=AsyncMock(return_value=False),
+    ), patch.object(
+        device_owner, "android9_cleanup_preflight",
+        new=AsyncMock(side_effect=device_owner.DeviceOwnerError("ks_home_required")),
+    ), patch.object(device_owner, "repurpose_android9_portal", new=AsyncMock()) as cleanup:
+        result = await _open_owner_step(hass, device)
+    assert result["reason"] == "android9_cleanup_blocked"
+    cleanup.assert_not_awaited()
+
+
+async def test_native_home_reads_ks_settings(hass):
+    """[KSM-TEST-267] Only the native KS setting qualifies the cleanup."""
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.ks_api_client.login",
+        new=AsyncMock(return_value="token"),
+    ) as login, patch(
+        "custom_components.kiosk_satellite_manager.config_flow.ks_api_client.get_settings",
+        new=AsyncMock(return_value={"home.enabled": True}),
+    ) as settings:
+        assert await _native_home_enabled(hass, "192.0.2.55", "secret", None)
+        settings.return_value = {"home.enabled": False}
+        assert not await _native_home_enabled(hass, "192.0.2.55", "secret", None)
+        assert not await _native_home_enabled(hass, "192.0.2.55", "", None)
+    assert login.await_count == 2
+
+
+async def test_gen1_owner_flow_reports_partial_cleanup(hass, device):
+    """[KSM-TEST-267] After confirmation, a failed readback says partial."""
+    hass.config_entries.async_update_entry(device, data={
+        **device.data, CONF_DEVICE_PROFILE: "portal_gen1", CONF_PASSWORD: "secret",
+    })
+    adb_patch, _ = _adb(FakeDevice())
+    with adb_patch, patch(
+        "custom_components.kiosk_satellite_manager.config_flow._native_home_enabled",
+        new=AsyncMock(return_value=True),
+    ), patch.object(device_owner, "android9_cleanup_preflight", new=AsyncMock()), patch.object(
+        device_owner, "repurpose_android9_portal",
+        new=AsyncMock(side_effect=device_owner.DeviceOwnerError("cleanup_partial")),
+    ):
+        form = await _open_owner_step(hass, device)
+        result = await hass.config_entries.options.async_configure(
+            form["flow_id"], {CONFIRM: True}
+        )
+    assert result["reason"] == "android9_cleanup_failed"
+    assert "cleanup_partial" in result["description_placeholders"]["reason"]
+
+
+async def test_gen1_owner_flow_reports_adb_loss_before_confirmation(hass, device):
+    """[KSM-TEST-267] ADB failure never offers the destructive form."""
+    hass.config_entries.async_update_entry(device, data={
+        **device.data, CONF_DEVICE_PROFILE: "portal_gen1", CONF_PASSWORD: "secret",
+    })
+    adb_patch, _ = _adb(None, AdbConnectFailed("refused"))
+    with adb_patch, patch(
+        "custom_components.kiosk_satellite_manager.config_flow._native_home_enabled",
+        new=AsyncMock(return_value=True),
+    ):
+        result = await _open_owner_step(hass, device)
+    assert result["reason"] == "adb_unavailable"
+    assert result["description_placeholders"]["address"] == "192.0.2.51:5555"
+
+
+async def test_gen1_owner_flow_requires_readable_native_home(hass, device):
+    """[KSM-TEST-267] Failed KS settings read prevents destructive form."""
+    hass.config_entries.async_update_entry(device, data={
+        **device.data, CONF_DEVICE_PROFILE: "portal_gen1", CONF_PASSWORD: "secret",
+    })
+    adb_patch, _ = _adb(FakeDevice())
+    with adb_patch, patch(
+        "custom_components.kiosk_satellite_manager.config_flow._native_home_enabled",
+        new=AsyncMock(side_effect=ValueError("bad settings")),
+    ), patch.object(
+        device_owner, "android9_cleanup_preflight",
+        new=AsyncMock(side_effect=device_owner.DeviceOwnerError("ks_home_required")),
+    ) as pre:
+        result = await _open_owner_step(hass, device)
+    assert result["reason"] == "android9_cleanup_blocked"
+    assert pre.await_args.kwargs["ks_home_enabled"] is False
+
+
+async def test_gen1_owner_flow_reports_adb_loss_during_cleanup(hass, device):
+    """[KSM-TEST-267] ADB loss at confirmation cannot report success."""
+    hass.config_entries.async_update_entry(device, data={
+        **device.data, CONF_DEVICE_PROFILE: "portal_gen1", CONF_PASSWORD: "secret",
+    })
+    adb_patch, _ = _adb(FakeDevice())
+    with adb_patch, patch(
+        "custom_components.kiosk_satellite_manager.config_flow._native_home_enabled",
+        new=AsyncMock(return_value=True),
+    ), patch.object(device_owner, "android9_cleanup_preflight", new=AsyncMock()), patch.object(
+        device_owner, "repurpose_android9_portal",
+        new=AsyncMock(side_effect=AdbConnectFailed("lost")),
+    ):
+        form = await _open_owner_step(hass, device)
+        result = await hass.config_entries.options.async_configure(
+            form["flow_id"], {CONFIRM: True}
+        )
+    assert result["reason"] == "adb_unavailable"
+
+
+async def test_gen1_onboarding_cleanup_confirmation_and_skip(hass):
+    """[KSM-TEST-267] Opt-in on Gen 1 reaches the confirmed cleanup executor."""
+    flow = KioskSatelliteManagerConfigFlow()
+    flow.hass = hass
+    flow._profile_key = "portal_gen1"
+    flow._host = "192.0.2.55"
+    flow._port = 5555
+    flow._key_path = "/k/adbkey"
+    flow._password = "secret"
+    flow._tls_pin = None
+    fake = FakeDevice()
+    adb_patch, _ = _adb(fake)
+    with adb_patch, patch(
+        "custom_components.kiosk_satellite_manager.config_flow._native_home_enabled",
+        new=AsyncMock(return_value=True),
+    ), patch.object(device_owner, "android9_cleanup_preflight", new=AsyncMock()) as pre, patch.object(
+        device_owner, "repurpose_android9_portal", new=AsyncMock()
+    ) as cleanup, patch.object(flow, "_async_create_device_entry", return_value={"type": "create_entry"}), patch.object(
+        flow, "_owner_notice"
+    ) as notice:
+        form = await flow.async_step_onboard_device_owner()
+        assert form["step_id"] == "onboard_android9_cleanup"
+        pre.assert_awaited_once()
+        cleanup.assert_not_awaited()
+        assert (await flow.async_step_onboard_device_owner({CONFIRM: False}))["type"] == "create_entry"
+        cleanup.assert_not_awaited()
+        assert (await flow.async_step_onboard_device_owner({CONFIRM: True}))["type"] == "create_entry"
+        assert cleanup.await_args.kwargs == {"confirmed": True, "ks_home_enabled": True}
+        assert "completed" in notice.call_args.args[0]
+
+
+async def test_gen1_onboarding_cleanup_blocker_and_partial_failure(hass):
+    """[KSM-TEST-267] A blocker skips; executor failure reports incomplete."""
+    flow = KioskSatelliteManagerConfigFlow()
+    flow.hass = hass
+    flow._profile_key = "portal_gen1"
+    flow._host = "192.0.2.55"
+    flow._port = 5555
+    flow._key_path = "/k/adbkey"
+    flow._password = "secret"
+    flow._tls_pin = None
+    adb_patch, _ = _adb(FakeDevice())
+    with adb_patch, patch(
+        "custom_components.kiosk_satellite_manager.config_flow._native_home_enabled",
+        new=AsyncMock(return_value=False),
+    ), patch.object(
+        device_owner, "android9_cleanup_preflight",
+        new=AsyncMock(side_effect=device_owner.DeviceOwnerError("ks_home_required")),
+    ), patch.object(device_owner, "repurpose_android9_portal", new=AsyncMock()) as cleanup, patch.object(
+        flow, "_async_create_device_entry", return_value={"type": "create_entry"}
+    ), patch.object(flow, "_owner_notice") as notice:
+        assert (await flow.async_step_onboard_device_owner())["type"] == "create_entry"
+        cleanup.assert_not_awaited()
+        assert "not offered" in notice.call_args.args[0]
+        cleanup.side_effect = device_owner.DeviceOwnerError("cleanup_partial")
+        assert (await flow.async_step_onboard_device_owner({CONFIRM: True}))["type"] == "create_entry"
+        assert "did not finish" in notice.call_args.args[0]
+
+
+async def test_gen1_onboarding_adb_failure_is_reported(hass):
+    """[KSM-TEST-267] No ADB means no cleanup during either onboarding phase."""
+    flow = KioskSatelliteManagerConfigFlow()
+    flow.hass = hass
+    flow._profile_key = "portal_gen1"
+    flow._host = "192.0.2.55"
+    flow._port = 5555
+    flow._key_path = "/k/adbkey"
+    flow._password = "secret"
+    flow._tls_pin = None
+    adb_patch, _ = _adb(None, AdbConnectFailed("refused"))
+    with adb_patch, patch(
+        "custom_components.kiosk_satellite_manager.config_flow._native_home_enabled",
+        new=AsyncMock(return_value=True),
+    ), patch.object(flow, "_async_create_device_entry", return_value={"type": "create_entry"}), patch.object(
+        flow, "_owner_notice"
+    ) as notice, patch.object(device_owner, "repurpose_android9_portal", new=AsyncMock()) as cleanup:
+        assert (await flow.async_step_onboard_device_owner())["type"] == "create_entry"
+        assert "ADB is unavailable" in notice.call_args.args[0]
+        assert (await flow.async_step_onboard_device_owner({CONFIRM: True}))["type"] == "create_entry"
+        assert "ADB is unavailable" in notice.call_args.args[0]
+        cleanup.assert_not_awaited()
 
 
 async def test_owner_step_explains_and_requires_confirmation(hass, device, meta_start):
@@ -213,10 +432,10 @@ async def test_non_meta_model_enrolls_without_meta_setup(hass, meta_start):
     """[KSM-TEST-217] Negative: a model without a Meta setup app ends in the
     plain 'enabled' result and Meta setup is never started."""
     entry = MockConfigEntry(
-        domain=DOMAIN, title="Gen1", unique_id="192.0.2.52",
+        domain=DOMAIN, title="Portal TV", unique_id="192.0.2.52",
         data={
             CONF_HOST: "192.0.2.52", CONF_PORT: 5555, CONF_KEY_PATH: "/k/adbkey",
-            CONF_NAME: "Gen1", CONF_DEVICE_PROFILE: "portal_gen1",
+            CONF_NAME: "Portal TV", CONF_DEVICE_PROFILE: "portal_tv",
         },
     )
     entry.add_to_hass(hass)
