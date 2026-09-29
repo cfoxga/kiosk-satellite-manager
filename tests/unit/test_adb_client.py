@@ -673,6 +673,22 @@ async def test_declared_bound_services_extracts_accessibility_component(tmp_path
     }
 
 
+async def test_KSM_TEST_270_declared_bound_services_detects_new_ks_listener(tmp_path):
+    """The Android 14 KS 2026.9.90 resolver line is recognized end to end."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    resolver = (
+        "android.service.notification.NotificationListenerService:\n"
+        "  6c47171 me.jxl.kiosk_satellite/.MediaSessionListener filter a9aeb56 "
+        "permission android.permission.BIND_NOTIFICATION_LISTENER_SERVICE\n"
+    )
+    with patch.object(client._device, "shell", new=AsyncMock(return_value=resolver)):
+        assert await client.declared_bound_services() == {
+            "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE":
+                "me.jxl.kiosk_satellite/.MediaSessionListener"
+        }
+
+
 async def test_declared_bound_services_empty_when_none_declared(tmp_path):
     key_path = ensure_adb_key(str(tmp_path / "keys"))
     client = AdbClient("1.2.3.4", 5555, key_path)

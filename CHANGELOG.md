@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Recognize Android 14 onn 4K Pro devices by their live-confirmed model and
+  assign a dedicated provisioning recipe (#98). All recipes converge KS
+  Notification Access when the installed app declares its listener service;
+  the new recipe includes Nearby devices, Modify system settings, and All
+  files access grants.
+
 - Android 9 Portal Gen 1 now has a separate `meta_portal_android9` recipe and
   a confirmed cleanup flow (#97). It enrolls Kiosk Satellite as Device Owner,
   clears Meta accounts and app data, disables audited Meta launcher/services,

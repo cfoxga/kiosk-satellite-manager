@@ -298,6 +298,26 @@ _PORTAL_POSTCONDITIONS: tuple[str, ...] = (
 
 INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
     InstallRecipe(
+        recipe_key="onn_4k_pro_android14",
+        name="onn 4K Pro (Android 14)",
+        device_name_source=NAME_SOURCE_GLOBAL_DEVICE_NAME,
+        permission_policy=PERMISSION_POLICY_STANDARD,
+        sets_device_admin=False,
+        operations=(
+            OP_PM_INSTALL,
+            OP_AM_START,
+            OP_GRANT_RUNTIME_PERMISSIONS,
+            OP_SET_APPOPS,
+            OP_BATTERY_EXEMPTION,
+            OP_CONVERGE_CONSENT_SERVICES,
+            OP_VERIFY_HEALTH,
+            OP_SYNC_KS_SETTINGS,
+            OP_PM_UNINSTALL,
+        ),
+        parameters=(("browser.ignore_ssl_errors", True),),
+        postconditions=_PORTAL_POSTCONDITIONS,
+    ),
+    InstallRecipe(
         recipe_key="meta_portal_android10",
         name="Meta Portal (Android 10)",
         device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
@@ -337,10 +357,9 @@ INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
         parameters=(("browser.ignore_ssl_errors", True),),
         postconditions=_PORTAL_POSTCONDITIONS,
     ),
-    # Declared for the exact onn/Chromecast-class model rows #18 will add once
-    # their ro.product.model is read off live hardware. Deliberately assigned
-    # to nothing today: the broad `gtv_stick` classification is not a model, so
-    # there is nothing it may legitimately provision (KSM-BEHAVE-048).
+    # Generic TV behavior remains unassigned. The live-identified onn 4K Pro
+    # Android 14 model uses its own recipe above; the broad `gtv_stick`
+    # classification never authorizes provisioning (KSM-BEHAVE-048).
     InstallRecipe(
         recipe_key="android_tv",
         name="Android TV / Google TV stick",

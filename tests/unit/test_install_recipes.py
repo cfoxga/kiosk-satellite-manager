@@ -168,6 +168,19 @@ def test_android_tv_recipe_exists_but_is_not_portal_shaped():
     assert "android.permission.WRITE_SECURE_SETTINGS" not in recipe.permissions_for_sdk(29)
 
 
+def test_KSM_TEST_270_onn_recipe_carries_android14_special_grants():
+    recipe = get_recipe("onn_4k_pro_android14")
+    assert recipe is not None
+    assert recipe.sets_device_admin is False
+    assert recipe.device_name_source == "global:device_name"
+    assert {"android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT"} <= set(
+        recipe.permissions_for_sdk(34)
+    )
+    assert {"WRITE_SETTINGS", "MANAGE_EXTERNAL_STORAGE"} <= set(recipe.appops_for_sdk(34))
+    assert "converge_consent_services" in recipe.operations
+    assert all("converge_consent_services" in r.operations for r in INSTALL_RECIPES)
+
+
 def test_device_name_normalization_strips_the_model_suffix_android_appends():
     recipe = get_recipe("meta_portal_android10")
     assert recipe.normalize_device_name("Kitchen PortalGo") == "Kitchen"

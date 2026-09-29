@@ -193,6 +193,26 @@ _PORTAL_GEN_SDK_FLOOR_LIMITATION = (
 
 DEVICE_MODELS: tuple[DeviceModel, ...] = (
     DeviceModel(
+        model_key="onn_4k_pro_android14",
+        name="onn 4K Pro Streaming Device (Android 14)",
+        manufacturer=("onn",),
+        models=("onn 4k pro streaming device",),
+        min_sdk=34,
+        max_sdk=34,
+        match_priority=10,
+        catalog_state=CATALOG_STATE_QUALIFIED_IDENTITY,
+        observed_facts=(
+            ("ro.build.characteristics", "tv,nosdcard"),
+            ("ro.build.version.sdk", "34"),
+            ("ro.product.device", "jarvis2"),
+        ),
+        evidence_refs=("docs/SPEC/device-catalog.md KSM-BEHAVE-137",),
+        limitations=(
+            "Identity was read from Theater and Great Room GTVs on 2026-09-29; "
+            "install-lifecycle qualification is not yet complete.",
+        ),
+    ),
+    DeviceModel(
         model_key="portal_go",
         name="Meta Portal Go",
         manufacturer=("facebook",),
@@ -298,11 +318,9 @@ FALLBACK_CLASSIFICATIONS: tuple[FallbackClassification, ...] = (
         manufacturer=("onn", "google"),
         characteristics=("tv,nosdcard", "tv"),
         reason=(
-            "ro.build.characteristics and ro.product.manufacturer are "
-            "live-confirmed for onn 4K/4K Pro (provisioning.md Finding 4), but "
-            "no exact ro.product.model has been read off one, so there is no "
-            "model row to assign `android_tv:v1` to yet "
-            "(cfoxga/kiosk-satellite-manager#18)."
+            "The observed Google TV identity does not match an exact catalog "
+            "model and SDK combination. The onn 4K Pro Android 14 model is "
+            "known, but other onn and Chromecast models remain unassigned."
         ),
     ),
     FallbackClassification(

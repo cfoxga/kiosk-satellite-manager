@@ -38,6 +38,29 @@ _PORTAL_MINI = DeviceFacts(manufacturer="Facebook", model="PortalMini", sdk=29)
 _PORTAL_TV = DeviceFacts(manufacturer="Facebook", model="PortalTV", characteristics="tv", sdk=29)
 
 
+def test_KSM_TEST_270_onn_4k_pro_android14_resolves_only_exact_live_identity():
+    facts = DeviceFacts(
+        manufacturer="onn", model="onn 4K Pro Streaming Device",
+        device="jarvis2", characteristics="tv,nosdcard", sdk=34,
+    )
+    resolution = resolve_catalog_entry(facts)
+    assert resolution.model_key == "onn_4k_pro_android14"
+    assert resolution.executable
+    assert resolution.recipe.recipe_key == "onn_4k_pro_android14"
+    health_facts = DeviceFacts.from_health({
+        "brand": "onn", "model": "onn onn 4K Pro Streaming Device", "sdkInt": 34,
+    })
+    assert resolve_catalog_entry(health_facts).recipe.recipe_key == "onn_4k_pro_android14"
+    for changed in (
+        dataclasses.replace(facts, model="onn 4K Streaming Device"),
+        dataclasses.replace(facts, model=""),
+        dataclasses.replace(facts, manufacturer="google"),
+        dataclasses.replace(facts, sdk=33),
+        dataclasses.replace(facts, sdk=0),
+    ):
+        assert not resolve_catalog_entry(changed).executable
+
+
 def _qualifications(model_key: str, recipe_key: str = "meta_portal_android10", *, result: str = "pass"):
     recipe = get_recipe("meta_portal_android10")
     return tuple(

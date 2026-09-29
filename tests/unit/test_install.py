@@ -26,7 +26,7 @@ import pytest
 from custom_components.kiosk_satellite_manager.adb_client import PmInstallFailed
 from custom_components.kiosk_satellite_manager.apk_signing import ApkSignerVerificationFailed
 from custom_components.kiosk_satellite_manager.device_catalog import NoApprovedRecipe
-from custom_components.kiosk_satellite_manager.install_recipes import get_recipe
+from custom_components.kiosk_satellite_manager.install_recipes import INSTALL_RECIPES, get_recipe
 from custom_components.kiosk_satellite_manager.install import (
     KsInstallVerificationFailed,
     PermissionConvergenceResult,
@@ -1019,14 +1019,34 @@ async def test_converge_permissions_accessibility_needs_user_interaction_when_wr
 
 
 async def test_converge_permissions_notification_listener_not_applicable_for_ks():
-    """Live-confirmed against the Test Portal (2026-09-20): Kiosk
-    Satellite declares no NotificationListenerService component."""
+    """An older KS build without the service needs no notification grant."""
     client = _converging_client()
     client.declared_bound_services = AsyncMock(
         return_value={"android.permission.BIND_ACCESSIBILITY_SERVICE": "me.jxl.kiosk_satellite/.KioskAccessibilityService"}
     )
     result = await converge_permissions(client, sdk=29, recipe=PORTAL_RECIPE)
     assert result.notification_listener == "not_applicable"
+
+
+@pytest.mark.parametrize("recipe", INSTALL_RECIPES, ids=lambda r: r.recipe_key)
+async def test_KSM_TEST_270_notification_access_converges_for_every_recipe(recipe):
+    client = _converging_client()
+    client.granted_permissions = AsyncMock(return_value=set(recipe.permissions_for_sdk(34)))
+    component = "me.jxl.kiosk_satellite/.MediaSessionListener"
+    existing = "com.google.android.apps.tv.launcherx/.TvNotificationListenerService"
+    client.declared_bound_services = AsyncMock(return_value={
+        "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE": component,
+    })
+    state = {"enabled_notification_listeners": existing}
+    client.get_secure_setting = AsyncMock(side_effect=lambda key: state.get(key, ""))
+
+    async def put(key, value):
+        state[key] = value
+
+    client.put_secure_setting = AsyncMock(side_effect=put)
+    result = await converge_permissions(client, sdk=34, recipe=recipe)
+    assert result.notification_listener == "granted"
+    assert set(state["enabled_notification_listeners"].split(":")) == {existing, component}
 
 
 # KSM-BEHAVE-046 (Phase 5, "functional verification"): verify_functional_capabilities

@@ -216,6 +216,14 @@ class CatalogResolution:
 
 
 RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
+    RecipeAssignment(
+        model_key="onn_4k_pro_android14",
+        recipe_key="onn_4k_pro_android14",
+        state=ASSIGNMENT_APPROVED,
+        effective_date="2026-09-29",
+        rationale="Exact Theater and Great Room GTV identity confirmed by live ADB reads; "
+        "qualification remains per build and scenario.",
+    ),
     # KSM-BEHAVE-136: Android 9's confirmed repurpose capability is distinct.
     # Native KS settings still own Home. Qualification stays model-specific.
     RecipeAssignment(
