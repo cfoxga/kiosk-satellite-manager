@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The physical-device test matrix accepts `--allow-missing-ha-entry` so it can run on a Home Assistant with no entry for the test Portal, leaving none behind (#52).
 - The Portal Gen 1 cleanup confirmation now shows its title, explanation and
   checkbox label when opened from a device's Configure menu; it was blank (#108).
 - **Uninstall Kiosk Satellite** is now a Configuration control, so it no longer
