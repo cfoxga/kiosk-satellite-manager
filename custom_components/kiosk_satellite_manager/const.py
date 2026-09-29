@@ -106,6 +106,8 @@ ADB_CONNECT_TIMEOUT_S: Final = 10
 # KSM-BEHAVE-079: ADB-enabled binary sensor -- bare TCP probe, own poll.
 ADB_PROBE_TIMEOUT_S: Final = 3
 ADB_PROBE_INTERVAL_MIN: Final = 5
+PERMISSIONS_POLL_INTERVAL_MIN: Final = 15
+PERMISSIONS_MONITOR_KEY: Final = f"{DOMAIN}_permissions"
 
 
 # KSM-BEHAVE-007: after install+launch, poll the coordinator a few times

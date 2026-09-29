@@ -49,7 +49,7 @@ from .const import (
     INSTALL_LAUNCH_POLL_DELAY_S,
     TOKEN_MODE_AUTO,
 )
-from . import config_backup, fleet
+from . import config_backup, fleet, permissions
 from .credentials import TokenCredential, async_replace_entry_credential
 
 from .auto_update import is_older
@@ -91,6 +91,9 @@ async def async_setup_entry(
             KioskSatelliteBackupConfigButton(hass, device),
             KioskSatelliteRestoreConfigButton(hass, device),
         ])
+        if permissions.approved_recipe(device) is not None:
+            fleet.add_entities(async_add_entities, device,
+                               [KioskSatelliteFixPermissionsButton(hass, device)])
 
 
 def _store_tls_pin(hass: HomeAssistant, entry: ConfigEntry, pin: str) -> None:
@@ -243,6 +246,27 @@ class KioskSatelliteUninstallButton(ButtonEntity):
             await client.uninstall_ks()
         finally:
             await client.close()
+
+
+class KioskSatelliteFixPermissionsButton(ButtonEntity):
+    """KSM-BEHAVE-141: re-grant this device's required permissions now."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Fix permissions"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        self.hass = hass
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_fix_permissions"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.title,
+            suggested_area=resolve_area_name(hass, entry.data.get(CONF_AREA_ID)),
+        )
+
+    async def async_press(self) -> None:
+        await permissions.async_fix(self.hass, self._entry)
 
 
 class KioskSatelliteBackupConfigButton(ButtonEntity):

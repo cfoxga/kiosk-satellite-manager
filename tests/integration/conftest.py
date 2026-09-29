@@ -33,6 +33,17 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry  # noqa
 
 
 @pytest.fixture(autouse=True)
+def _permissions_adb_unreachable():
+    """The permissions poll (KSM-BEHAVE-141) must never open a real socket."""
+    from custom_components.kiosk_satellite_manager.adb_client import AdbConnectFailed
+
+    client = AsyncMock()
+    client.connect = AsyncMock(side_effect=AdbConnectFailed("test: no device"))
+    with patch("custom_components.kiosk_satellite_manager.permissions.AdbClient", return_value=client):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations):
     """Allow HA to load the custom kiosk_satellite_manager integration in
     every integration test."""

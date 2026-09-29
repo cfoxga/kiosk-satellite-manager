@@ -42,7 +42,10 @@ from .const import ADB_PROBE_TIMEOUT_S, KS_PACKAGE
 
 _VERSION_NAME_RE = re.compile(r"\bversionName=([^\s]+)")
 _RUNTIME_PERMISSION_RE = re.compile(r"^\s*(android\.permission\.\S+): granted=(true|false)", re.MULTILINE)
-_APPOP_MODE_RE = re.compile(r":\s*(\w+)\s*$")
+_REQUESTED_BLOCK_RE = re.compile(
+    r"requested permissions:\n((?:[ \t]+[\w.]+(?::[^\n]*)?\n)+)", re.MULTILINE
+)
+_APPOP_MODE_RE = re.compile(r":\s*(\w+)\s*(?:;.*)?$")
 # KSM-BEHAVE-041: the component name after a BIND_* permission is the
 # device's own declared intent-filter target -- read here, never guessed
 # (docs/developer/android-support/app-lifecycle.md's explicit caution).
@@ -463,6 +466,15 @@ class AdbClient:
             for perm, granted in _RUNTIME_PERMISSION_RE.findall(output)
             if granted == "true"
         }
+
+    async def declared_permissions(self) -> set[str]:
+        """Permissions the installed app's manifest requests. A permission
+        outside this set cannot be granted by any `pm grant`."""
+        output = await self.shell(f"dumpsys package {KS_PACKAGE}")
+        block = _REQUESTED_BLOCK_RE.search(output)
+        if not block:
+            return set()
+        return {line.strip().split(":", 1)[0] for line in block.group(1).splitlines()}
 
     async def appop_mode(self, op: str) -> str:
         """KSM-BEHAVE-041: `appops set ... allow`'s own shell exit is not
