@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- The Portal Gen 1 cleanup confirmation now shows its title, explanation and
+  checkbox label when opened from a device's Configure menu; it was blank (#108).
+- **Uninstall Kiosk Satellite** is now a Configuration control, so it no longer
+  sits among a device's everyday controls (#108).
+- Device-reported component names are shell-quoted before KSM passes them to
+  `settings put secure` and `cmd notification allow_listener` (#108).
+- The manifest declares the `adb_shell` logger, so its log level can be set with
+  the integration's own. `hacs.json` now requires Home Assistant 2025.3, the
+  first release with the config subentries KSM uses (#108).
+- README describes the current update surface (ESPHome's update entity, the
+  Auto-update switch, Install version and Hide follower updates) instead of the
+  removed update entity and version sensor (#108).
+
+## 0.3.0
+
 - Point Home Assistant's KSM Documentation link directly to the supported
   device catalog, which links to the install recipe reference.
 

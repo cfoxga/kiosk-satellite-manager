@@ -286,6 +286,13 @@
             "confirm": "I understand this cannot be undone without a factory reset"
           }
         },
+        "android9_cleanup": {
+          "title": "Clean and take ownership of this Android 9 Portal",
+          "description": "This removes the Portal's Meta accounts and sign-in, clears Meta app data, disables audited Meta launcher and services, and makes Kiosk Satellite Device Owner. Device Owner requires a factory reset to undo. Native Kiosk Satellite Home must already be enabled and selected as Android Home. Network ADB is checked before and after cleanup, but whether it survives a reboot is not yet verified. Keep physical access to the Portal.",
+          "data": {
+            "confirm": "Erase Meta sign-in and clean this Android 9 Portal"
+          }
+        },
         "meta_setup": {
           "title": "Set up the Portal's Meta login again",
           "description": "Kiosk Satellite is already Device Owner, but this Portal's Meta login is gone (Device Owner enrollment removes it). KSM can put Meta's setup screen back on the Portal: it turns kiosk mode off, resets Meta's setup app and opens it. You then finish setup and sign in with Facebook or WhatsApp on the Portal, and KSM turns kiosk mode back on once the Meta login is back.\n\nTick the box and submit to show the setup screen.",

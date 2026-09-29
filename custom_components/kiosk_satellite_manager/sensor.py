@@ -1,14 +1,7 @@
-"""Installed Kiosk Satellite version sensor (Phase 1).
-
-Reads the version back from the device's own /api/health -- unauthenticated
-(Verified Finding 2) and the only trustworthy read-back channel (Finding 3:
-`am start` exit 0 proves nothing).
-
-KSM-BEHAVE-007: while the coordinator is flagged "installing" (set by the
-Install button / auto-install step around install_and_launch), show a
-transitional "Installing" state instead of "unavailable" -- confirmed live
-that with no distinct state the sensor just reads unavailable for the whole
-install+boot window, which reads as broken rather than in-progress.
+"""KSM sensors: per-device IP address, device type, install recipe and fleet
+membership; fleet status; and the manager's device catalog and latest
+release. There is no installed-version sensor (#95) -- ESPHome's update
+entity reports the installed Kiosk Satellite version.
 
 KSM-BEHAVE-009: the device's suggested Area (chosen at config-flow time)
 carries through to DeviceInfo.suggested_area here too, not just on the

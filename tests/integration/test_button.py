@@ -12,6 +12,7 @@ from types import MappingProxyType, SimpleNamespace
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from homeassistant.const import EntityCategory
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
@@ -621,6 +622,9 @@ async def test_uninstall_button_press_uninstalls_ks(hass):
         assert hass.states.get(uninstall_entry.entity_id).name.endswith(
             "Uninstall Kiosk Satellite"
         )
+        # [KSM-TEST-288] a destructive action is a Configuration control,
+        # kept off the device's default control surface.
+        assert uninstall_entry.entity_category == EntityCategory.CONFIG
 
         with patch(
             "custom_components.kiosk_satellite_manager.button.AdbClient"

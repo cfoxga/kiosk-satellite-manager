@@ -24,6 +24,7 @@ import asyncio
 import fcntl
 import os
 import re
+import shlex
 import stat
 import tempfile
 from dataclasses import dataclass
@@ -552,7 +553,7 @@ class AdbClient:
         return "" if output == "null" else output
 
     async def put_secure_setting(self, key: str, value: str) -> None:
-        await self.shell(f"settings put secure {key} {value}")
+        await self.shell(f"settings put secure {key} {shlex.quote(value)}")
 
     async def bluetooth_enabled(self) -> bool:
         """KSM-BEHAVE-046 (Phase 5, "functional verification"): the device's

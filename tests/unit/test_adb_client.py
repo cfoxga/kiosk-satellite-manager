@@ -294,6 +294,18 @@ async def test_uninstall_ks_raises_when_package_survives(tmp_path):
             await client.uninstall_ks()
 
 
+async def test_put_secure_setting_quotes_device_reported_value(tmp_path):
+    """[KSM-TEST-287] A component name read from the device's own dumpsys
+    output is shell-quoted, so shell metacharacters stay literal."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(client._device, "shell", new=AsyncMock(return_value="")) as mock_shell:
+        await client.put_secure_setting("enabled_accessibility_services", "a/.B;reboot")
+    mock_shell.assert_awaited_once_with(
+        "settings put secure enabled_accessibility_services 'a/.B;reboot'"
+    )
+
+
 # KSM-BEHAVE-042: live-captured against the Test Portal -- this device's `dpm`
 # build only implements set-active-admin/set-device-owner/set-profile-owner/
 # remove-active-admin and rejects `get-device-owner` outright, unlike stock

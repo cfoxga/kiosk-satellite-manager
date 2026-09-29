@@ -222,6 +222,7 @@ class KioskSatelliteUninstallButton(ButtonEntity):
 
     _attr_has_entity_name = True
     _attr_name = "Uninstall Kiosk Satellite"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass

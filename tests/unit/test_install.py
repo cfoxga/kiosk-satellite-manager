@@ -1046,6 +1046,21 @@ async def test_KSM_TEST_270_notification_access_converges_for_every_recipe(recip
     client.put_secure_setting.assert_not_awaited()
 
 
+async def test_notification_listener_grant_quotes_device_reported_component():
+    """[KSM-TEST-287] The listener component comes from the device's dumpsys
+    output; it reaches `cmd notification allow_listener` shell-quoted."""
+    client = _converging_client()
+    component = "me.jxl.kiosk_satellite/.L;reboot"
+    client.declared_bound_services = AsyncMock(return_value={
+        "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE": component,
+    })
+    client.is_notification_listener_bound = AsyncMock(side_effect=[False, True])
+    await converge_permissions(client, sdk=34, recipe=PORTAL_RECIPE)
+    commands = [call.args[0] for call in client.shell.await_args_list]
+    assert "cmd notification allow_listener 'me.jxl.kiosk_satellite/.L;reboot'" in commands
+    assert not any(c.endswith("/.L;reboot") for c in commands)
+
+
 async def test_KSM_TEST_273_secure_setting_alone_cannot_claim_notification_access():
     client = _converging_client()
     component = "me.jxl.kiosk_satellite/.MediaSessionListener"

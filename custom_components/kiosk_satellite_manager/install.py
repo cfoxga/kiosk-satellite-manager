@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
@@ -165,7 +166,7 @@ async def _converge_notification_listener(
         return "not_applicable"
     if await client.is_notification_listener_bound(component):
         return "granted"
-    await client.shell(f"cmd notification allow_listener {component}")
+    await client.shell(f"cmd notification allow_listener {shlex.quote(component)}")
     for attempt in range(3):
         if await client.is_notification_listener_bound(component):
             return "granted"

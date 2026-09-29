@@ -47,15 +47,17 @@ remotely — do them once per device, in order:
   the selected Fleet syncs only the categories allowed by its Default profile after acceptance.
 - **Install** — connects over ADB, detects the device type (Meta Portal vs. Android TV stick, etc.),
   fetches the matching Kiosk Satellite APK for the device's ABI from the project's GitHub releases,
-  and installs it. A `button` entity (Install/Reinstall) and a `sensor` entity (installed KS version)
-  are provided per device. On launcher-capable devices, the same ADB-only path enables Kiosk
+  and installs it. Each device gets an **Install Kiosk Satellite** button (install or reinstall) and
+  an **Uninstall Kiosk Satellite** button under Configuration. On launcher-capable devices, the same ADB-only path enables Kiosk
   Satellite's fixed Home alias and verifies Android's HOME resolver selected it.
-- **Update** — each device gets an `update` entity that compares the installed KS version with the
-  latest GitHub release. The release check runs once an hour for all devices, or on demand with
-  `homeassistant.update_entity`. Installing from it runs the same verified path as the Install
-  button. Updates show up in Home Assistant's Settings → Updates without ESPHome. A per-device
-  `Auto-update Kiosk Satellite` switch (off by default) installs new releases automatically. It
-  never installs a version you skipped, and it tries each version only once.
+- **Update** — KSM creates no `update` entity or version sensor. Turn on the kiosk's ESPHome
+  server and add it to Home Assistant as an ESPHome device; ESPHome's update entity is what shows
+  Kiosk Satellite releases in Settings → Updates. KSM checks GitHub for releases every 15 minutes
+  (or now, with the manager's **Check for updates** button). A per-device **Auto-update Kiosk
+  Satellite** switch (off by default) installs a newer release through the same verified path as
+  the Install button, trying each version at most once per load. The manager's **Install version**
+  option pins a release, and **Hide follower updates** keeps fleet followers from each showing
+  their own update prompt.
 - **Global controls** — choose Configure KSM in the integration's Add flow to create one
   manager entry. Its Configure form sets defaults for future devices: reuse or reinstall
   an existing app, home launcher, auto-update, Kiosk Satellite password, Home Assistant
@@ -65,7 +67,7 @@ remotely — do them once per device, in order:
   Changing manager settings does not rewrite existing device settings.
 - **Fleet release and updates** — the manager entry exposes the latest usable Kiosk
   Satellite release and check status, plus Update all. The button visits managed,
-  reachable devices with an unskipped newer version through the same verified install
+  reachable devices with an older version through the same verified install
   path as each device's Install button. A notification names updated, skipped, and failed
   devices. Current devices are skipped.
 - **Provision** — `kiosk_satellite_manager.provision` logs in with the stored device password and
@@ -97,10 +99,13 @@ KSM does not manage Voice Satellite. Kiosk Satellite 2026.9.87 and later has it 
 the kiosk's ESPHome server and Voice Satellite on the kiosk, then add it in Home Assistant as an
 ESPHome device. The separate Voice Satellite integration is no longer needed.
 
-Full design, verified findings, and phase-by-phase status: the [ham-harness](https://git.cfoxga.com/cfoxga/ham-harness)
-repo's `kiosk-satellite-manager/` silo (`docs/SPEC/provisioning.md`).
+Full design, verified findings, and phase-by-phase status: the
+[`kiosk-satellite-manager/docs/SPEC/`](https://onedev.cfoxga.com/ha/~files/main/kiosk-satellite-manager/docs/SPEC)
+directory of the separate harness repo.
 
 ## Installation
+
+Requires Home Assistant 2025.3 or later (KSM uses config subentries).
 
 This repo lives on OneDev (`onedev.cfoxga.com`), not GitHub, so it is **not HACS-installable** — HACS
 only adds repositories hosted on GitHub. Install manually: copy
