@@ -4,7 +4,7 @@
   "codeowners": ["@cfoxga"],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://onedev.cfoxga.com/kiosk-satellite-manager",
+  "documentation": "https://onedev.cfoxga.com/kiosk-satellite-manager/~files/main/docs/supported-devices.md",
   "iot_class": "local_polling",
   "issue_tracker": "https://onedev.cfoxga.com/kiosk-satellite-manager/~issues",
   "requirements": ["adb-shell[async]==0.4.4"],

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Point Home Assistant's KSM Documentation link directly to the supported
+  device catalog, which links to the install recipe reference.
+
 - Add a per-device **Replace launcher** option (#105). When on, Install
   enables KS's home screen through its settings API, selects it as the Android
   Home activity, and reads the resolver back; a miss raises a notification and
