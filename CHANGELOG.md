@@ -8,6 +8,11 @@
   backup select and Restore with nothing chosen use the newest regular
   backup. A safety copy equal to the newest backup is not written.
 
+- Fix Install on existing GTV entries created before their exact model had a
+  recipe (#99). An explicit press now checks live ADB identity, uses only an
+  approved exact recipe, and saves the model after a successful install.
+  Unknown devices still fail closed before any device change.
+
 - Recognize Android 14 onn 4K Pro devices by their live-confirmed model and
   assign a dedicated provisioning recipe (#98). All recipes converge KS
   Notification Access when the installed app declares its listener service;

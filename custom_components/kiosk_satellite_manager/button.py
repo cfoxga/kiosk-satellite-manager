@@ -26,6 +26,8 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
 from .adb_client import AdbClient, AdbConnectFailed
+from .device_catalog import NoApprovedRecipe, resolve_catalog_entry
+from .device_models import collect_identity_facts
 from .const import (
     CONF_AREA_ID,
     CONF_ENTRY_TYPE,
@@ -132,6 +134,17 @@ async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         try:
             credential = TokenCredential.from_entry_data(entry.data)
             rotate_managed_credential = entry.data.get(CONF_TOKEN_MODE) == TOKEN_MODE_AUTO
+            model_key = entry.data.get(CONF_DEVICE_PROFILE)
+            recovered_model = model_key is None
+            if recovered_model:
+                # Older entries, including native fleet subentries, were saved
+                # before this exact model had a recipe. Read identity only on
+                # an explicit Install press; unknown hardware still fails
+                # before an APK push or permission mutation.
+                resolution = resolve_catalog_entry(await collect_identity_facts(client))
+                if not resolution.executable:
+                    raise NoApprovedRecipe(resolution.reason)
+                model_key = resolution.model_key
             used_token = await install_and_launch(
                 hass,
                 client,
@@ -145,10 +158,15 @@ async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 # are never replaced or revoked.
                 ha_token=None if rotate_managed_credential else (credential.access_token if credential else None),
                 token_credential=None if rotate_managed_credential else credential,
-                device_model=entry.data.get(CONF_DEVICE_PROFILE),
+                device_model=model_key,
                 ha_url=entry.data.get(CONF_HA_URL),
                 on_tls_pinned=lambda pin: _store_tls_pin(hass, entry, pin),
             )
+
+            if recovered_model:
+                fleet.update_device(
+                    hass, entry, data={**entry.data, CONF_DEVICE_PROFILE: model_key}
+                )
 
             if used_token and (rotate_managed_credential or not entry.data.get(CONF_HA_TOKEN)):
                 await async_replace_entry_credential(hass, entry, used_token)
