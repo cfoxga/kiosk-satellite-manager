@@ -233,7 +233,7 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass, tmp_pa
         # password) is covered separately and would need this fake_session to
         # also answer /api/setup/status, /api/login and PATCH /api/settings.
         ctx = await init_integration(
-            hass, data={CONF_DEVICE_PROFILE: "portal_mini", CONF_PASSWORD: None}
+            hass, data={CONF_DEVICE_PROFILE: "portal_mini", CONF_PASSWORD: None, "replace_launcher": False}
         )
 
         ent_reg = er.async_get(hass)
@@ -790,3 +790,34 @@ async def test_update_all_updates_two_devices_over_the_ks_api(hass, release_chec
     assert f"Awaiting confirmation on device: {second.entry.title}" in message
     assert "Skipped:" in message
     assert "Failed: none" in message
+
+
+@pytest.mark.parametrize(
+    ("profile", "stored", "expected"),
+    [
+        ("portal_mini", None, True),
+        ("portal_mini", False, False),
+        ("onn_4k_pro_android14", None, False),
+        ("onn_4k_pro_android14", True, True),
+    ],
+)
+async def test_KSM_TEST_282_install_press_passes_launcher_choice(hass, profile, stored, expected):
+    """[KSM-TEST-282] Install passes the stored choice, or the recipe default."""
+    async def fake_fetch_health(session, host, *, pin=None):
+        return {"appVersion": "old"}
+
+    data = {CONF_DEVICE_PROFILE: profile, CONF_PASSWORD: None}
+    if stored is not None:
+        data["replace_launcher"] = stored
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
+        ctx = await init_integration(hass, data=data)
+        with patch(
+            "custom_components.kiosk_satellite_manager.button.AdbClient"
+        ) as client_cls, patch(
+            "custom_components.kiosk_satellite_manager.button.install_and_launch",
+            new=AsyncMock(return_value=None),
+        ) as install:
+            client_cls.return_value.connect = AsyncMock()
+            client_cls.return_value.close = AsyncMock()
+            await async_install_entry(hass, ctx.entry)
+    assert install.await_args.kwargs["replace_launcher"] is expected

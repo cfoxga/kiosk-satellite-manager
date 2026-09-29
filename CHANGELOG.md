@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add a per-device **Replace launcher** option (#105). When on, Install
+  enables KS's home screen through its settings API, selects it as the Android
+  Home activity, and reads the resolver back; a miss raises a notification and
+  the install still completes. Unset defaults to on for Portal recipes and off
+  for Android TV / Onn devices, so existing devices need no migration.
+  Configure it from the device's Configure menu. Turning it off later does not
+  revert Home.
+
 - Add native KSM Settings diagnostic entities for the exact device catalog and
   install recipes (#104). Per-device Install recipe diagnostics now show typed
   settings and operations. New operator pages document model assignments,

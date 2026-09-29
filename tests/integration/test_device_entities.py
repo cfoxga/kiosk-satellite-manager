@@ -98,7 +98,7 @@ async def test_manager_entry_has_no_device_diagnostics(hass):
 
 
 async def test_manager_catalog_entities_show_models_recipes_and_assignment_boundary(hass):
-    """[KSM-TEST-276] native manager entities expose source catalog, not guessed support."""
+    """[KSM-TEST-283] native manager entities expose source catalog, not guessed support."""
     with patch(_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.79"})):
         await init_integration(hass, data={CONF_DEVICE_PROFILE: "portal_go"})
     manager = next(
@@ -120,7 +120,7 @@ async def test_manager_catalog_entities_show_models_recipes_and_assignment_bound
 
 
 async def test_catalog_refuses_a_known_model_without_an_approved_recipe(hass):
-    """[KSM-TEST-276] a revoked assignment cannot appear in either catalog list."""
+    """[KSM-TEST-283] a revoked assignment cannot appear in either catalog list."""
     with patch(_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.79"})):
         await init_integration(hass, data={CONF_DEVICE_PROFILE: "portal_go"})
     manager = next(

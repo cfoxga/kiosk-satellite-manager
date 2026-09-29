@@ -38,7 +38,7 @@ from adb_shell.exceptions import (
     TcpTimeoutException,
 )
 
-from .const import ADB_PROBE_TIMEOUT_S, KS_PACKAGE
+from .const import ADB_PROBE_TIMEOUT_S, KS_HOME_ACTIVITY, KS_PACKAGE
 
 _VERSION_NAME_RE = re.compile(r"\bversionName=([^\s]+)")
 _RUNTIME_PERMISSION_RE = re.compile(r"^\s*(android\.permission\.\S+): granted=(true|false)", re.MULTILINE)
@@ -339,6 +339,24 @@ class AdbClient:
 
     async def shell(self, command: str) -> str:
         return await self._device.shell(command)
+
+    async def select_ks_home(self) -> None:
+        """Ask Android to select KS's fixed HOME alias (KSM-BEHAVE-143).
+
+        The component is a source constant, never caller or recipe text. The
+        caller must still read the resolver afterward: this command can fail
+        silently on OEM builds.
+        """
+        await self.shell(f"cmd package set-home-activity {KS_HOME_ACTIVITY}")
+
+    async def resolved_home_activity(self) -> str:
+        """Return Android's authoritative HOME resolver output."""
+        return (
+            await self.shell(
+                "cmd package resolve-activity --brief "
+                "-a android.intent.action.MAIN -c android.intent.category.HOME"
+            )
+        ).strip()
 
     async def getprop(self, prop: str) -> str:
         return (await self.shell(f"getprop {prop}")).strip()

@@ -1261,3 +1261,88 @@ async def test_install_and_launch_reuses_a_cached_universal_apk(apk_cache_dir):
             assert (pushed, apk_gets) == (str(universal), [])
         else:
             assert pushed.endswith("kiosk-satellite-2026.9.99.arm64-v8a.apk") and len(apk_gets) == 1
+
+
+_KS_HOME = "me.jxl.kiosk_satellite/.HomeAlias"
+_META_HOME = "com.facebook.alohaapps.launcher/com.facebook.aloha.app.home.touch.HomeActivity"
+
+
+async def _run_install_for_launcher(*, replace_launcher, resolver, device_model="portal_go"):
+    hass = _FakeHass()
+    client = _fake_client()
+    client.resolved_home_activity = AsyncMock(return_value=resolver)
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ), patch(
+        "custom_components.kiosk_satellite_manager.install.ks_api_client"
+    ) as mock_api, patch(
+        "custom_components.kiosk_satellite_manager.install.get_url",
+        return_value="http://192.168.1.2:8123",
+    ), patch(
+        "custom_components.kiosk_satellite_manager.install.persistent_notification"
+    ) as notify, patch(
+        "custom_components.kiosk_satellite_manager.install.asyncio.sleep", new=AsyncMock()
+    ):
+        mock_api.probe_https = AsyncMock(return_value=None)
+        mock_api.get_setup_status = AsyncMock(
+            return_value={"passwordNeeded": False, "deviceName": "Kitchen"}
+        )
+        mock_api.login = AsyncMock(return_value="ks-token")
+        mock_api.patch_settings = AsyncMock(return_value={})
+        mock_api.check_ha_connection = AsyncMock(return_value=True)
+        result = await install_and_launch(
+            hass, client, _fake_session(),
+            host="192.168.1.50", device_name="Kitchen", password="hunter22",
+            device_model=device_model, ha_token="tok", ha_url="https://ha.example.test",
+            replace_launcher=replace_launcher,
+        )
+    payloads = [c.args[3] for c in mock_api.patch_settings.await_args_list]
+    return client, payloads, notify, result
+
+
+async def test_KSM_TEST_279_replace_launcher_enables_selects_and_reads_back():
+    """[KSM-TEST-279] Option on: home.enabled goes in the sync patch, the alias
+    is selected, and the resolver readback decides success."""
+    client, payloads, notify, _ = await _run_install_for_launcher(
+        replace_launcher=True, resolver=_KS_HOME
+    )
+    assert any(p.get("home.enabled") is True for p in payloads)
+    client.select_ks_home.assert_awaited()
+    notify.async_create.assert_not_called()
+
+
+async def test_KSM_TEST_279_resolver_miss_is_reported_and_install_still_syncs():
+    """[KSM-TEST-279] Negative: set-home-activity ran but the resolver still
+    names Meta's launcher -> a notification, and the HA sync is unaffected."""
+    client, payloads, notify, result = await _run_install_for_launcher(
+        replace_launcher=True, resolver=_META_HOME
+    )
+    client.select_ks_home.assert_awaited()
+    notify.async_create.assert_called_once()
+    assert "192.168.1.50" in notify.async_create.call_args.kwargs["message"]
+    assert result == TokenCredential("tok", None, owned=False)
+    assert any("ha.url" in p for p in payloads)
+
+
+async def test_KSM_TEST_280_replace_launcher_off_touches_no_home_state():
+    """[KSM-TEST-280] Option off: no set-home-activity, no home.enabled."""
+    client, payloads, notify, _ = await _run_install_for_launcher(
+        replace_launcher=False, resolver=_META_HOME
+    )
+    client.select_ks_home.assert_not_awaited()
+    client.resolved_home_activity.assert_not_awaited()
+    assert all("home.enabled" not in p for p in payloads)
+    notify.async_create.assert_not_called()
+
+
+def test_KSM_TEST_281_default_follows_recipe_and_explicit_value_wins():
+    """[KSM-TEST-281] Unset: Portal recipes on, everything else off."""
+    from custom_components.kiosk_satellite_manager.install import launcher_replacement_wanted
+
+    for key in ("meta_portal_android10", "meta_portal_android9", "meta_portal_tv"):
+        assert launcher_replacement_wanted({}, get_recipe(key)) is True
+    for key in ("onn_4k_pro_android14", "android_tv"):
+        assert launcher_replacement_wanted({}, get_recipe(key)) is False
+    assert launcher_replacement_wanted({"replace_launcher": False}, get_recipe("meta_portal_android10")) is False
+    assert launcher_replacement_wanted({"replace_launcher": True}, get_recipe("android_tv")) is True

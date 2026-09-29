@@ -41,17 +41,21 @@ from datetime import timedelta
 import aiohttp
 from homeassistant.auth.const import GROUP_ID_READ_ONLY
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
+from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.network import get_url
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Awaitable, Final
 
 from . import apk_cache, ks_api_client, ks_tls
 from .adb_client import AdbClient
 from .const import (
+    CONF_REPLACE_LAUNCHER,
+    DOMAIN,
     HA_TOKEN_LIFESPAN_DAYS,
     KS_APK_REMOTE_PATH,
+    KS_HOME_ACTIVITY,
     KS_MAIN_ACTIVITY,
     KS_PACKAGE,
     SYNC_STATUS_POLL_ATTEMPTS,
@@ -292,6 +296,41 @@ async def verify_functional_capabilities(
     return result
 
 
+def launcher_replacement_wanted(entry_data: Mapping[str, Any], recipe: InstallRecipe) -> bool:
+    """KSM-BEHAVE-143: an explicit per-device choice wins; unset follows the recipe."""
+    explicit = entry_data.get(CONF_REPLACE_LAUNCHER)
+    if explicit is not None:
+        return bool(explicit)
+    return recipe.replaces_launcher_by_default
+
+
+async def _select_home_launcher(
+    hass: HomeAssistant, client: AdbClient, host: str | None
+) -> None:
+    """Select KS's HOME alias and trust only Android's resolver readback.
+
+    A miss is reported, never fatal: the device-name and HA sync must still run.
+    """
+    last_resolver = ""
+    for attempt in range(SYNC_STATUS_POLL_ATTEMPTS):
+        await client.select_ks_home()
+        last_resolver = await client.resolved_home_activity()
+        if KS_HOME_ACTIVITY in {line.strip() for line in last_resolver.splitlines()}:
+            return
+        if attempt < SYNC_STATUS_POLL_ATTEMPTS - 1:
+            await asyncio.sleep(SYNC_STATUS_POLL_DELAY_S)
+    _LOGGER.warning("home launcher not selected on %s: resolver=%r", host, last_resolver)
+    persistent_notification.async_create(
+        hass,
+        message=(
+            f"Kiosk Satellite was installed on {host}, but Android kept another app as "
+            f"the Home screen. Resolver: {last_resolver!r}"
+        ),
+        title="Kiosk Satellite is not the Home screen",
+        notification_id=f"{DOMAIN}_home_launcher_{host}",
+    )
+
+
 async def install_and_launch(
     hass: HomeAssistant,
     client: AdbClient,
@@ -305,6 +344,7 @@ async def install_and_launch(
     ha_url: str | None = None,
     on_tls_pinned: Callable[[str], None] | None = None,
     before_ha_setup: Callable[[], Awaitable[None]] | None = None,
+    replace_launcher: bool = False,
 ) -> TokenCredential | None:
     """Fetch the latest universal KS APK (#71), install it, launch
     it, and grant full permissions. If a password is configured on the entry,
@@ -415,9 +455,12 @@ async def install_and_launch(
             "no admin password configured for %s; skipping device-name/HA auto-connect sync",
             host,
         )
+        if replace_launcher:
+            await _select_home_launcher(hass, client, host)
         return None
+    credential = None
     try:
-        return await _sync_device_and_connect_ha(
+        credential = await _sync_device_and_connect_ha(
             hass,
             session,
             host,
@@ -429,10 +472,13 @@ async def install_and_launch(
             ha_url=ha_url,
             on_tls_pinned=on_tls_pinned,
             before_ha_setup=before_ha_setup,
+            replace_launcher=replace_launcher,
         )
     except (KsApiError, aiohttp.ClientError, asyncio.TimeoutError) as err:
         _LOGGER.warning("device-name/HA auto-connect sync failed for %s: %s", host, err)
-        return None
+    if replace_launcher:
+        await _select_home_launcher(hass, client, host)
+    return credential
 
 
 
@@ -528,6 +574,7 @@ async def _sync_device_and_connect_ha(
     ha_url: str | None = None,
     on_tls_pinned: Callable[[str], None] | None = None,
     before_ha_setup: Callable[[], Awaitable[None]] | None = None,
+    replace_launcher: bool = False,
 ) -> TokenCredential:
     status, served = await _wait_for_setup_status(session, host)
     password_needed = status.get("passwordNeeded", True)
@@ -584,6 +631,8 @@ async def _sync_device_and_connect_ha(
             # KSM-BEHAVE-061: clear KSM's legacy unsafe browser setting.
             "browser.ignore_ssl_errors": False,
         }
+        if replace_launcher:
+            settings_payload["home.enabled"] = True
 
         await ks_api_client.patch_settings(session, host, token, settings_payload, pin=pin)
         if not await ks_api_client.check_ha_connection(session, host, token, pin=pin):

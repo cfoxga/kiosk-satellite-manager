@@ -188,6 +188,10 @@ class InstallRecipe:
             perms.append("android.permission.WRITE_SECURE_SETTINGS")
         return perms
 
+    @property
+    def replaces_launcher_by_default(self) -> bool:
+        return self.permission_policy == PERMISSION_POLICY_PORTAL
+
     def appops_for_sdk(self, sdk: int) -> list[str]:
         """AppOps grants for this recipe at this API level."""
         ops = ["SYSTEM_ALERT_WINDOW", "WRITE_SETTINGS", "GET_USAGE_STATS"]

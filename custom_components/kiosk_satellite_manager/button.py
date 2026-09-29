@@ -26,7 +26,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
 from .adb_client import AdbClient, AdbConnectFailed
-from .device_catalog import NoApprovedRecipe, resolve_catalog_entry
+from .device_catalog import NoApprovedRecipe, require_recipe, resolve_catalog_entry
 from .device_models import collect_identity_facts
 from .const import (
     CONF_AREA_ID,
@@ -54,7 +54,7 @@ from .credentials import TokenCredential, async_replace_entry_credential
 
 from .auto_update import is_older
 from .helpers import resolve_area_name, target_release
-from .install import install_and_launch
+from .install import install_and_launch, launcher_replacement_wanted
 from .ks_update import OUTCOME_AWAITING_CONFIRMATION, async_self_update_entry
 
 _LOGGER = logging.getLogger(__name__)
@@ -165,6 +165,7 @@ async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 device_model=model_key,
                 ha_url=entry.data.get(CONF_HA_URL),
                 on_tls_pinned=lambda pin: _store_tls_pin(hass, entry, pin),
+                replace_launcher=launcher_replacement_wanted(entry.data, require_recipe(model_key)),
             )
 
             if recovered_model:

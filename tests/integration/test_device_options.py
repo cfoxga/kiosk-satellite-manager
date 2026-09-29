@@ -259,3 +259,88 @@ async def test_change_host_refusals_write_nothing(hass, surface, candidate, erro
     assert result["errors"][CONF_HOST] == expected
     assert (probe.await_count == 1) == (error is not None)
     assert read() == before
+
+
+async def _open_launcher_step(hass, entry):
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert "device_launcher" in result["menu_options"]
+    return await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "device_launcher"}
+    )
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected_default"),
+    [("portal_go", True), ("onn_4k_pro_android14", False)],
+)
+async def test_KSM_TEST_282_launcher_step_defaults_from_recipe_and_stores_choice(
+    hass, profile, expected_default
+):
+    """[KSM-TEST-282] The Configure menu offers Replace launcher, defaulting
+    from the recipe, and a submitted choice is stored on the device entry."""
+    from custom_components.kiosk_satellite_manager.const import CONF_DEVICE_PROFILE
+
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Display", unique_id="192.0.2.42",
+        data={CONF_HOST: "192.0.2.42", CONF_NAME: "Display", CONF_PASSWORD: "x",
+              CONF_DEVICE_PROFILE: profile},
+    )
+    entry.add_to_hass(hass)
+    result = await _open_launcher_step(hass, entry)
+    assert result["step_id"] == "device_launcher"
+    field = next(k for k in result["data_schema"].schema if k == "replace_launcher")
+    assert field.default() is expected_default
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"replace_launcher": not expected_default}
+    )
+    assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert entry.data["replace_launcher"] is (not expected_default)
+    assert entry.data[CONF_PASSWORD] == "x"
+
+
+async def test_KSM_TEST_282_subentry_launcher_choice_is_stored(hass):
+    """[KSM-TEST-282] A native subentry stores Replace launcher on its own data."""
+    from homeassistant.config_entries import ConfigSubentry, SOURCE_RECONFIGURE
+    from types import MappingProxyType
+    from custom_components.kiosk_satellite_manager import fleet
+    from .test_global_settings import _manager
+
+    await _manager(hass)
+    parent = fleet.unmanaged_entry(hass)
+    hass.config_entries.async_add_subentry(parent, ConfigSubentry(
+        data=MappingProxyType({CONF_HOST: "192.0.2.43", CONF_NAME: "Display",
+                               CONF_PASSWORD: "secret", "port": 5555,
+                               "key_path": "/tmp/adbkey", "device_profile": "onn_4k_pro_android14"}),
+        subentry_id="launcher-sub", subentry_type="device", title="Display",
+        unique_id="launcher-sub",
+    ))
+    flow = await hass.config_entries.subentries.async_init(
+        (parent.entry_id, "device"),
+        context={"source": SOURCE_RECONFIGURE, "subentry_id": "launcher-sub"},
+    )
+    assert "device_launcher" in flow["menu_options"]
+    form = await hass.config_entries.subentries.async_configure(
+        flow["flow_id"], {"next_step_id": "device_launcher"}
+    )
+    assert form["step_id"] == "device_launcher"
+    result = await hass.config_entries.subentries.async_configure(
+        form["flow_id"], {"replace_launcher": False}
+    )
+    assert result["type"] == data_entry_flow.FlowResultType.ABORT
+    data = parent.subentries["launcher-sub"].data
+    assert data["replace_launcher"] is False
+    assert data[CONF_PASSWORD] == "secret"
+
+
+async def test_KSM_TEST_282_launcher_step_without_approved_recipe_defaults_off(hass):
+    """[KSM-TEST-282] A device with no approved recipe defaults Replace launcher off."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Display", unique_id="192.0.2.44",
+        data={CONF_HOST: "192.0.2.44", CONF_NAME: "Display", CONF_PASSWORD: "x",
+              "device_profile": "unknown"},
+    )
+    entry.add_to_hass(hass)
+    result = await _open_launcher_step(hass, entry)
+    field = next(k for k in result["data_schema"].schema if k == "replace_launcher")
+    assert field.default() is False

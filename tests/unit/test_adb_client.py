@@ -813,3 +813,17 @@ async def test_probe_adb_port_reports_a_listening_port_and_a_closed_one():
         await server.wait_closed()
     assert await async_probe_adb_port("127.0.0.1", port, timeout=2) is False
     assert await async_probe_adb_port("host.invalid", port, timeout=2) is False
+
+
+async def test_KSM_TEST_279_home_selection_commands(tmp_path):
+    """[KSM-TEST-279] select_ks_home targets the fixed HomeAlias; the resolver is read back."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    shell = AsyncMock(return_value="  me.jxl.kiosk_satellite/.HomeAlias \n")
+    with patch.object(client._device, "shell", new=shell):
+        await client.select_ks_home()
+        assert await client.resolved_home_activity() == "me.jxl.kiosk_satellite/.HomeAlias"
+    assert shell.await_args_list[0].args == (
+        "cmd package set-home-activity me.jxl.kiosk_satellite/.HomeAlias",
+    )
+    assert "resolve-activity --brief" in shell.await_args_list[1].args[0]

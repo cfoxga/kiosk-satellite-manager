@@ -13,6 +13,7 @@ CONF_KEY_PATH: Final = "key_path"
 # stays "device_profile" so entries created before the catalog keep resolving --
 # the model keys were carried over 1:1 from the old profile keys.
 CONF_DEVICE_PROFILE: Final = "device_profile"
+CONF_REPLACE_LAUNCHER: Final = "replace_launcher"
 # KSM-BEHAVE-009: entry-creation-time Name/Area; KSM-BEHAVE-010/011 read
 # CONF_NAME/CONF_PASSWORD back out post-install to sync the device.
 CONF_NAME: Final = "name"
@@ -81,6 +82,7 @@ HEALTH_SCAN_INTERVAL_MIN: Final = 5
 
 KS_PACKAGE: Final = "me.jxl.kiosk_satellite"
 KS_MAIN_ACTIVITY: Final = f"{KS_PACKAGE}/.MainActivity"
+KS_HOME_ACTIVITY: Final = f"{KS_PACKAGE}/.HomeAlias"
 KS_APK_REMOTE_PATH: Final = "/data/local/tmp/kiosk-satellite.apk"
 KS_GITHUB_REPO: Final = "jxlarrea/kiosk-satellite"
 

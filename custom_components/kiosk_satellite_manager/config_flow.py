@@ -61,6 +61,7 @@ from .const import (
     TARGET_VERSION_LATEST,
     CONF_TLS_SPKI,
     CONF_DEVICE_PROFILE,
+    CONF_REPLACE_LAUNCHER,
     CONF_BACKUP_INTERVAL_HOURS,
     CONF_BACKUP_KEEP,
     CONF_ENABLE_DEVICE_OWNER,
@@ -95,10 +96,10 @@ from .const import (
     TOKEN_MODE_AUTO,
 )
 
-from .device_catalog import require_recipe, resolve_catalog_entry
+from .device_catalog import NoApprovedRecipe, require_recipe, resolve_catalog_entry
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .device_models import DeviceFacts, collect_identity_facts
-from .install import install_and_launch
+from .install import install_and_launch, launcher_replacement_wanted
 from .ks_api_client import KsApiError, login
 from .provisioning import fetch_health
 from .rename import derive_rename_names
@@ -341,7 +342,7 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_device_menu(self, user_input: dict | None = None) -> FlowResult:
         """KSM-BEHAVE-088: a device entry's Configure is a menu."""
         return self.async_show_menu(
-            step_id="device_menu", menu_options=["device_rename", "device_password", "device_host", "device_owner"]
+            step_id="device_menu", menu_options=["device_rename", "device_password", "device_host", "device_launcher", "device_owner"]
         )
 
     async def async_step_device_host(self, user_input: dict | None = None) -> FlowResult:
@@ -424,6 +425,30 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
                 vol.Required(CONF_NAME, default=self._entry.title): str,
             }),
             errors=errors,
+        )
+
+    def _launcher_default(self) -> bool:
+        try:
+            recipe = require_recipe(self._entry.data.get(CONF_DEVICE_PROFILE))
+        except NoApprovedRecipe:
+            return bool(self._entry.data.get(CONF_REPLACE_LAUNCHER, False))
+        return launcher_replacement_wanted(self._entry.data, recipe)
+
+    def _save_replace_launcher(self, value: bool) -> FlowResult:
+        self.hass.config_entries.async_update_entry(
+            self._entry, data={**self._entry.data, CONF_REPLACE_LAUNCHER: value}
+        )
+        return self.async_create_entry(title="", data=dict(self._entry.options))
+
+    async def async_step_device_launcher(self, user_input: dict | None = None) -> FlowResult:
+        """KSM-BEHAVE-143: whether the next Install makes Kiosk Satellite the Home app."""
+        if user_input is not None:
+            return self._save_replace_launcher(bool(user_input[CONF_REPLACE_LAUNCHER]))
+        return self.async_show_form(
+            step_id="device_launcher",
+            data_schema=vol.Schema({
+                vol.Required(CONF_REPLACE_LAUNCHER, default=self._launcher_default()): bool,
+            }),
         )
 
     async def async_step_device_password(self, user_input: dict | None = None) -> FlowResult:
@@ -687,6 +712,12 @@ class KioskSatelliteDeviceSubentryFlow(
         return self.async_update_and_abort(
             self._get_entry(), self._get_reconfigure_subentry(),
             data_updates={CONF_HOST: host},
+        )
+
+    def _save_replace_launcher(self, value: bool) -> FlowResult:
+        return self.async_update_and_abort(
+            self._get_entry(), self._get_reconfigure_subentry(),
+            data_updates={CONF_REPLACE_LAUNCHER: value},
         )
 
     async def async_step_device_password(self, user_input: dict | None = None) -> FlowResult:
@@ -1360,6 +1391,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     ha_url=self._ha_url,
                     on_tls_pinned=self._set_tls_pin,
                     before_ha_setup=self._async_maybe_invite,
+                    replace_launcher=launcher_replacement_wanted({}, require_recipe(self._profile_key)),
                 )
                 if used_token:
                     self._credential = used_token

@@ -108,6 +108,13 @@
   },
   "options": {
     "step": {
+      "device_launcher": {
+        "title": "Replace launcher",
+        "description": "When on, Install makes Kiosk Satellite the Android Home app, replacing the device's own launcher. Leave it off for devices that keep their launcher. Turning it off later does not put the old launcher back.",
+        "data": {
+          "replace_launcher": "Replace the launcher when Install runs"
+        }
+      },
       "device_password": {
         "title": "Update Kiosk Satellite password",
         "description": "Enter this device's current Kiosk Satellite Web UI password. The stored password changes only after Kiosk Satellite accepts it.",
@@ -155,6 +162,7 @@
           "device_rename": "Rename device",
           "device_password": "Update Kiosk Satellite password",
           "device_host": "Change host (DNS name or IP address)",
+          "device_launcher": "Replace launcher",
           "device_owner": "Enable Device Owner (advanced)"
         }
       },
@@ -239,6 +247,7 @@
             "device_rename": "Rename device",
             "device_password": "Update Kiosk Satellite password",
             "device_host": "Change host (DNS name or IP address)",
+            "device_launcher": "Replace launcher",
             "device_owner": "Enable Device Owner (advanced)"
           }
         },
@@ -254,6 +263,13 @@
           "description": "This changes the Kiosk Satellite name, hostname and ESPHome node, then updates the KSM entry. On a Meta Portal it also changes Android's Portal Name over one temporary ADB connection: enable network ADB on the Portal before submitting, then you can turn it off again. A DNS hostname changes only after the new name resolves to this device. Review the result for incomplete layers and old ESPHome action callers.",
           "data": {
             "name": "New device name"
+          }
+        },
+        "device_launcher": {
+          "title": "Replace launcher",
+          "description": "When on, Install makes Kiosk Satellite the Android Home app, replacing the device's own launcher. Leave it off for devices that keep their launcher. Turning it off later does not put the old launcher back.",
+          "data": {
+            "replace_launcher": "Replace the launcher when Install runs"
           }
         },
         "device_password": {
