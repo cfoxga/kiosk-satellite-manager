@@ -222,7 +222,9 @@ def _status_from_response(response: dict) -> dict:
     followers = body.get("followers")
     rows = followers if isinstance(followers, list) else None
     managed_rows = {
-        row["id"]: {"phase": row.get("phase"), "online": row.get("online")}
+        row["id"]: {"phase": row.get("phase"), "online": row.get("online"),
+                    # KSM-BEHAVE-146: enough to offer an unmanaged follower.
+                    "name": row.get("name"), "address": row.get("address"), "port": row.get("port")}
         for row in (rows or [])[:100]
         if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
@@ -273,8 +275,9 @@ async def async_poll_device(hass: HomeAssistant, entry_id: str) -> None:
         )
         hass.data.setdefault(_READ_OK_KEY, set()).add(entry_id)
         await async_reconcile(hass)
-        from . import follower_updates  # local: follower_updates imports fleet
+        from . import follower_offers, follower_updates  # local: both import fleet
         await follower_updates.async_sync(hass)
+        await follower_offers.async_sync(hass)
     finally:
         active.discard(entry_id)
 
@@ -358,7 +361,7 @@ async def async_reconcile(hass: HomeAssistant) -> None:
                 await hass.config_entries.flow.async_init(
                     DOMAIN, context={"source": SOURCE_IMPORT},
                     data={CONF_ENTRY_TYPE: ENTRY_TYPE_FLEET, "leader_id": leader_id,
-                          "leader_name": leader.title},
+                          "leader_name": leader.title, "offer_followers": True},
                 )
             fleet = _fleet_entry(hass, leader_id)
             if fleet is not None and fleet.title != f"Fleet - {leader.title}":

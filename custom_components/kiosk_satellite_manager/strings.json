@@ -52,6 +52,10 @@
           "enable_device_owner": "Off by default. After installing, check whether Kiosk Satellite can become Device Owner and ask you to confirm before anything changes. Device Owner lets it make itself the Home screen and update silently, but can only be undone by a factory reset."
         }
       },
+      "follower_confirm": {
+        "title": "Add fleet follower {name}?",
+        "description": "{name} at {host} follows a Fleet Manager that Kiosk Satellite Manager manages, but KSM does not manage {name} yet.\n\nSubmit to add it. KSM checks that Kiosk Satellite answers at {host}, then asks for its Web UI password. Its fleet membership is not changed."
+      },
       "ks_device_info": {
         "title": "Connect Kiosk Satellite Manager",
         "description": "Kiosk Satellite is already running on this device, so it is added without ADB and its settings are left unchanged.\nDetected device type: {device_model}\nAndroid version: {android_version}\n\nEnter its existing Web UI password. Enable ADB later only if you need Install/Reinstall, Uninstall or Device Owner.",
@@ -103,8 +107,10 @@
     "abort": {
       "already_configured": "Device is already configured",
       "not_manager": "Global settings belong to the Configure KSM entry",
-      "fleet_unavailable": "The selected Fleet leader is unavailable. Add the device again and choose another Fleet."
-    }
+      "fleet_unavailable": "The selected Fleet leader is unavailable. Add the device again and choose another Fleet.",
+      "already_in_progress": "This device is already being added."
+    },
+    "flow_title": "{name}"
   },
   "options": {
     "step": {
@@ -233,6 +239,17 @@
         "abort": {
           "cannot_connect": "The device did not answer over HTTPS. Check it is online and try again.",
           "entry_not_found": "This device is no longer configured."
+        }
+      }
+    },
+    "new_follower": {
+      "title": "{leader} has a new fleet follower: {name}",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Add {name} to Kiosk Satellite Manager?",
+            "description": "{name} at {host} joined {leader}'s fleet, and Kiosk Satellite Manager does not manage it.\n\nSubmit to show it under Discovered, where you enter its Kiosk Satellite password. Ignore this repair to leave it unmanaged; it will not be raised again."
+          }
         }
       }
     }

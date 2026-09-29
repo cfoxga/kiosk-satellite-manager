@@ -888,12 +888,43 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._abort_if_unique_id_configured()
             return self.async_create_entry(
                 title=f"Fleet - {user_input['leader_name']}",
-                data={CONF_ENTRY_TYPE: ENTRY_TYPE_FLEET, "leader_id": leader_id},
+                data={CONF_ENTRY_TYPE: ENTRY_TYPE_FLEET, "leader_id": leader_id,
+                      # KSM-BEHAVE-146: offer its roster once, on the first read.
+                      **({"offer_followers": True} if user_input.get("offer_followers") else {})},
             )
         await self.async_set_unique_id(MANAGER_UNIQUE_ID)
         self._abort_if_unique_id_configured()
         return self.async_create_entry(
             title="KSM Settings", data={CONF_ENTRY_TYPE: ENTRY_TYPE_MANAGER}
+        )
+
+    async def async_step_integration_discovery(self, discovery_info: dict) -> FlowResult:
+        """KSM-BEHAVE-146: a Fleet Manager's roster names a follower KSM does not manage."""
+        await self.async_set_unique_id(f"ksm_follower:{discovery_info['ks_id']}")
+        self._abort_if_unique_id_configured()
+        host = discovery_info["host"]
+        if any(device.data.get(CONF_HOST) == host for device in fleet.device_entries(self.hass)):
+            return self.async_abort(reason="already_configured")
+        self._host = host
+        self._discovered_name = discovery_info.get("name") or host
+        self.context["title_placeholders"] = {"name": self._discovered_name}
+        return await self.async_step_follower_confirm()
+
+    async def async_step_follower_confirm(self, user_input: dict | None = None) -> FlowResult:
+        """Confirming probes the follower, then joins the existing-KS onboarding."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if any(device.data.get(CONF_HOST) == self._host
+                   for device in fleet.device_entries(self.hass)):
+                return self.async_abort(reason="already_configured")
+            self._global = _manager_options(self.hass)
+            ks = await _async_probe_ks_health(async_get_clientsession(self.hass), self._host)
+            if ks is not None:
+                return await self._async_start_ks_device(self._host, DEFAULT_ADB_PORT, *ks)
+            errors["base"] = "cannot_connect_ks"
+        return self.async_show_form(
+            step_id="follower_confirm", data_schema=vol.Schema({}), errors=errors,
+            description_placeholders={"name": self._discovered_name, "host": self._host},
         )
 
     async def async_step_user(self, user_input: dict | None = None) -> FlowResult:

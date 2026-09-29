@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- When KSM creates a fleet for a Fleet Manager, each follower on that leader's
+  roster that KSM doesn't manage yet appears under Discovered. Confirming a card
+  checks the kiosk and asks for its Kiosk Satellite password. A follower that
+  joins an existing fleet later raises a repair asking whether to add it, just
+  once. Fleets that already existed record their current roster without
+  prompting. KSM still never changes fleet membership (#111).
 - The physical-device test matrix accepts `--allow-missing-ha-entry` so it can run on a Home Assistant with no entry for the test Portal, leaving none behind (#52).
 - The Portal Gen 1 cleanup confirmation now shows its title, explanation and
   checkbox label when opened from a device's Configure menu; it was blank (#108).
