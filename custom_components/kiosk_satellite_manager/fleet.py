@@ -134,9 +134,16 @@ def device_entries(hass: HomeAssistant, parent: ConfigEntry | None = None) -> li
 
 
 def platform_devices(hass: HomeAssistant, entry: ConfigEntry) -> list[ConfigEntry | DeviceEntry]:
-    """Devices hosted by the entry whose platform HA is setting up."""
-    return device_entries(hass, entry) if entry.data.get(CONF_ENTRY_TYPE) in (
-        ENTRY_TYPE_UNMANAGED, ENTRY_TYPE_FLEET) else [entry]
+    """Devices hosted by the entry whose platform HA is setting up.
+
+    A subentry added while its parent is still setting up (a startup
+    migration or move) has no health coordinator yet; skip it here. The
+    move reloads the parent afterwards, which sets it up (#80).
+    """
+    if entry.data.get(CONF_ENTRY_TYPE) not in (ENTRY_TYPE_UNMANAGED, ENTRY_TYPE_FLEET):
+        return [entry]
+    loaded = hass.data.get(DOMAIN, {})
+    return [device for device in device_entries(hass, entry) if device.entry_id in loaded]
 
 
 def add_entities(add, device: ConfigEntry | DeviceEntry, entities: list, **kwargs: Any) -> None:
