@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Install Kiosk Satellite** no longer fails with a server error while GitHub is
+  rate limiting KSM. It installs the release from the last successful update check,
+  like auto-update and Update all; with no successful check yet it says the release
+  lookup failed and suggests pinning a downloaded version (#107).
 - When KSM creates a fleet for a Fleet Manager, each follower on that leader's
   roster that KSM doesn't manage yet appears under Discovered. Confirming a card
   checks the kiosk and asks for its Kiosk Satellite password. A follower that

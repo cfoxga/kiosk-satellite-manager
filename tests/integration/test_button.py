@@ -213,7 +213,11 @@ def _fake_health_response(app_version):
     return cm
 
 
-async def test_press_installs_launches_grants_and_refreshes_version(hass, tmp_path):
+async def test_press_installs_launches_grants_and_refreshes_version(hass, tmp_path, release_check):
+    # KSM-BEHAVE-147: the press installs the shared release check's latest.
+    release_check.return_value = ReleaseInfo(
+        "new", None, None, (("kiosk-satellite-new.apk", "https://example.invalid/ks.apk"),)
+    )
     # fetch_health is called once by the coordinator's first refresh during
     # setup, and again by the bounded post-install poll -- both must stay
     # mocked for the whole test, or phacc's pytest-socket blocks the real
@@ -271,7 +275,7 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass, tmp_pa
             "custom_components.kiosk_satellite_manager.button.AdbClient"
         ) as mock_client_cls, patch(
             "custom_components.kiosk_satellite_manager.install.latest_release",
-            new=AsyncMock(return_value=("https://example.invalid/ks.apk", "new")),
+            new=AsyncMock(side_effect=AssertionError("live release lookup")),
         ), patch(
             "custom_components.kiosk_satellite_manager.apk_cache.verify_ks_apk_signer"
         ), patch(
@@ -279,6 +283,9 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass, tmp_pa
             return_value=tmp_path / "apks",
         ), patch(
             "custom_components.kiosk_satellite_manager.button.async_get_clientsession",
+            return_value=fake_session,
+        ), patch(
+            "custom_components.kiosk_satellite_manager.apk_cache.async_get_clientsession",
             return_value=fake_session,
         ), patch.object(
             coordinator, "async_update_listeners", side_effect=_spy_update_listeners

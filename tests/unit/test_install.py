@@ -202,6 +202,83 @@ async def test_install_and_launch_pushes_the_cached_apk_and_keeps_it(apk_cache_d
     assert len(apk_gets) == 1
 
 
+def _release_check(hass, version=_TARGET_VERSION):
+    """A shared release check whose last successful run saw `version`."""
+    from custom_components.kiosk_satellite_manager.const import RELEASE_COORDINATOR_KEY
+    from custom_components.kiosk_satellite_manager.ks_api import ReleaseInfo
+
+    url = f"https://example.invalid/dl/kiosk-satellite-{version}.arm64-v8a.apk"
+    hass.data[RELEASE_COORDINATOR_KEY] = SimpleNamespace(
+        data=ReleaseInfo(version, None, None, ((url.rsplit("/", 1)[-1], url),))
+    )
+
+
+def _rate_limited_session():
+    """_fake_session, but the GitHub releases API answers 403 rate limited."""
+    session = _fake_session()
+    serve = session.get.side_effect
+
+    def _get(url, **kwargs):
+        if "api.github.com" in url:
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock(
+                side_effect=aiohttp.ClientResponseError(
+                    MagicMock(), (), status=403, message="rate limit exceeded"
+                )
+            )
+            cm = MagicMock()
+            cm.__aenter__ = AsyncMock(return_value=resp)
+            cm.__aexit__ = AsyncMock(return_value=False)
+            return cm
+        return serve(url, **kwargs)
+
+    session.get = MagicMock(side_effect=_get)
+    return session
+
+
+async def test_install_uses_the_last_successful_release_check(apk_cache_dir, monkeypatch):
+    """[KSM-TEST-293] KSM-BEHAVE-147 (#107): with the release check holding a
+    result, Install pushes that release's split and asks GitHub's API
+    nothing -- even while GitHub is rate limiting. Negative case: with no
+    successful check, the live lookup is the target."""
+    hass = _FakeHass()
+    _release_check(hass)
+    session = _rate_limited_session()
+    monkeypatch.setattr(_APK_CACHE + "async_get_clientsession", lambda hass: session)
+    client = _fake_client()
+    lookup = AsyncMock(side_effect=AssertionError("live release lookup"))
+    with patch("custom_components.kiosk_satellite_manager.install.latest_release", new=lookup):
+        await install_and_launch(hass, client, session, device_model="portal_go")
+
+    lookup.assert_not_awaited()
+    target = apk_cache_dir / _TARGET_VERSION / f"kiosk-satellite-{_TARGET_VERSION}.arm64-v8a.apk"
+    client.push.assert_awaited_once_with(str(target), client.install_apk.await_args.args[0])
+    assert not [c for c in session.get.call_args_list if "api.github.com" in c.args[0]]
+
+    client = _fake_client()
+    lookup = AsyncMock(return_value=("https://example.invalid/dl/ks.apk", _TARGET_VERSION))
+    with patch("custom_components.kiosk_satellite_manager.install.latest_release", new=lookup):
+        await install_and_launch(_FakeHass(), client, _fake_session(), device_model="portal_go")
+    lookup.assert_awaited_once()
+
+
+async def test_rate_limited_release_lookup_fails_as_a_home_assistant_error():
+    """[KSM-TEST-294] KSM-BEHAVE-147 (#107): no successful release check and
+    GitHub answering 403 -> a HomeAssistantError naming the release lookup
+    (the service call's 400, not an unhandled 500), before the device is
+    touched."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    client = _fake_client()
+    with pytest.raises(HomeAssistantError, match="release lookup"):
+        await install_and_launch(
+            _FakeHass(), client, _rate_limited_session(), device_model="portal_go"
+        )
+    client.push.assert_not_awaited()
+    client.install_apk.assert_not_awaited()
+    client.shell.assert_not_awaited()
+
+
 async def test_install_and_launch_runs_expected_shell_sequence():
     hass = _FakeHass()
     client = _fake_client()
@@ -1224,7 +1301,7 @@ async def test_install_and_launch_pushes_the_pinned_cached_apk(apk_cache_dir):
     client.installed_version = AsyncMock(side_effect=[None, "2026.9.86"])
     latest = AsyncMock()
     with patch(
-        "custom_components.kiosk_satellite_manager.install.pinned_version",
+        "custom_components.kiosk_satellite_manager.helpers.pinned_version",
         return_value="2026.9.86",
     ), patch("custom_components.kiosk_satellite_manager.install.latest_release", new=latest):
         await install_and_launch(_FakeHass(), client, session, device_model="portal_go")

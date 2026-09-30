@@ -44,6 +44,7 @@ from homeassistant.auth.const import GROUP_ID_READ_ONLY
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.network import get_url
 
 from collections.abc import Callable, Mapping
@@ -65,8 +66,8 @@ from .const import (
 from .device_catalog import require_recipe
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .install_recipes import InstallRecipe
-from .helpers import pinned_release, pinned_version
-from .ks_api import latest_release
+from .helpers import target_release
+from .ks_api import ApkAssetNotFound, latest_release
 from .ks_api_client import KsApiError
 
 _LOGGER = logging.getLogger(__name__)
@@ -376,14 +377,20 @@ async def install_and_launch(
         if abis:
             break
 
-    # KSM-BEHAVE-114: a version pinned in global settings; only Latest asks
-    # GitHub here.
-    pinned = pinned_version(hass)
-    if pinned is not None:
-        release, apk_url, target_version = pinned_release(hass, pinned), None, pinned
+    # KSM-BEHAVE-114/147: the pinned version, else the last successful shared
+    # release check's latest (a later rate-limited check keeps it, #107). Only
+    # an install before any check succeeded asks GitHub here.
+    release, apk_url = target_release(hass), None
+    if release is not None:
+        target_version = release.version
     else:
-        release = None
-        apk_url, target_version = await latest_release(session, abis)
+        try:
+            apk_url, target_version = await latest_release(session, abis)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ApkAssetNotFound) as err:
+            raise HomeAssistantError(
+                f"Kiosk Satellite release lookup failed ({err}); pin a downloaded "
+                "version in Kiosk Satellite Manager's Install version to install it"
+            ) from err
     current_version = await client.installed_version()
     if target_version and current_version == target_version:
         # KSM-BEHAVE-040 (Phase 2, "preserve compatible installations where
