@@ -305,7 +305,7 @@ async def test_patch_settings_raises_when_key_rejected():
 
 async def test_check_ha_connection_returns_ok_flag():
     session = _fake_session(post=_fake_response({"ok": True}))
-    assert await ks_api_client.check_ha_connection(session, "192.168.1.50", "tok-789", pin=None) is True
+    assert await ks_api_client.check_ha_connection(session, "192.168.1.50", "tok-789", pin=None) == (True, None)
     _, kwargs = session.post.call_args
     assert kwargs["allow_redirects"] is False
     assert session.post.call_args.args[0] == "http://192.168.1.50:2324/api/commands/haCheckConnection"
@@ -344,8 +344,9 @@ async def test_run_command_raises_ksapierror_on_rejection():
 
 
 async def test_check_ha_connection_false_on_failure():
+    """[KSM-TEST-296] Preserve KS's failure reason for the operator warning."""
     session = _fake_session(post=_fake_response({"ok": False, "error": "unreachable"}))
-    assert await ks_api_client.check_ha_connection(session, "192.168.1.50", "tok-789", pin=None) is False
+    assert await ks_api_client.check_ha_connection(session, "192.168.1.50", "tok-789", pin=None) == (False, "unreachable")
     _, kwargs = session.post.call_args
     assert kwargs["allow_redirects"] is False
     assert session.post.call_args.args[0] == "http://192.168.1.50:2324/api/commands/haCheckConnection"

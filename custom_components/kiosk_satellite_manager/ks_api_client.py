@@ -342,7 +342,7 @@ async def upload_update(
 
 async def check_ha_connection(
     session: aiohttp.ClientSession, host: str, token: str, *, pin: str | None
-) -> bool:
+) -> tuple[bool, str | None]:
     async with session.post(
         _credential_url(host, "/api/commands/haCheckConnection", pin),
         data="{}",
@@ -352,4 +352,4 @@ async def check_ha_connection(
         timeout=aiohttp.ClientTimeout(total=HEALTH_TIMEOUT_S),
     ) as resp:
         data = await resp.json()
-        return bool(data.get("ok"))
+        return bool(data.get("ok")), data.get("error") or None

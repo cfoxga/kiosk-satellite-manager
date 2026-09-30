@@ -335,7 +335,7 @@ def _sync_fakes(monkeypatch, *, establish):
 
     async def check(session, host, token, *, pin):
         events.append(("check", pin))
-        return True
+        return True, None
 
     async def fake_establish(session, host, password):
         events.append(("establish",))

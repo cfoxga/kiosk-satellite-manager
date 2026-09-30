@@ -368,7 +368,7 @@ async def test_install_and_launch_uses_the_assigned_recipe_for_start_url():
         )
         mock_api.setup_password = AsyncMock(return_value="token123")
         mock_api.patch_settings = AsyncMock(return_value={})
-        mock_api.check_ha_connection = AsyncMock(return_value=True)
+        mock_api.check_ha_connection = AsyncMock(return_value=(True, None))
 
         await install_and_launch(
             hass,
@@ -445,7 +445,7 @@ async def test_install_and_launch_skips_sync_when_no_password_configured():
     hass.auth.async_get_owner.assert_not_called()
 
 
-async def test_install_and_launch_syncs_password_and_name_on_first_run():
+async def test_install_and_launch_syncs_password_and_name_on_first_run(caplog):
     """[KSM-TEST-109] Automatic minting creates a dedicated kiosk identity."""
     hass = _FakeHass()
     client = _fake_client()
@@ -466,7 +466,7 @@ async def test_install_and_launch_syncs_password_and_name_on_first_run():
         )
         mock_api.setup_password = AsyncMock(return_value="ks-token")
         mock_api.patch_settings = AsyncMock(return_value={})
-        mock_api.check_ha_connection = AsyncMock(return_value=True)
+        mock_api.check_ha_connection = AsyncMock(return_value=(True, None))
 
         await install_and_launch(
             hass, client, session, host="192.168.1.50", device_name="Kitchen", password="hunter22",
@@ -492,9 +492,17 @@ async def test_install_and_launch_syncs_password_and_name_on_first_run():
         pin=None,
     )
     mock_api.check_ha_connection.assert_awaited_once_with(session, "192.168.1.50", "ks-token", pin=None)
+    assert "HA connection check failed" not in caplog.text
 
 
-async def test_failed_ha_connection_check_preserves_native_home_and_reports_warning(caplog):
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        ("certificate rejected; ks-token; minted-ha-token; hunter22", "certificate rejected"),
+        (None, "no error detail supplied"),
+    ],
+)
+async def test_failed_ha_connection_check_preserves_native_home_and_reports_warning(caplog, error, expected):
     """[KSM-TEST-257] A failed HA check does not trigger Home repair."""
     hass = _FakeHass()
     client = _fake_client()
@@ -510,12 +518,17 @@ async def test_failed_ha_connection_check_preserves_native_home_and_reports_warn
         mock_api.get_setup_status = AsyncMock(return_value={"passwordNeeded": True})
         mock_api.setup_password = AsyncMock(return_value="ks-token")
         mock_api.patch_settings = AsyncMock(return_value={})
-        mock_api.check_ha_connection = AsyncMock(return_value=False)
+        mock_api.check_ha_connection = AsyncMock(return_value=(False, error))
         await install_and_launch(
             hass, client, session, host="192.168.1.50", device_name="Kitchen",
             password="hunter22", device_model="portal_go",
         )
     assert "HA connection check failed" in caplog.text
+    assert "192.168.1.50" in caplog.text
+    assert expected in caplog.text
+    assert "ks-token" not in caplog.text
+    assert "minted-ha-token" not in caplog.text
+    assert "hunter22" not in caplog.text
     assert "home.enabled" not in mock_api.patch_settings.await_args.args[3]
     assert all("set-home-activity" not in call.args[0] for call in client.shell.await_args_list)
 
@@ -539,7 +552,7 @@ async def test_install_and_launch_mints_a_unique_managed_token_name():
         mock_api.get_setup_status = AsyncMock(return_value={"passwordNeeded": True})
         mock_api.setup_password = AsyncMock(return_value="ks-token")
         mock_api.patch_settings = AsyncMock(return_value={})
-        mock_api.check_ha_connection = AsyncMock(return_value=True)
+        mock_api.check_ha_connection = AsyncMock(return_value=(True, None))
 
         await install_and_launch(
             hass, client, session, host="192.168.1.50", device_name="Kitchen", password="hunter22",
@@ -602,7 +615,7 @@ async def test_install_and_launch_logs_in_and_patches_name_when_password_already
         )
         mock_api.login = AsyncMock(return_value="ks-token")
         mock_api.patch_settings = AsyncMock(return_value={})
-        mock_api.check_ha_connection = AsyncMock(return_value=True)
+        mock_api.check_ha_connection = AsyncMock(return_value=(True, None))
 
         await install_and_launch(
             hass, client, session, host="192.168.1.50", device_name="Kitchen", password="hunter22",
@@ -636,7 +649,7 @@ async def test_install_and_launch_does_not_repatch_name_when_already_correct():
         )
         mock_api.login = AsyncMock(return_value="ks-token")
         mock_api.patch_settings = AsyncMock(return_value={})
-        mock_api.check_ha_connection = AsyncMock(return_value=True)
+        mock_api.check_ha_connection = AsyncMock(return_value=(True, None))
 
         await install_and_launch(
             hass, client, session, host="192.168.1.50", device_name="Kitchen", password="hunter22",
@@ -738,7 +751,7 @@ async def test_install_and_launch_reuses_provided_token_and_respects_launcher_fl
         )
         mock_api.login = AsyncMock(return_value="ks-token")
         mock_api.patch_settings = AsyncMock(return_value={})
-        mock_api.check_ha_connection = AsyncMock(return_value=True)
+        mock_api.check_ha_connection = AsyncMock(return_value=(True, None))
 
         res = await install_and_launch(
             hass,
@@ -1382,7 +1395,7 @@ async def _run_install_for_launcher(*, replace_launcher, resolver, device_model=
         )
         mock_api.login = AsyncMock(return_value="ks-token")
         mock_api.patch_settings = AsyncMock(return_value={})
-        mock_api.check_ha_connection = AsyncMock(return_value=True)
+        mock_api.check_ha_connection = AsyncMock(return_value=(True, None))
         result = await install_and_launch(
             hass, client, _fake_session(),
             host="192.168.1.50", device_name="Kitchen", password="hunter22",
