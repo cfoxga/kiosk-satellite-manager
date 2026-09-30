@@ -73,7 +73,7 @@ from .const import (
     RENAME_API_KEY,
     SIGNAL_MANAGER_OPTIONS_UPDATED,
 )
-from . import auto_update, config_backup, fleet, follower_updates, ks_tls
+from . import auto_update, config_backup, fleet, follower_updates, ks_tls, meta_setup
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .ks_api import latest_release_info
 from .ks_update import async_check_device_for_update, async_check_devices_for_update
@@ -523,6 +523,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await _async_ensure_release_coordinator(hass)
     for device in devices:
         await _async_setup_device(hass, device)
+        meta_setup.async_resume(hass, device)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     if not hass.services.has_service(DOMAIN, SERVICE_PROVISION):

@@ -19,15 +19,16 @@ import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import aiohttp
 from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from . import device_owner, ks_api_client
+from . import device_owner, fleet, ks_api_client
 from .adb_client import AdbClient
-from .const import DOMAIN
+from .const import DOMAIN, CONF_HOST, CONF_PORT, CONF_KEY_PATH, CONF_PASSWORD, CONF_TLS_SPKI, CONF_DEVICE_PROFILE, CONF_NAME
 from .ks_api_client import KsApiError
 
 _LOGGER = logging.getLogger(__name__)
@@ -35,7 +36,10 @@ _LOGGER = logging.getLogger(__name__)
 # Either one pins Kiosk Satellite (KS kiosk_manager: kiosk.enabled || lockdown).
 LOCK_SETTINGS = ("kiosk.enabled", "lockdown.enabled")
 WATCH_INTERVAL_S = 15.0
-WATCH_TIMEOUT_S = 1800.0
+WATCH_TIMEOUT_S = 3600.0
+PENDING_KEY = "meta_setup_pending"
+_TASKS_KEY = f"{DOMAIN}_meta_setup_tasks"
+_UNOWNED_KEY = f"{DOMAIN}_meta_setup_unowned"
 
 _API_ERRORS = (KsApiError, aiohttp.ClientError, TimeoutError, ValueError, KeyError)
 
@@ -49,6 +53,81 @@ class Target:
     pin: str | None
     model_key: str | None
     name: str
+    entry_id: str | None = None
+
+
+def _entry_for(hass: HomeAssistant, target: Target):
+    if target.entry_id:
+        return fleet.resolve_device(hass, target.entry_id)
+    matches = [device for device in fleet.device_entries(hass)
+               if device.data.get(CONF_HOST) == target.host]
+    matches.extend(entry for entry in hass.config_entries.async_entries(DOMAIN)
+                   if not entry.data.get("entry_type") and entry.data.get(CONF_HOST) == target.host)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _save_pending(hass: HomeAssistant, target: Target, pending: dict | None,
+                  expected_started_at: float | None = None) -> None:
+    unowned = hass.data.setdefault(_UNOWNED_KEY, {})
+    if pending is None and expected_started_at is not None:
+        current = unowned.get(target.host)
+        entry = _entry_for(hass, target)
+        if entry is not None:
+            current = entry.data.get(PENDING_KEY)
+        if current is not None and current.get("started_at") != expected_started_at:
+            return
+    if pending is None:
+        unowned.pop(target.host, None)
+    else:
+        unowned[target.host] = pending
+    entry = _entry_for(hass, target)
+    if entry is not None:
+        data = dict(entry.data)
+        if pending is None:
+            data.pop(PENDING_KEY, None)
+        else:
+            data[PENDING_KEY] = pending
+        fleet.update_device(hass, entry, data=data)
+
+
+def take_unowned_pending(hass: HomeAssistant, host: str) -> dict | None:
+    """Transfer an add flow's watch into the newly created device entry."""
+    return hass.data.setdefault(_UNOWNED_KEY, {}).pop(host, None)
+
+
+def _start_watch(hass: HomeAssistant, target: Target, pending: dict) -> None:
+    tasks = hass.data.setdefault(_TASKS_KEY, {})
+    if old := tasks.get(target.host):
+        if old[0] == pending["started_at"] and not old[1].done():
+            return
+        old[1].cancel()
+    task = hass.async_create_background_task(
+        _watch(hass, target, tuple(pending["turned_off"]), pending["started_at"]),
+        name=f"{DOMAIN} Meta setup watch {target.host}",
+    )
+    tasks[target.host] = (pending["started_at"], task)
+    task.add_done_callback(lambda done: tasks.pop(target.host, None)
+                           if tasks.get(target.host, (None, None))[1] is done else None)
+
+
+def async_resume(hass: HomeAssistant, entry) -> None:
+    """Resume a saved watch at its original deadline after HA setup."""
+    pending = entry.data.get(PENDING_KEY)
+    if not isinstance(pending, dict):
+        return
+    if not isinstance(pending.get("started_at"), (int, float)) or not isinstance(pending.get("turned_off"), list):
+        return
+    if any(key not in LOCK_SETTINGS for key in pending["turned_off"]):
+        return
+    data = entry.data
+    target = Target(data[CONF_HOST], data[CONF_PORT], data[CONF_KEY_PATH],
+                    data.get(CONF_PASSWORD), data.get(CONF_TLS_SPKI),
+                    data.get(CONF_DEVICE_PROFILE), data.get(CONF_NAME) or entry.title,
+                    entry.entry_id)
+    remaining = max(0, int((pending["started_at"] + WATCH_TIMEOUT_S - datetime.now(timezone.utc).timestamp()) // 60))
+    notify(hass, target, "Finish setup and sign in with Facebook or WhatsApp on the Portal. "
+           f"The Meta login watch resumed after Home Assistant restarted ({remaining} minutes left).")
+    _start_watch(hass, target, pending)
 
 
 def notify(hass: HomeAssistant, target: Target, message: str) -> None:
@@ -125,15 +204,14 @@ async def async_start(
         f"{lock_note} This notice updates when "
         f"the Meta login is back (checked for {int(WATCH_TIMEOUT_S // 60)} minutes).",
     )
-    hass.async_create_background_task(
-        _watch(hass, target, turned_off or ()),
-        name=f"{DOMAIN} Meta setup watch {target.host}",
-    )
+    pending = {"started_at": datetime.now(timezone.utc).timestamp(),
+               "turned_off": list(turned_off or ())}
+    _save_pending(hass, target, pending)
+    _start_watch(hass, target, pending)
 
 
-async def _watch(hass: HomeAssistant, target: Target, turned_off: tuple[str, ...]) -> None:
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + WATCH_TIMEOUT_S
+async def _watch(hass: HomeAssistant, target: Target, turned_off: tuple[str, ...], started_at: float) -> None:
+    deadline = started_at + WATCH_TIMEOUT_S
     client = AdbClient(target.host, target.port, target.key_path)
     connected = False
     adb_enabled = ""
@@ -153,7 +231,7 @@ async def _watch(hass: HomeAssistant, target: Target, turned_off: tuple[str, ...
                 connected = False
                 with contextlib.suppress(Exception):
                     await client.close()
-            if loop.time() >= deadline:
+            if datetime.now(timezone.utc).timestamp() >= deadline:
                 lock = (
                     " Kiosk mode is still off; turn it back on in Kiosk Satellite once "
                     "setup is done." if turned_off else ""
@@ -165,6 +243,7 @@ async def _watch(hass: HomeAssistant, target: Target, turned_off: tuple[str, ...
                     f"{int(WATCH_TIMEOUT_S // 60)} minutes. Finish setup on the Portal, or "
                     f"use Configure → Enable Device Owner to show the setup screen again.{lock}",
                 )
+                _save_pending(hass, target, None, started_at)
                 return
             await asyncio.sleep(WATCH_INTERVAL_S)
     finally:
@@ -180,3 +259,4 @@ async def _watch(hass: HomeAssistant, target: Target, turned_off: tuple[str, ...
         )
     adb = "" if adb_enabled == "1" else " ADB debugging is off on the Portal."
     notify(hass, target, f"Meta setup is finished and the Meta login is back.{lock}{adb}")
+    _save_pending(hass, target, None, started_at)

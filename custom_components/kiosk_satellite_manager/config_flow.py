@@ -650,6 +650,7 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             pin=data.get(CONF_TLS_SPKI),
             model_key=data.get(CONF_DEVICE_PROFILE),
             name=data.get(CONF_NAME) or self._entry.title,
+            entry_id=self._entry.entry_id,
         )
 
     async def async_step_meta_setup(self, user_input: dict | None = None) -> FlowResult:
@@ -1703,6 +1704,8 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         }
         if self._tls_pin:
             data[CONF_TLS_SPKI] = self._tls_pin
+        if pending := meta_setup.take_unowned_pending(self.hass, self._host):
+            data[meta_setup.PENDING_KEY] = pending
         if self._existing_install_action != EXISTING_INSTALL_REUSE or self._global:
             data.update(
                 {

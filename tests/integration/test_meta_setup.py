@@ -4,13 +4,18 @@ lock back on -- against the scripted Portal shell and a fake Kiosk Satellite
 settings API."""
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+from datetime import datetime, timezone
+from types import MappingProxyType
 
 import pytest
+from homeassistant.config_entries import ConfigSubentry
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.kiosk_satellite_manager import device_owner, meta_setup
+from custom_components.kiosk_satellite_manager import device_owner, fleet, meta_setup
 from custom_components.kiosk_satellite_manager.device_owner import DeviceOwnerError
 from ksm_device_owner_fake import KS_ACTIVITY, SETUP_ACTIVITY, FakeDevice
+from .conftest import init_integration
 
 HOST = "192.0.2.71"
 FULL = tuple(f"com.facebook.aloha.{t}" for t in ("hw", "pl", "privowner", "sso"))
@@ -203,3 +208,111 @@ async def test_lock_that_cannot_be_restored_is_reported(hass):
     ks.patch_settings = patch_once
     _, messages, _ = await _run(hass, ks, portal)
     assert "could not be turned back on" in messages[-1]
+
+
+async def test_pending_watch_resumes_after_entry_setup(hass):
+    """[KSM-TEST-295] Persisted lock keys and original start survive setup."""
+    started = datetime.now(timezone.utc).timestamp()
+    ks = FakeKs({"kiosk.enabled": False, "lockdown.enabled": False})
+    portal = Portal(polls=3)
+    (a, b, c, d, n), connects = _patches(ks, portal)
+    with a, b, c, d, n as notice, patch(
+        "custom_components.kiosk_satellite_manager.fetch_health",
+        new=AsyncMock(return_value={}),
+    ):
+        context = await init_integration(hass, data={
+            "host": HOST, "port": 5555, "key_path": "/k/adbkey",
+            "password": "pw", "device_profile": "portal_go", "name": "Go",
+            meta_setup.PENDING_KEY: {"started_at": started, "turned_off": ["kiosk.enabled"]},
+        })
+        entry = context.entry
+        await hass.async_block_till_done(wait_background_tasks=True)
+    assert "Finish setup" in notice.call_args_list[0].kwargs["message"]
+    assert ks.patches == [{"kiosk.enabled": True}]
+    assert len(connects) == 1
+    assert meta_setup.PENDING_KEY not in entry.data
+
+
+async def test_new_watch_persists_before_background_poll(hass):
+    """[KSM-TEST-295] An existing device saves keys before its watch runs."""
+    entry = MockConfigEntry(domain="kiosk_satellite_manager", title="Go", data={
+        "host": HOST, "port": 5555, "key_path": "/k/adbkey",
+        "password": "pw", "device_profile": "portal_go", "name": "Go",
+    })
+    entry.add_to_hass(hass)
+    ks = FakeKs({"kiosk.enabled": True, "lockdown.enabled": False})
+    portal = Portal(polls=2)
+    (a, b, c, d, n), _ = _patches(ks, portal)
+    with a, b, c, d, n:
+        await meta_setup.async_start(hass, meta_setup.Target(
+            HOST, 5555, "/k/adbkey", "pw", None, "portal_go", "Go", entry.entry_id,
+        ), portal)
+        assert entry.data[meta_setup.PENDING_KEY]["turned_off"] == ["kiosk.enabled"]
+        await hass.async_block_till_done(wait_background_tasks=True)
+    assert meta_setup.PENDING_KEY not in entry.data
+
+
+async def test_repeated_resume_keeps_one_watcher(hass):
+    """[KSM-TEST-295] Repeated entry setup does not duplicate the ADB poll."""
+    entry = MockConfigEntry(domain="kiosk_satellite_manager", title="Go", data={
+        "host": HOST, "port": 5555, "key_path": "/k/adbkey",
+        "password": "pw", "device_profile": "portal_go", "name": "Go",
+        meta_setup.PENDING_KEY: {
+            "started_at": datetime.now(timezone.utc).timestamp(),
+            "turned_off": ["kiosk.enabled"],
+        },
+    })
+    entry.add_to_hass(hass)
+    ks = FakeKs({"kiosk.enabled": False})
+    portal = Portal(polls=3)
+    (a, b, c, d, n), connects = _patches(ks, portal)
+    with a, b, c, d, n:
+        meta_setup.async_resume(hass, entry)
+        meta_setup.async_resume(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)
+    assert len(connects) == 1
+    assert ks.patches == [{"kiosk.enabled": True}]
+
+
+async def test_subentry_watch_persists_with_physical_device(hass):
+    """[KSM-TEST-295] Fleet devices save the watch on their own subentry."""
+    parent = MockConfigEntry(domain="kiosk_satellite_manager", title="Unmanaged",
+                             data={"entry_type": "unmanaged"})
+    parent.add_to_hass(hass)
+    hass.config_entries.async_add_subentry(parent, ConfigSubentry(
+        data=MappingProxyType({"host": HOST, "port": 5555, "key_path": "/k/adbkey",
+                               "password": "pw", "device_profile": "portal_go", "name": "Go"}),
+        subentry_id="go", subentry_type="device", title="Go", unique_id="go",
+    ))
+    [device] = fleet.device_entries(hass, parent)
+    ks = FakeKs({"kiosk.enabled": True})
+    portal = Portal(polls=2)
+    (a, b, c, d, n), _ = _patches(ks, portal)
+    with a, b, c, d, n:
+        await meta_setup.async_start(hass, meta_setup.Target(
+            HOST, 5555, "/k/adbkey", "pw", None, "portal_go", "Go", device.entry_id,
+        ), portal)
+        assert device.data[meta_setup.PENDING_KEY]["turned_off"] == ["kiosk.enabled"]
+        await hass.async_block_till_done(wait_background_tasks=True)
+    assert meta_setup.PENDING_KEY not in device.data
+    assert meta_setup.PENDING_KEY not in parent.data
+
+
+async def test_expired_watch_clears_state_without_relocking(hass, monkeypatch):
+    """[KSM-TEST-295] A missing login at the original deadline leaves lock off."""
+    monkeypatch.setattr(meta_setup, "WATCH_TIMEOUT_S", 0)
+    entry = MockConfigEntry(domain="kiosk_satellite_manager", title="Go", data={
+        "host": HOST, "port": 5555, "key_path": "/k/adbkey",
+        "password": "pw", "device_profile": "portal_go", "name": "Go",
+        meta_setup.PENDING_KEY: {"started_at": 1, "turned_off": ["kiosk.enabled"]},
+    })
+    entry.add_to_hass(hass)
+    ks = FakeKs({"kiosk.enabled": False})
+    portal = Portal(polls=None)
+    (a, b, c, d, n), _ = _patches(ks, portal)
+    with a, b, c, d, n as notice:
+        meta_setup.async_resume(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)
+    assert ks.patches == []
+    assert meta_setup.PENDING_KEY not in entry.data
+    assert "Kiosk mode is still off" in notice.call_args.kwargs["message"]
