@@ -5,6 +5,9 @@
 - Meta setup recovery now saves its pending login watch on the device entry,
   resumes it after a Home Assistant restart, and allows 60 minutes for sign-in
   before showing the manual retry instructions (#79).
+- Install now logs Kiosk Satellite's reason when its Home Assistant connection
+  check fails, with provisioning credentials redacted, so the device's failure
+  can be diagnosed without a generic warning alone (#63).
 - **Install Kiosk Satellite** no longer fails with a server error while GitHub is
   rate limiting KSM. It installs the release from the last successful update check,
   like auto-update and Update all; with no successful check yet it says the release

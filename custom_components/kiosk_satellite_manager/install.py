@@ -643,8 +643,16 @@ async def _sync_device_and_connect_ha(
             settings_payload["home.enabled"] = True
 
         await ks_api_client.patch_settings(session, host, token, settings_payload, pin=pin)
-        if not await ks_api_client.check_ha_connection(session, host, token, pin=pin):
-            _LOGGER.warning("Kiosk Satellite reported the HA connection check failed for %s", host)
+        connected, error = await ks_api_client.check_ha_connection(session, host, token, pin=pin)
+        if not connected:
+            detail = str(error or "no error detail supplied")
+            for secret in (password, token, credential.access_token):
+                if secret:
+                    detail = detail.replace(secret, "[redacted]")
+            _LOGGER.warning(
+                "Kiosk Satellite reported the HA connection check failed for %s: %s",
+                host, detail,
+            )
     except Exception:
         if created_credential:
             await async_revoke_owned_credential(hass, credential)
