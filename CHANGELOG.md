@@ -6,6 +6,9 @@
   rate limiting KSM. It installs the release from the last successful update check,
   like auto-update and Update all; with no successful check yet it says the release
   lookup failed and suggests pinning a downloaded version (#107).
+- The first start after the fleet migration no longer logs a `KeyError` from
+  sensor setup for a device that moved while its new parent was still loading;
+  that device now gets its entities when the parent reloads (#80).
 - When KSM creates a fleet for a Fleet Manager, each follower on that leader's
   roster that KSM doesn't manage yet appears under Discovered. Confirming a card
   checks the kiosk and asks for its Kiosk Satellite password. A follower that

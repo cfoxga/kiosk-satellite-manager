@@ -575,6 +575,51 @@ async def test_move_waits_for_parent_platform_setup(hass):
     assert fleet.resolve_device(hass, "race-ha").parent.data[CONF_ENTRY_TYPE] == "fleet"
 
 
+async def test_subentry_added_mid_setup_skips_platforms_until_reload(hass, caplog):
+    """[KSM-TEST-292] A device subentry that lands while its parent is still
+    setting up (the first-boot migration) gets no platform entities and no
+    KeyError; the parent's next reload sets it up (kiosk-satellite-manager#80)."""
+    await _manager(hass)
+    unmanaged = fleet.unmanaged_entry(hass)
+
+    def _subentry(subentry_id: str, host: str) -> ConfigSubentry:
+        return ConfigSubentry(
+            data=MappingProxyType({"host": host, "port": 5555,
+                                   "key_path": "/tmp/adbkey", "password": ""}),
+            subentry_id=subentry_id, subentry_type="device", title=subentry_id,
+            unique_id=subentry_id,
+        )
+
+    hass.config_entries.async_add_subentry(unmanaged, _subentry("early-ha", "192.168.99.81"))
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_health(session, host, *, pin):
+        started.set()
+        await release.wait()
+        return {"appVersion": "2026.9.87"}
+
+    entities = er.async_get(hass)
+
+    def _sensors(subentry_id: str) -> list:
+        return [item for item in er.async_entries_for_config_entry(entities, unmanaged.entry_id)
+                if item.domain == "sensor" and item.config_subentry_id == subentry_id]
+
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", side_effect=slow_health):
+        setup = hass.async_create_task(hass.config_entries.async_reload(unmanaged.entry_id))
+        await started.wait()
+        hass.config_entries.async_add_subentry(unmanaged, _subentry("late-ha", "192.168.99.82"))
+        release.set()
+        await setup
+        await hass.async_block_till_done()
+        assert "KeyError" not in caplog.text
+        assert "Error while setting up" not in caplog.text
+        assert _sensors("early-ha")
+        assert not _sensors("late-ha")
+        assert await hass.config_entries.async_reload(unmanaged.entry_id)
+        await hass.async_block_till_done()
+    assert _sensors("late-ha")
+
+
 async def test_duplicate_ks_identity_never_assigns_two_devices_to_one_leader(hass):
     """[KSM-TEST-234] Conflicting immutable IDs leave both placements intact."""
     await _manager(hass)
