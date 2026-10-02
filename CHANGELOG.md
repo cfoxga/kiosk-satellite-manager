@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.2
 
 - Install no longer fails right after a Home Assistant restart when GitHub's API is
   rate-limiting. KSM saves its last successful release check and starts from it. A failed
