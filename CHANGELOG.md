@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1
 
 - The README follows HACS conventions: badges, Installation first with a My Home
   Assistant "open in HACS" button, and an "add integration" button under
