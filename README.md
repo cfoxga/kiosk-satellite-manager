@@ -1,25 +1,49 @@
 # Kiosk Satellite Manager
 
-A Home Assistant custom integration that provisions [Kiosk Satellite](https://github.com/jxlarrea/kiosk-satellite)
-devices using network ADB for installation and onboarding, then the authenticated Kiosk Satellite
-management API for routine configuration.
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories)
+[![GitHub Release](https://img.shields.io/github/v/release/cfoxga/kiosk-satellite-manager)](https://github.com/cfoxga/kiosk-satellite-manager/releases)
+[![Validate](https://github.com/cfoxga/kiosk-satellite-manager/actions/workflows/validate.yml/badge.svg)](https://github.com/cfoxga/kiosk-satellite-manager/actions/workflows/validate.yml)
+[![License](https://img.shields.io/github/license/cfoxga/kiosk-satellite-manager)](LICENSE)
 
-## Device and recipe reference
+A Home Assistant integration that installs, onboards and manages
+[Kiosk Satellite](https://github.com/jxlarrea/kiosk-satellite) on Meta Portals and Android TV
+devices: network ADB for the install, then Kiosk Satellite's authenticated management API for
+updates, fleets, backups and settings.
 
-The KSM Settings entry has native diagnostic entities for the
-[device catalog](docs/supported-devices.md) and
-[install recipes and settings](docs/install-recipes.md). Open **KSM Settings**
-from the integration page, then select a diagnostic entity and choose
-**Menu → Details** to browse its attributes. Each managed
-device also has an **Install recipe** diagnostic entity with that device's
-approved recipe policy. Assignment and build-specific qualification are
-separate; the [device catalog page](docs/supported-devices.md) explains the
-boundary and known limitations.
+> Not affiliated with the Kiosk Satellite project.
 
-## Three manual steps you can't script away
+## Installation
 
-Everything else is automated, but these three happen on the physical device and cannot be driven
-remotely — do them once per device, in order:
+Requires Home Assistant 2025.3 or later.
+
+### HACS (recommended)
+
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=cfoxga&repository=kiosk-satellite-manager&category=integration)
+
+Click the button, then **Download**, and restart Home Assistant. Or add it by hand: **HACS → ⋮ →
+Custom repositories**, add `https://github.com/cfoxga/kiosk-satellite-manager` with type **Integration**, then find **Kiosk Satellite Manager**
+and download it. HACS installs the latest [release](https://github.com/cfoxga/kiosk-satellite-manager/releases) and offers each new one as an
+update.
+
+### Manual
+
+Download the latest [release](https://github.com/cfoxga/kiosk-satellite-manager/releases), copy `custom_components/kiosk_satellite_manager/`
+into your Home Assistant config's `custom_components/` directory, and restart Home Assistant.
+
+## Configuration
+
+[![Open your Home Assistant instance and start setting up Kiosk Satellite Manager.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=kiosk_satellite_manager)
+
+Or go to **Settings → Devices & services → Add integration → Kiosk Satellite Manager**.
+
+1. Choose **Configure KSM** once. This creates **KSM Settings**, which holds the defaults for new
+   devices and the release controls.
+2. Add each kiosk through the same **Add integration** path, entering its IP address.
+
+### Before you add a device
+
+Everything else is automated, but these happen on the physical device and cannot be driven
+remotely. Do them once per device, in order:
 
 1. **Enable ADB** on the device (on a Meta Portal this is gated behind onboarding plus an
    account/PIN-gated toggle; on an Android TV device it's Settings → About → tap Build 7 times →
@@ -32,7 +56,7 @@ remotely — do them once per device, in order:
    Invitations are answered on the new kiosk screen only; KSM moves the device from Unmanaged
    after KS confirms acceptance.
 
-## What it does
+## Features
 
 - **Native fleets** — Home Assistant shows a global KSM entry, one Unmanaged entry, and one entry
   per Kiosk Satellite fleet leader. Managed kiosks appear as device subentries under their confirmed
@@ -128,35 +152,27 @@ KSM does not manage Voice Satellite. Kiosk Satellite 2026.9.87 and later has it 
 the kiosk's ESPHome server and Voice Satellite on the kiosk, then add it in Home Assistant as an
 ESPHome device. The separate Voice Satellite integration is no longer needed.
 
-## Installation
+## Device and recipe reference
 
-Requires Home Assistant 2025.3 or later (KSM uses config subentries).
+The KSM Settings entry has native diagnostic entities for the
+[device catalog](docs/supported-devices.md) and
+[install recipes and settings](docs/install-recipes.md). Open **KSM Settings**
+from the integration page, then select a diagnostic entity and choose
+**Menu → Details** to browse its attributes. Each managed
+device also has an **Install recipe** diagnostic entity with that device's
+approved recipe policy. Assignment and build-specific qualification are
+separate; the [device catalog page](docs/supported-devices.md) explains the
+boundary and known limitations.
 
-### HACS (recommended)
+## Release notes
 
-1. In Home Assistant open **HACS**, then the **⋮** menu → **Custom repositories**.
-2. Add `https://github.com/cfoxga/kiosk-satellite-manager` with type **Integration**.
-3. Find **Kiosk Satellite Manager** in HACS, download it, and restart Home Assistant.
+See [CHANGELOG.md](CHANGELOG.md).
 
-HACS installs the latest [release](https://github.com/cfoxga/kiosk-satellite-manager/releases) and offers each new one as an update.
+## Issues and contributing
 
-### Manual
+Report bugs and requests on [GitHub Issues](https://github.com/cfoxga/kiosk-satellite-manager/issues). See [CONTRIBUTING.md](CONTRIBUTING.md) for
+development setup.
 
-Download the latest [release](https://github.com/cfoxga/kiosk-satellite-manager/releases), copy
-`custom_components/kiosk_satellite_manager/` into your Home Assistant config's `custom_components/`
-directory, then restart Home Assistant.
+## License
 
-Release notes are in [CHANGELOG.md](CHANGELOG.md).
-
-Then add the integration (Settings → Devices & Services → Add Integration → Kiosk Satellite Manager).
-Choose Configure KSM once for global defaults and release controls, then add each device through
-the same Add Integration path. Complete the manual steps above on each device before its flow can
-connect.
-
-## Issues
-
-Report bugs and requests on [GitHub Issues](https://github.com/cfoxga/kiosk-satellite-manager/issues).
-
-## Development
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+[MIT](LICENSE)

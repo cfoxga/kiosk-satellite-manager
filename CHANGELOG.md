@@ -8,6 +8,15 @@
   now raises a repair when the device resolves the dashboard address to a public address that
   Home Assistant does not use. Portals set up earlier: press **Install Kiosk Satellite** once,
   or set Private DNS to Off on the device. The Portal recipe keys now end in `_local_dns` (#121).
+- Passes Home Assistant's hassfest validation: the `adb-shell` requirement is a
+  minimum version (`>=0.4.4`) so it follows Home Assistant's own pin, and the
+  device subentry has its "Add Kiosk Satellite device" label (#124).
+
+## 0.4.1
+
+- The README follows HACS conventions: badges, Installation first with a My Home
+  Assistant "open in HACS" button, and an "add integration" button under
+  Configuration (#122).
 - Meta Portal Go and Portal+ Gen 2 are now **supported** on their tested Android 10
   builds. Install no longer asks for the secure-settings permission, which Kiosk
   Satellite never requests, so permission setup no longer fails on every Portal.

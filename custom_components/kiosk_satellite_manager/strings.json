@@ -261,6 +261,9 @@
   "config_subentries": {
     "device": {
       "entry_type": "Kiosk Satellite device",
+      "initiate_flow": {
+        "user": "Add Kiosk Satellite device"
+      },
       "step": {
         "device_menu": {
           "title": "Configure this device",
