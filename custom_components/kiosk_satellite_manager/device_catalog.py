@@ -312,6 +312,80 @@ QUALIFICATIONS: tuple[QualificationRecord, ...] = (
         ),
         rollback_notes="No new privilege or device setting was added; no rollback required.",
     ),
+) + tuple(
+    # Issue #115: the full physical matrix on Test Portal Plus (Portal+ Gen 2,
+    # 14-inch). Six lifecycle scenarios passed; permission convergence is
+    # recorded as failed for the same reason as the Portal Go record above,
+    # even though the e2e verifier skips an undeclared secure-settings grant.
+    QualificationRecord(
+        model_key="portal_plus_gen2",
+        recipe_key="meta_portal_android10",
+        scenario=scenario,
+        result=result,
+        verified_on="2026-10-02",
+        min_sdk=29,
+        max_sdk=29,
+        fingerprint_prefixes=(
+            "facebook/cipher_prod/cipher:10/qkq1.210213.001/4051355900018050:user/prod-keys",
+        ),
+        evidence=(
+            f"KS 2026.10.2 (versionCode 300) on Portal+ / cipher_prod, SDK 29: {evidence} "
+            "Physical matrix via kiosk-satellite-manager/scripts/test-device-matrix.py "
+            "against dev HA, KSM issue #115."
+        ),
+        positive_control=positive,
+        negative_control=negative,
+        limitations=(
+            "Evidence applies to the observed KS app build; revalidate after an app update.",
+            "Portal+ Gen 1, other Portal SKUs, Device Owner and Test Harness are not covered.",
+        ),
+        rollback_notes="Teardown wiped the device; KSM restored its exported config and HA entry.",
+    )
+    for scenario, result, evidence, positive, negative in (
+        (
+            SCENARIO_CLEAN_INSTALL, RESULT_PASS,
+            "fresh install through a new KSM entry reached a GREEN e2e result.",
+            "Package and KSM entry present after setup.",
+            "The scenario fails when the package or entry is missing.",
+        ),
+        (
+            SCENARIO_EXISTING_REUSE, RESULT_PASS,
+            "setup reused the installed app without reinstalling.",
+            "Existing package kept and entry created.",
+            "The scenario fails when reuse does not complete setup.",
+        ),
+        (
+            SCENARIO_UPDATE, RESULT_PASS,
+            "the Install button reinstalled the target release.",
+            "Install button press completed with the app running.",
+            "The scenario fails when the button is unavailable or the install errors.",
+        ),
+        (
+            SCENARIO_REINSTALL, RESULT_PASS,
+            "setup with existing_install_action=reinstall completed.",
+            "Entry created after a reinstall.",
+            "The scenario fails when the reinstall path does not finish setup.",
+        ),
+        (
+            SCENARIO_PERMISSION_CONVERGENCE, RESULT_FAIL,
+            "the app does not declare WRITE_SECURE_SETTINGS, which this recipe requires; "
+            "dumpsys package lists no such permission after provisioning.",
+            "READ_LOGS readback shows granted=true in the same dump.",
+            "WRITE_SECURE_SETTINGS is absent from the package dump, so it cannot be granted.",
+        ),
+        (
+            SCENARIO_HEALTH_VERSION_READBACK, RESULT_PASS,
+            "Android package versionName matched KS /api/health appVersion.",
+            "Non-empty versions agreed; post-run dumpsys reads versionName 2026.10.2.",
+            "The scenario fails on any mismatch between the two readbacks.",
+        ),
+        (
+            SCENARIO_UNINSTALL, RESULT_PASS,
+            "the KSM Uninstall button removed me.jxl.kiosk_satellite.",
+            "Package installed and the button available before the press.",
+            "The scenario fails when the package is still installed after the press.",
+        ),
+    )
 )
 
 _RECOVERY_QUALIFIED_MODEL_KEYS: tuple[str, ...] = (

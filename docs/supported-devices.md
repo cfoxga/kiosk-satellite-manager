@@ -21,7 +21,7 @@ identity and executable recipe stored for that particular device.
 | Meta Portal Gen 1 | `portal_gen1` | `meta_portal_android9` | Android 9 recipe |
 | Meta Portal Gen 2 | `portal_gen2` | `meta_portal_android10` | Android 10 recipe |
 | Meta Portal+ Gen 1 | `portal_plus_gen1` | `meta_portal_android9` | Android 9 recipe |
-| Meta Portal+ Gen 2 | `portal_plus_gen2` | `meta_portal_android10` | Android 10 recipe |
+| Meta Portal+ Gen 2 | `portal_plus_gen2` | `meta_portal_android10` | Install, update, reinstall and uninstall passed on the tested SDK 29 build (2026-10-02); the same missing secure-settings permission as Portal Go blocks that build |
 | Meta Portal TV | `portal_tv` | `meta_portal_tv` | Cleanup remains unqualified |
 
 The source catalog may evolve with a KSM update; the native entity always reads

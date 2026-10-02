@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The device catalog now carries qualification evidence for the Meta Portal+
+  Gen 2 on its tested Android 10 build. Install, update, reinstall and uninstall
+  passed, but that build reports **blocked** because Kiosk Satellite 2026.10.2
+  does not request the secure-settings permission the Portal recipe requires (#115).
 - Meta setup recovery now saves its pending login watch on the device entry,
   resumes it after a Home Assistant restart, and allows 60 minutes for sign-in
   before showing the manual retry instructions (#79).

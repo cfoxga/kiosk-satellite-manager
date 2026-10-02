@@ -3,6 +3,7 @@ derived support state (KSM-BEHAVE-047/049/050, KSM-TEST-055/057/058/061/062)."""
 from __future__ import annotations
 
 import dataclasses
+import json
 from pathlib import Path
 
 import pytest
@@ -444,6 +445,49 @@ def test_portal_go_secure_settings_limitation_is_exact_build_evidence():
     )
     changed = _catalog(recipes=CATALOG.recipes + (new_recipe,), assignments=assignments)
     assert resolve_catalog_entry(observed, catalog=changed).support_state == SUPPORT_REVALIDATION_REQUIRED
+
+
+_PLUS_FIXTURE = Path(__file__).parents[1] / "fixtures/profile-portal-plus-gen2-2026-10-02.json"
+
+
+def test_KSM_TEST_297_portal_plus_gen2_records_its_own_live_matrix():
+    """[KSM-TEST-297] The live Portal+ Gen 2 run (#115) resolves to its exact
+    model and derives its state from its own build-scoped records only."""
+    fixture = json.loads(_PLUS_FIXTURE.read_text())
+    platform = fixture["facts"]["platform"]
+    observed = DeviceFacts.from_platform(platform)
+    entry = resolve_catalog_entry(observed)
+    assert entry.model_key == fixture["expected_model_key"] == "portal_plus_gen2"
+    assert entry.recipe.recipe_key == "meta_portal_android10"
+
+    records = [q for q in CATALOG.qualifications if q.model_key == "portal_plus_gen2"]
+    by_scenario = {q.scenario: q.result for q in records}
+    assert set(by_scenario) == required_scenarios(entry.recipe)
+    assert by_scenario.pop("permission_convergence") == "fail"
+    assert set(by_scenario.values()) == {"pass"}
+    for record in records:
+        assert record.min_sdk == record.max_sdk == 29
+        assert record.fingerprint_prefixes == (platform["fingerprint"].lower(),)
+        assert "2026.10.2" in record.evidence
+        assert record.positive_control and record.negative_control
+    # The KS build does not declare the secure-settings grant the recipe requires,
+    # so the passing lifecycle runs cannot add up to a supported claim.
+    assert "android.permission.WRITE_SECURE_SETTINGS" in entry.recipe.permissions_for_sdk(29)
+    assert entry.support_state == SUPPORT_BLOCKED
+    assert "permission_convergence" in entry.reason
+
+    # Negative controls: an unobserved build, the Gen 1 Portal+ and the
+    # sibling Portal Go never inherit this evidence.
+    for facts in (
+        dataclasses.replace(observed, fingerprint="facebook/cipher_prod/cipher:10/other"),
+        dataclasses.replace(observed, sdk=30),
+    ):
+        assert resolve_catalog_entry(facts).support_state == SUPPORT_REVALIDATION_REQUIRED
+    gen1 = resolve_catalog_entry(dataclasses.replace(observed, sdk=28))
+    assert gen1.model_key == "portal_plus_gen1"
+    assert gen1.support_state == SUPPORT_RECIPE_ASSIGNED
+    go = [q for q in CATALOG.qualifications if q.model_key == "portal_go"]
+    assert len(go) == 1
 
 
 @pytest.mark.parametrize("result", ["fail", "blocked"])
