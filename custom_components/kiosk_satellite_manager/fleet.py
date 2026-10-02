@@ -76,6 +76,11 @@ class DeviceEntry:
         self.domain = DOMAIN
 
     @property
+    def present(self) -> bool:
+        """False once HA has removed this subentry (#125)."""
+        return self.subentry_id in self.parent.subentries
+
+    @property
     def _subentry(self) -> ConfigSubentry:
         return self.parent.subentries[self.subentry_id]
 
