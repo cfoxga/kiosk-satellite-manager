@@ -620,6 +620,61 @@ async def test_subentry_added_mid_setup_skips_platforms_until_reload(hass, caplo
     assert _sensors("late-ha")
 
 
+async def test_subentry_removed_mid_setup_is_skipped_not_fatal(hass, caplog):
+    """[KSM-TEST-309] A device subentry removed while its parent is setting up
+    is skipped, before or after its health refresh; the parent still loads and
+    its other devices keep their entities (kiosk-satellite-manager#125)."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    await _manager(hass)
+    unmanaged = fleet.unmanaged_entry(hass)
+    for subentry_id, host in (("gone-a", "192.168.99.91"), ("gone-b", "192.168.99.92"),
+                              ("kept-c", "192.168.99.93")):
+        hass.config_entries.async_add_subentry(unmanaged, ConfigSubentry(
+            data=MappingProxyType({"host": host, "port": 5555,
+                                   "key_path": "/tmp/adbkey", "password": ""}),
+            subentry_id=subentry_id, subentry_type="device", title=subentry_id,
+            unique_id=subentry_id,
+        ))
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_health(session, host, *, pin):
+        if host == "192.168.99.91":
+            started.set()
+            await release.wait()
+        return {"appVersion": "2026.9.87"}
+
+    entities = er.async_get(hass)
+
+    def _sensors(subentry_id: str) -> list:
+        return [item for item in er.async_entries_for_config_entry(entities, unmanaged.entry_id)
+                if item.domain == "sensor" and item.config_subentry_id == subentry_id]
+
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", side_effect=slow_health):
+        setup = hass.async_create_task(hass.config_entries.async_reload(unmanaged.entry_id))
+        await started.wait()
+        # gone-a is mid-refresh; gone-b has not started yet.
+        hass.config_entries.async_remove_subentry(unmanaged, "gone-a")
+        hass.config_entries.async_remove_subentry(unmanaged, "gone-b")
+        release.set()
+        await setup
+        await hass.async_block_till_done()
+    assert "KeyError" not in caplog.text
+    assert "Error setting up entry" not in caplog.text
+    assert unmanaged.state is ConfigEntryState.LOADED
+    assert _sensors("kept-c")
+    assert not _sensors("gone-a") and not _sensors("gone-b")
+    assert "gone-a" not in hass.data[DOMAIN] and "gone-b" not in hass.data[DOMAIN]
+    # A removal after setup reloads the parent; unload drops the removed
+    # device's coordinator too, not only the subentries still present.
+    assert "kept-c" in hass.data[DOMAIN]
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", side_effect=slow_health):
+        hass.config_entries.async_remove_subentry(unmanaged, "kept-c")
+        await hass.async_block_till_done()
+    assert unmanaged.state is ConfigEntryState.LOADED
+    assert "kept-c" not in hass.data[DOMAIN]
+
+
 async def test_duplicate_ks_identity_never_assigns_two_devices_to_one_leader(hass):
     """[KSM-TEST-234] Conflicting immutable IDs leave both placements intact."""
     await _manager(hass)

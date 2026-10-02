@@ -6,6 +6,8 @@
   rate-limiting. KSM saves its last successful release check and starts from it. A failed
   startup check now keeps installing that release, without falling back to a different
   version. Before this fix, the Install button returned a server error (#127).
+- Deleting a device while its Unmanaged or fleet entry is reloading no longer makes that
+  entry fail setup and unload every other device under it (#125).
 - New guide, [Device Owner on Meta Portals](docs/device-owner.md), explains how KSM makes Kiosk
   Satellite Device Owner without a factory reset, what that costs the Portal's Meta login, and how
   the login is restored (#128).
