@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The README follows HACS conventions: badges, Installation first with a My Home
+  Assistant "open in HACS" button, and an "add integration" button under
+  Configuration (#122).
 - Meta Portal Go and Portal+ Gen 2 are now **supported** on their tested Android 10
   builds. Install no longer asks for the secure-settings permission, which Kiosk
   Satellite never requests, so permission setup no longer fails on every Portal.

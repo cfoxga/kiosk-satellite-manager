@@ -40,3 +40,21 @@ def test_validation_workflow_runs_hassfest_and_hacs():
     assert "home-assistant/actions/hassfest@" in workflow
     assert "hacs/action@" in workflow
     assert "category: integration" in workflow
+
+
+def _h2_headings(readme: str) -> list[str]:
+    return [line[3:].strip() for line in readme.splitlines() if line.startswith("## ")]
+
+
+def test_readme_follows_hacs_layout():
+    """[KSM-TEST-300] (#122) Installation is the first section, with the My Home Assistant
+    "open in HACS" and "add integration" buttons, as HACS integration READMEs conventionally do."""
+    readme = (ROOT / "README.md").read_text()
+    assert _h2_headings(readme)[0] == "Installation"
+    assert (
+        "https://my.home-assistant.io/redirect/hacs_repository/"
+        "?owner=cfoxga&repository=kiosk-satellite-manager&category=integration" in readme
+    )
+    assert "https://my.home-assistant.io/badges/hacs_repository.svg" in readme
+    assert "https://my.home-assistant.io/redirect/config_flow_start/?domain=kiosk_satellite_manager" in readme
+    assert "https://my.home-assistant.io/badges/config_flow_start.svg" in readme
