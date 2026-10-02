@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -43,6 +44,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -75,7 +77,7 @@ from .const import (
 )
 from . import auto_update, config_backup, fleet, follower_updates, ks_tls, meta_setup
 from .credentials import TokenCredential, async_revoke_owned_credential
-from .ks_api import latest_release_info
+from .ks_api import ReleaseInfo, latest_release_info
 from .ks_update import async_check_device_for_update, async_check_devices_for_update
 from .esphome_identity import async_ensure_esphome_identity
 from .ks_api_client import KsApiError
@@ -297,6 +299,36 @@ async def _async_rename_entry(
     return result
 
 
+_RELEASE_STORE_KEY = f"{DOMAIN}.release_check"
+
+
+def _releases_to_store(release: ReleaseInfo) -> dict:
+    return {"releases": [
+        {"version": r.version, "url": r.url, "notes": r.notes, "assets": [list(a) for a in r.assets]}
+        for r in (release.recent or (release,))
+    ]}
+
+
+def _release_from_store(data: object) -> ReleaseInfo | None:
+    """KSM-BEHAVE-155: the saved last successful check, or None when there is
+    none or it does not parse."""
+    try:
+        recent = tuple(
+            ReleaseInfo(
+                version=str(item["version"]),
+                url=item.get("url"),
+                notes=item.get("notes"),
+                assets=tuple((str(name), str(url)) for name, url in item.get("assets", [])),
+            )
+            for item in data["releases"]  # type: ignore[index]
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not recent or not recent[0].version:
+        return None
+    return replace(recent[0], recent=recent)
+
+
 async def _async_ensure_release_coordinator(hass: HomeAssistant) -> None:
     """KSM-BEHAVE-071: create the shared release check on first entry setup.
 
@@ -307,6 +339,7 @@ async def _async_ensure_release_coordinator(hass: HomeAssistant) -> None:
     if RELEASE_COORDINATOR_KEY in hass.data:
         return
     session = async_get_clientsession(hass)
+    store: Store = Store(hass, 1, _RELEASE_STORE_KEY)
 
     async def _update():
         try:
@@ -314,6 +347,11 @@ async def _async_ensure_release_coordinator(hass: HomeAssistant) -> None:
         except Exception as err:  # network, HTTP status, no usable release
             raise UpdateFailed(f"Kiosk Satellite release check failed: {err}") from err
         coordinator.ksm_last_success = datetime.now(timezone.utc)
+        # KSM-BEHAVE-155: only a successful check is saved, for the next start.
+        try:
+            await store.async_save(_releases_to_store(release))
+        except Exception as err:  # noqa: BLE001 -- saving never fails the check
+            _LOGGER.warning("Could not save the Kiosk Satellite release check: %s", err)
         # KSM-BEHAVE-103/119: a newly seen version tells already loaded
         # devices to check now, including the first successful check. Device
         # entries that load afterward check individually (KSM-BEHAVE-117).
@@ -335,6 +373,13 @@ async def _async_ensure_release_coordinator(hass: HomeAssistant) -> None:
     )
     coordinator.ksm_announced_version = None
     hass.data[RELEASE_COORDINATOR_KEY] = coordinator
+    # KSM-BEHAVE-155: start from the last successful check, so a failed
+    # startup check keeps the install target (KSM-BEHAVE-147). Not a success:
+    # no last-success time, and nothing is announced.
+    try:
+        coordinator.data = _release_from_store(await store.async_load())
+    except Exception as err:  # noqa: BLE001 -- an unreadable store loads nothing
+        _LOGGER.warning("Could not load the saved Kiosk Satellite release check: %s", err)
     await coordinator.async_refresh()
 
 _AUTO_UPDATE_STOPS_KEY = f"{DOMAIN}_auto_update_stops"

@@ -117,3 +117,86 @@ async def test_first_release_detection_refreshes_loaded_devices(
         device_update_check.assert_awaited_once_with(hass)
         await _publish(hass, release_check, "2026.9.1")
         assert device_update_check.await_count == 1
+
+
+_RELEASES = ReleaseInfo(
+    "2026.10.3", "https://example.invalid/3", "notes 3",
+    (("kiosk-satellite-2026.10.3.arm64-v8a.apk", "https://example.invalid/3.apk"),),
+)
+_RELEASES = ReleaseInfo(
+    _RELEASES.version, _RELEASES.url, _RELEASES.notes, _RELEASES.assets,
+    recent=(_RELEASES, ReleaseInfo(
+        "2026.10.2", "https://example.invalid/2", "notes 2",
+        (("kiosk-satellite-2026.10.2.arm64-v8a.apk", "https://example.invalid/2.apk"),),
+    )),
+)
+_STORE_KEY = "kiosk_satellite_manager.release_check"
+
+
+async def _restart_release_check(hass):
+    """A new HA run: the in-memory coordinator is gone, the HA Store is not."""
+    from custom_components.kiosk_satellite_manager import _async_ensure_release_coordinator
+
+    old = hass.data.pop(RELEASE_COORDINATOR_KEY)
+    await old.async_shutdown()
+    await _async_ensure_release_coordinator(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    return hass.data[RELEASE_COORDINATOR_KEY]
+
+
+async def test_last_successful_release_check_survives_restart(hass, hass_storage, release_check):
+    """[KSM-TEST-311] KSM-BEHAVE-155 (#127): a rate-limited first check after a
+    restart keeps the last successful check's releases as the install target."""
+    from custom_components.kiosk_satellite_manager.helpers import recent_releases, target_release
+
+    release_check.return_value = _RELEASES
+    await _manager(hass)
+    assert target_release(hass).version == "2026.10.3"
+    assert _STORE_KEY in hass_storage
+
+    release_check.side_effect = RuntimeError("403, message='rate limit exceeded'")
+    coordinator = await _restart_release_check(hass)
+    assert coordinator.last_update_success is False
+    assert getattr(coordinator, "ksm_last_success", None) is None
+    target = target_release(hass)
+    assert target is not None and target.version == "2026.10.3"
+    assert target.assets == _RELEASES.assets
+    assert [r.version for r in recent_releases(hass)] == ["2026.10.3", "2026.10.2"]
+    assert recent_releases(hass)[1].assets == _RELEASES.recent[1].assets
+
+
+async def test_failed_startup_without_saved_check_has_no_target(hass, hass_storage, release_check):
+    """[KSM-TEST-311] negative: nothing saved, a failed startup check leaves no target."""
+    from custom_components.kiosk_satellite_manager.helpers import target_release
+
+    release_check.side_effect = RuntimeError("403, message='rate limit exceeded'")
+    await _manager(hass)
+    assert target_release(hass) is None
+    assert _STORE_KEY not in hass_storage
+
+
+async def test_failed_check_keeps_store_and_seed_still_announces(
+    hass, hass_storage, release_check, device_update_check
+):
+    """[KSM-TEST-312] KSM-BEHAVE-155: a failed check never rewrites the store, and
+    a seeded startup's first real success still fans the version out once."""
+    release_check.return_value = _RELEASES
+    with patch(_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.10.2"})):
+        await init_integration(hass)
+        saved = dict(hass_storage[_STORE_KEY])
+
+        release_check.side_effect = RuntimeError("offline")
+        await hass.data[RELEASE_COORDINATOR_KEY].async_refresh()
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert hass_storage[_STORE_KEY] == saved
+
+        coordinator = await _restart_release_check(hass)
+        assert coordinator.data.version == "2026.10.3"
+        assert coordinator.ksm_announced_version is None
+        device_update_check.reset_mock()
+
+        release_check.side_effect = None
+        await coordinator.async_refresh()
+        await hass.async_block_till_done(wait_background_tasks=True)
+        device_update_check.assert_awaited_once_with(hass)
+        assert coordinator.ksm_last_success is not None
