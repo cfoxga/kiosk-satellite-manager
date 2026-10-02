@@ -128,24 +128,34 @@ KSM does not manage Voice Satellite. Kiosk Satellite 2026.9.87 and later has it 
 the kiosk's ESPHome server and Voice Satellite on the kiosk, then add it in Home Assistant as an
 ESPHome device. The separate Voice Satellite integration is no longer needed.
 
-Full design, verified findings, and phase-by-phase status: the
-[`kiosk-satellite-manager/docs/SPEC/`](https://onedev.cfoxga.com/ha/~files/main/kiosk-satellite-manager/docs/SPEC)
-directory of the separate harness repo.
-
 ## Installation
 
 Requires Home Assistant 2025.3 or later (KSM uses config subentries).
 
-KSM is developed on OneDev (`onedev.cfoxga.com`) and is not published to HACS yet. A private
-GitHub copy is shared with invited users; it is not a HACS repository either. Install manually:
-download the latest release (tag `v0.4.0` or newer), copy `custom_components/kiosk_satellite_manager/`
-into your Home Assistant config's `custom_components/` directory, then restart Home Assistant.
+### HACS (recommended)
+
+1. In Home Assistant open **HACS**, then the **⋮** menu → **Custom repositories**.
+2. Add `https://github.com/cfoxga/kiosk-satellite-manager` with type **Integration**.
+3. Find **Kiosk Satellite Manager** in HACS, download it, and restart Home Assistant.
+
+HACS installs the latest [release](https://github.com/cfoxga/kiosk-satellite-manager/releases) and offers each new one as an update.
+
+### Manual
+
+Download the latest [release](https://github.com/cfoxga/kiosk-satellite-manager/releases), copy
+`custom_components/kiosk_satellite_manager/` into your Home Assistant config's `custom_components/`
+directory, then restart Home Assistant.
+
 Release notes are in [CHANGELOG.md](CHANGELOG.md).
 
 Then add the integration (Settings → Devices & Services → Add Integration → Kiosk Satellite Manager).
 Choose Configure KSM once for global defaults and release controls, then add each device through
 the same Add Integration path. Complete the manual steps above on each device before its flow can
 connect.
+
+## Issues
+
+Report bugs and requests on [GitHub Issues](https://github.com/cfoxga/kiosk-satellite-manager/issues).
 
 ## Development
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- KSM installs through HACS as a custom repository from
+  `github.com/cfoxga/kiosk-satellite-manager`. The README gives the HACS and
+  manual steps, Home Assistant's Documentation and issue links open GitHub, and
+  a GitHub workflow runs hassfest and HACS validation (#118).
+
 ## 0.4.0
 
 - README covers every shipped surface: the device Configure menu, Replace

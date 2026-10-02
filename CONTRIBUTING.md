@@ -26,10 +26,9 @@ that matches your `pytest-homeassistant-custom-component` pin before running it.
 
 ## Scope
 
-Bug reports and PRs are welcome against this repo (the installable integration). Design discussion,
-harness/CI tooling, and cross-cutting HAM-ecosystem work happen in the separate
-[harness](https://onedev.cfoxga.com/ha) repo, in the `kiosk-satellite-manager/`
-silo — open an issue there if your change needs discussion before code.
+Bug reports and PRs are welcome on [GitHub](https://github.com/cfoxga/kiosk-satellite-manager/issues). Open an issue first if your change
+needs design discussion before code. The GitHub repo is updated for each release, so a PR may be
+merged upstream and arrive with the next release rather than appear on `main` right away.
 
 ## Commit style
 
