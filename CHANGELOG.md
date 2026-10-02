@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Passes Home Assistant's hassfest validation: the `adb-shell` requirement is a
+  minimum version (`>=0.4.4`) so it follows Home Assistant's own pin, and the
+  device subentry has its "Add Kiosk Satellite device" label (#124).
+
 ## 0.4.1
 
 - The README follows HACS conventions: badges, Installation first with a My Home
