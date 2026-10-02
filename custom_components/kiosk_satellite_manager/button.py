@@ -51,6 +51,7 @@ from .const import (
     TOKEN_MODE_AUTO,
 )
 from . import config_backup, fleet, permissions
+from .device_repairs import apply_dashboard_dns, tls_issue_id
 from .credentials import TokenCredential, async_replace_entry_credential
 
 from .auto_update import is_older
@@ -101,7 +102,7 @@ def _store_tls_pin(hass: HomeAssistant, entry: ConfigEntry, pin: str) -> None:
     """KSM-BEHAVE-094: Install is an operator trust event -- persist the key
     it just pinned and clear any certificate-changed repair it resolves."""
     fleet.update_device(hass, entry, data={**entry.data, CONF_TLS_SPKI: pin})
-    ir.async_delete_issue(hass, DOMAIN, f"tls_certificate_changed_{entry.entry_id}")
+    ir.async_delete_issue(hass, DOMAIN, tls_issue_id(entry.entry_id))
 
 
 def _store_private_dns_prior(hass: HomeAssistant, entry: ConfigEntry, prior: str) -> None:
@@ -173,6 +174,10 @@ async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 ha_url=entry.data.get(CONF_HA_URL),
                 on_tls_pinned=lambda pin: _store_tls_pin(hass, entry, pin),
                 on_private_dns_disabled=lambda prior: _store_private_dns_prior(hass, entry, prior),
+                on_dashboard_dns=lambda check: apply_dashboard_dns(
+                    hass, entry.entry_id, check,
+                    entry.data.get(CONF_NAME, entry.title), entry.data[CONF_HOST],
+                ),
                 replace_launcher=launcher_replacement_wanted(entry.data, require_recipe(model_key)),
             )
 

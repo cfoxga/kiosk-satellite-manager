@@ -14,6 +14,10 @@
 - Passes Home Assistant's hassfest validation: the `adb-shell` requirement is a
   minimum version (`>=0.4.4`) so it follows Home Assistant's own pin, and the
   device subentry has its "Add Kiosk Satellite device" label (#124).
+- A device's repairs (certificate changed, dashboard DNS) now leave with it: removing the
+  device, or the Unmanaged or fleet entry holding it, clears them. Removing that entry also
+  revokes each device's KSM-created Home Assistant token. The dashboard DNS repair follows the
+  device across an address change instead of raising a second one (#126).
 
 ## 0.4.1
 

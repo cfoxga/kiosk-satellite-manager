@@ -75,6 +75,7 @@ from .const import (
 )
 from . import auto_update, config_backup, fleet, follower_updates, ks_tls, meta_setup
 from .credentials import TokenCredential, async_revoke_owned_credential
+from .device_repairs import apply_dashboard_dns, clear_device_repairs, take_dashboard_dns, tls_issue_id
 from .ks_api import latest_release_info
 from .ks_update import async_check_device_for_update, async_check_devices_for_update
 from .esphome_identity import async_ensure_esphome_identity
@@ -346,10 +347,6 @@ def _auto_update_key(device) -> tuple[str, str]:
     return (getattr(device, "parent", device).entry_id, device.entry_id)
 
 
-def tls_issue_id(entry: ConfigEntry) -> str:
-    return f"tls_certificate_changed_{entry.entry_id}"
-
-
 async def _async_migrate_tls(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """KSM-BEHAVE-094: switch an unpinned device entry to pinned HTTPS once.
     `None` (KS predates TLS) or an error leaves the entry as it was; the
@@ -417,6 +414,9 @@ async def _async_setup_device(hass: HomeAssistant, entry: ConfigEntry | fleet.De
     """Start one physical device regardless of its HA parent."""
     session = async_get_clientsession(hass)
     host = entry.data[CONF_HOST]
+    if (check := take_dashboard_dns(hass, host)) is not None:
+        # KSM-BEHAVE-154: onboarding checked DNS before this entry existed.
+        apply_dashboard_dns(hass, entry.entry_id, check, entry.title, host)
 
     async def _update():
         # Read at call time: migration, the Install button and the repair
@@ -427,7 +427,7 @@ async def _async_setup_device(hass: HomeAssistant, entry: ConfigEntry | fleet.De
             ir.async_create_issue(
                 hass,
                 DOMAIN,
-                tls_issue_id(entry),
+                tls_issue_id(entry.entry_id),
                 is_fixable=True,
                 severity=ir.IssueSeverity.ERROR,
                 translation_key="tls_certificate_changed",
@@ -669,7 +669,21 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Revoke a credential that KSM itself created when its entry is removed."""
+    """Revoke a credential that KSM itself created when its entry is removed,
+    and end the removed devices' repairs (KSM-BEHAVE-154)."""
     if fleet.migration_in_progress(hass, entry.entry_id):
         return
+    entry_type = entry.data.get(CONF_ENTRY_TYPE)
+    if entry_type in (ENTRY_TYPE_UNMANAGED, "fleet"):
+        # Removing a grouping entry removes every device subentry it owns.
+        devices = fleet.device_entries(hass, entry)
+        for device in devices:
+            clear_device_repairs(hass, device.entry_id)
+        for device in devices:
+            await async_revoke_owned_credential(
+                hass, TokenCredential.from_entry_data(device.data)
+            )
+        return
+    if entry_type != ENTRY_TYPE_MANAGER:
+        clear_device_repairs(hass, entry.entry_id)
     await async_revoke_owned_credential(hass, TokenCredential.from_entry_data(entry.data))

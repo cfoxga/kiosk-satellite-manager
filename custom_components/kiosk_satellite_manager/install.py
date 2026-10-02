@@ -47,7 +47,6 @@ from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.network import get_url
 
 from collections.abc import Callable, Mapping
@@ -204,15 +203,11 @@ async def check_dashboard_dns(
 _DNS_RECHECK_SECONDS: Final = 2.0
 
 
-def dashboard_dns_issue_id(host: str) -> str:
-    return f"dashboard_dns_{host}"
-
-
-async def report_dashboard_dns(
-    hass: HomeAssistant, client: AdbClient, host: str, device_name: str, ha_url: str | None
-) -> None:
-    """KSM-BEHAVE-153: raise a repair when the device would load the dashboard
-    from a different address than HA has, and clear it once they agree.
+async def probe_dashboard_dns(
+    hass: HomeAssistant, client: AdbClient, host: str, ha_url: str | None
+) -> DashboardDnsCheck | None:
+    """KSM-BEHAVE-153: the device's and HA's answers for the dashboard host,
+    rechecked once on a mismatch. None when there is nothing to compare.
     Best-effort: a diagnostic never fails an install."""
     try:
         url = ha_url or get_url(hass, prefer_external=False)
@@ -222,37 +217,15 @@ async def report_dashboard_dns(
             check = await check_dashboard_dns(hass, client, url)
     except Exception as err:  # noqa: BLE001 -- diagnostic only
         _LOGGER.debug("dashboard DNS check skipped for %s: %s", host, err)
-        return
+        return None
     if check is None:
         _LOGGER.debug("dashboard DNS check for %s: nothing to compare for %s", host, url)
-        return
+        return None
     _LOGGER.debug(
         "dashboard DNS check for %s: %s -> device %s, HA %s",
         host, check.hostname, check.device_address or "nothing", sorted(check.ha_addresses),
     )
-    issue_id = dashboard_dns_issue_id(host)
-    if not check.mismatch:
-        ir.async_delete_issue(hass, DOMAIN, issue_id)
-        return
-    _LOGGER.warning(
-        "%s resolves %s to %s, but Home Assistant resolves it to %s",
-        host, check.hostname, check.device_address or "nothing", sorted(check.ha_addresses),
-    )
-    ir.async_create_issue(
-        hass,
-        DOMAIN,
-        issue_id,
-        is_fixable=False,
-        severity=ir.IssueSeverity.WARNING,
-        translation_key="dashboard_dns_mismatch",
-        translation_placeholders={
-            "name": device_name,
-            "host": host,
-            "hostname": check.hostname,
-            "device_address": check.device_address or "no address",
-            "ha_addresses": ", ".join(sorted(check.ha_addresses)),
-        },
-    )
+    return check
 
 
 # KSM-BEHAVE-048 (issue #20): the module-level PORTAL_PERMISSIONS/PORTAL_APPOPS
@@ -522,6 +495,7 @@ async def install_and_launch(
     before_ha_setup: Callable[[], Awaitable[None]] | None = None,
     replace_launcher: bool = False,
     on_private_dns_disabled: Callable[[str], None] | None = None,
+    on_dashboard_dns: Callable[[DashboardDnsCheck], None] | None = None,
 ) -> TokenCredential | None:
     """Fetch the latest universal KS APK (#71), install it, launch
     it, and grant full permissions. If a password is configured on the entry,
@@ -536,7 +510,9 @@ async def install_and_launch(
     `on_tls_pinned` receives the device's HTTPS key pin once the sync has
     established it (KSM-BEHAVE-094); the caller persists it.
     `on_private_dns_disabled` receives the Private DNS mode the recipe
-    turned off (KSM-BEHAVE-152); the caller persists it for uninstall."""
+    turned off (KSM-BEHAVE-152); the caller persists it for uninstall.
+    `on_dashboard_dns` receives the dashboard DNS check (KSM-BEHAVE-153); the
+    caller raises or clears the device's repair (KSM-BEHAVE-154)."""
     recipe = require_recipe(device_model)
     try:
         sdk_str = await client.getprop("ro.build.version.sdk")
@@ -632,7 +608,9 @@ async def install_and_launch(
         if prior is not None and on_private_dns_disabled is not None:
             on_private_dns_disabled(prior)
     if host is not None:
-        await report_dashboard_dns(hass, client, host, device_name or host, ha_url)
+        check = await probe_dashboard_dns(hass, client, host, ha_url)
+        if check is not None and on_dashboard_dns is not None:
+            on_dashboard_dns(check)
         # KSM-BEHAVE-040 (Phase 2): "am start exit 0 proves nothing" applies
         # to the preserve/skip branch too -- am start is itself a mutation
         # every press, so its postcondition (the app actually came up and

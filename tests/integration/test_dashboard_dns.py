@@ -23,9 +23,10 @@ from custom_components.kiosk_satellite_manager.const import (
     CONF_PRIVATE_DNS_PRIOR,
     DOMAIN,
 )
+from custom_components.kiosk_satellite_manager.device_repairs import apply_dashboard_dns
 from custom_components.kiosk_satellite_manager.install import (
     DashboardDnsCheck,
-    report_dashboard_dns,
+    probe_dashboard_dns,
 )
 
 from .conftest import init_integration
@@ -44,13 +45,9 @@ def _no_recheck_delay():
 
 
 async def test_KSM_TEST_306_mismatch_raises_and_a_match_clears_a_repair(hass):
-    issue_id = "dashboard_dns_192.168.40.133"
-    mismatch = DashboardDnsCheck("ha.cfoxga.com", "99.1.33.71", frozenset({"192.168.40.115"}))
-    with patch(
-        "custom_components.kiosk_satellite_manager.install.check_dashboard_dns",
-        new=AsyncMock(return_value=mismatch),
-    ):
-        await report_dashboard_dns(hass, object(), "192.168.40.133", "Kitchen Portal", "https://ha.cfoxga.com")
+    """KSM-BEHAVE-154: keyed by the device's entry or subentry ID, not its host."""
+    issue_id = "dashboard_dns_dev-a"
+    apply_dashboard_dns(hass, "dev-a", _MISMATCH, "Kitchen Portal", "192.168.40.133")
     issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
     assert issue is not None and issue.translation_key == "dashboard_dns_mismatch"
     assert issue.translation_placeholders == {
@@ -60,13 +57,15 @@ async def test_KSM_TEST_306_mismatch_raises_and_a_match_clears_a_repair(hass):
         "device_address": "99.1.33.71",
         "ha_addresses": "192.168.40.115",
     }
+    assert ir.async_get(hass).async_get_issue(DOMAIN, "dashboard_dns_192.168.40.133") is None
 
-    match = DashboardDnsCheck("ha.cfoxga.com", "192.168.40.115", frozenset({"192.168.40.115"}))
-    with patch(
-        "custom_components.kiosk_satellite_manager.install.check_dashboard_dns",
-        new=AsyncMock(return_value=match),
-    ):
-        await report_dashboard_dns(hass, object(), "192.168.40.133", "Kitchen Portal", "https://ha.cfoxga.com")
+    # A new address for the same device updates its one repair.
+    apply_dashboard_dns(hass, "dev-a", _MISMATCH, "Kitchen Portal", "192.168.40.134")
+    assert ir.async_get(hass).async_get_issue(
+        DOMAIN, issue_id
+    ).translation_placeholders["host"] == "192.168.40.134"
+
+    apply_dashboard_dns(hass, "dev-a", _MATCH, "Kitchen Portal", "192.168.40.134")
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 
@@ -74,23 +73,43 @@ async def test_KSM_TEST_306_a_mismatch_is_rechecked_before_it_is_reported(hass):
     """Android re-reads its resolver config asynchronously after the Private
     DNS change, so the first answer can still come from the old resolver."""
     with patch(_CHECK, new=AsyncMock(side_effect=[_MISMATCH, _MATCH])) as check:
-        await report_dashboard_dns(hass, object(), "192.168.40.133", "Kitchen Portal", "https://ha.cfoxga.com")
+        result = await probe_dashboard_dns(hass, object(), "192.168.40.133", "https://ha.cfoxga.com")
     assert check.await_count == 2
-    assert ir.async_get(hass).async_get_issue(DOMAIN, "dashboard_dns_192.168.40.133") is None
+    assert result is _MATCH
 
     with patch(_CHECK, new=AsyncMock(side_effect=[_MISMATCH, _MISMATCH])) as check:
-        await report_dashboard_dns(hass, object(), "192.168.40.133", "Kitchen Portal", "https://ha.cfoxga.com")
+        result = await probe_dashboard_dns(hass, object(), "192.168.40.133", "https://ha.cfoxga.com")
     assert check.await_count == 2
-    assert ir.async_get(hass).async_get_issue(DOMAIN, "dashboard_dns_192.168.40.133") is not None
+    assert result is _MISMATCH
 
 
 async def test_KSM_TEST_306_dashboard_dns_check_never_fails_an_install(hass):
-    with patch(
-        "custom_components.kiosk_satellite_manager.install.check_dashboard_dns",
-        new=AsyncMock(side_effect=OSError("resolver down")),
-    ):
-        await report_dashboard_dns(hass, object(), "192.168.40.133", "Kitchen Portal", "https://ha.cfoxga.com")
-    assert ir.async_get(hass).async_get_issue(DOMAIN, "dashboard_dns_192.168.40.133") is None
+    with patch(_CHECK, new=AsyncMock(side_effect=OSError("resolver down"))):
+        assert await probe_dashboard_dns(
+            hass, object(), "192.168.40.133", "https://ha.cfoxga.com"
+        ) is None
+
+
+async def test_KSM_TEST_310_install_press_keys_the_repair_by_device_id(hass):
+    async def _install(*args, **kwargs):
+        kwargs["on_dashboard_dns"](_MISMATCH)
+
+    with patch("custom_components.kiosk_satellite_manager.fetch_health",
+               new=AsyncMock(return_value={"appVersion": "2026.9.62"})), patch(
+        _BUTTON + "AdbClient"
+    ) as cls, patch(
+        _BUTTON + "install_and_launch", new=AsyncMock(side_effect=_install)
+    ), patch(_BUTTON + "async_get_clientsession"):
+        ctx = await init_integration(hass, data={CONF_DEVICE_PROFILE: "portal_go"})
+        cls.return_value.connect = AsyncMock()
+        cls.return_value.close = AsyncMock()
+        await async_install_entry(hass, ctx.entry)
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, f"dashboard_dns_{ctx.entry.entry_id}")
+    assert issue is not None
+    assert issue.translation_placeholders["host"] == ctx.entry.data[CONF_HOST]
+    assert ir.async_get(hass).async_get_issue(
+        DOMAIN, f"dashboard_dns_{ctx.entry.data[CONF_HOST]}"
+    ) is None
 
 
 async def test_KSM_TEST_305_install_press_records_the_prior_private_dns_mode(hass):
@@ -158,7 +177,7 @@ async def test_KSM_TEST_305_uninstall_without_a_record_never_touches_private_dns
     restore.assert_not_awaited()
 
 
-async def test_KSM_TEST_305_onboarding_stores_the_prior_private_dns_mode(hass):
+async def test_KSM_TEST_305_onboarding_stores_the_prior_private_dns_mode_and_dns_repair(hass):
     with patch(
         "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
     ) as mock_client_cls, patch(
@@ -169,6 +188,7 @@ async def test_KSM_TEST_305_onboarding_stores_the_prior_private_dns_mode(hass):
     ) as mock_install:
         async def _install(*args, **kwargs):
             kwargs["on_private_dns_disabled"]("")
+            kwargs["on_dashboard_dns"](_MISMATCH)
             await asyncio.sleep(0)
 
         mock_install.side_effect = _install
@@ -196,3 +216,10 @@ async def test_KSM_TEST_305_onboarding_stores_the_prior_private_dns_mode(hass):
 
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_PRIVATE_DNS_PRIOR] == ""
+    # [KSM-TEST-310] the flow has no entry ID yet; the created entry's first
+    # setup raises onboarding's mismatch under its ID.
+    issues = ir.async_get(hass)
+    issue = issues.async_get_issue(DOMAIN, f"dashboard_dns_{result['result'].entry_id}")
+    assert issue is not None
+    assert issue.translation_placeholders["host"] == "192.168.40.133"
+    assert issues.async_get_issue(DOMAIN, "dashboard_dns_192.168.40.133") is None

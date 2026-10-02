@@ -21,6 +21,7 @@ from .const import (
     DOMAIN, ENTRY_TYPE_UNMANAGED, ENTRY_TYPE_FLEET,
 )
 from . import ks_api_client
+from .device_repairs import clear_device_repairs
 
 _OPTIONS_KEY = "_ksm_options"
 _STATUS_KEY = "_ksm_fleet_status"
@@ -171,7 +172,8 @@ def update_device(hass: HomeAssistant, entry: ConfigEntry | DeviceEntry, **chang
 
 
 def ensure_removal_listener(hass: HomeAssistant, parent: ConfigEntry) -> None:
-    """Revoke owned credentials when HA's native UI deletes a subentry."""
+    """Revoke owned credentials and end the device's repairs (KSM-BEHAVE-154)
+    when HA's native UI deletes a subentry."""
     installed = hass.data.setdefault(_REMOVAL_LISTENERS_KEY, {})
     if parent.entry_id in installed:
         return
@@ -187,6 +189,7 @@ def ensure_removal_listener(hass: HomeAssistant, parent: ConfigEntry) -> None:
             return
         from .credentials import TokenCredential, async_revoke_owned_credential
         for sub in actual_removals:
+            clear_device_repairs(hass, sub.subentry_id)
             await async_revoke_owned_credential(hass, TokenCredential.from_entry_data(sub.data))
         if hass.config_entries.async_get_entry(parent.entry_id) is not None:
             await hass.config_entries.async_reload(parent.entry_id)

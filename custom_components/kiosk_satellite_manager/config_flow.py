@@ -100,7 +100,8 @@ from .const import (
 from .device_catalog import NoApprovedRecipe, require_recipe, resolve_catalog_entry
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .device_models import DeviceFacts, collect_identity_facts
-from .install import install_and_launch, launcher_replacement_wanted
+from .device_repairs import stash_dashboard_dns
+from .install import DashboardDnsCheck, install_and_launch, launcher_replacement_wanted
 from .ks_api_client import KsApiError, login
 from .provisioning import fetch_health
 from .rename import derive_rename_names
@@ -856,6 +857,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._install_task: asyncio.Task | None = None
         self._tls_pin: str | None = None
         self._private_dns_prior: str | None = None
+        self._dashboard_dns: DashboardDnsCheck | None = None
         self._ks_probe_pin: str | None = None
         self._global: dict | None = None
         self._ha_url: str | None = None
@@ -1425,6 +1427,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     ha_url=self._ha_url,
                     on_tls_pinned=self._set_tls_pin,
                     on_private_dns_disabled=self._set_private_dns_prior,
+                    on_dashboard_dns=self._set_dashboard_dns,
                     before_ha_setup=self._async_maybe_invite,
                     replace_launcher=launcher_replacement_wanted({}, require_recipe(self._profile_key)),
                 )
@@ -1458,6 +1461,11 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """KSM-BEHAVE-152: the Private DNS mode install turned off, stored in
         the created entry for uninstall to restore."""
         self._private_dns_prior = prior
+
+    def _set_dashboard_dns(self, check: DashboardDnsCheck) -> None:
+        """KSM-BEHAVE-154: the entry does not exist yet; its first setup
+        raises or clears the repair under the device's own ID."""
+        self._dashboard_dns = check
 
     async def async_step_install_done(self, user_input: dict | None = None) -> FlowResult:
         # Fresh installs invite from the bootstrap callback. A failed install
@@ -1716,6 +1724,8 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data[CONF_PRIVATE_DNS_PRIOR] = self._private_dns_prior
         if pending := meta_setup.take_unowned_pending(self.hass, self._host):
             data[meta_setup.PENDING_KEY] = pending
+        if self._dashboard_dns is not None:
+            stash_dashboard_dns(self.hass, self._host, self._dashboard_dns)
         if self._existing_install_action != EXISTING_INSTALL_REUSE or self._global:
             data.update(
                 {
