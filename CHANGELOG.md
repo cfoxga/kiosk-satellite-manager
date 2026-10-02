@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- New guide, [Device Owner on Meta Portals](docs/device-owner.md), explains how KSM makes Kiosk
+  Satellite Device Owner without a factory reset, what that costs the Portal's Meta login, and how
+  the login is restored (#128).
 - Portals no longer show a black screen when their built-in public DNS server answers for
   your Home Assistant name. Install turns Android Private DNS off (unless you chose a specific
   Private DNS hostname) and Uninstall puts the earlier setting back. Install on every device

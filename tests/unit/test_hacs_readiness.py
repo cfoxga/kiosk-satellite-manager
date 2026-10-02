@@ -5,13 +5,15 @@ links on the integration page; a OneDev URL there is unreachable for anyone
 but the developer. The GitHub workflow must run both validators HACS and
 Home Assistant apply to a custom integration."""
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "custom_components" / "kiosk_satellite_manager" / "manifest.json"
 GITHUB = "https://github.com/cfoxga/kiosk-satellite-manager"
 SHIPPED_DOCS = ["README.md", "CONTRIBUTING.md", "hacs.json", "docs/supported-devices.md",
-                "docs/install-recipes.md", "custom_components/kiosk_satellite_manager/manifest.json"]
+                "docs/install-recipes.md", "docs/device-owner.md",
+                "custom_components/kiosk_satellite_manager/manifest.json"]
 
 
 def test_manifest_links_point_at_github():
@@ -73,3 +75,12 @@ def test_manifest_and_strings_pass_hassfest_rules():
         for subentry in subentries.values():
             assert subentry["entry_type"]
             assert subentry["initiate_flow"]["user"]
+
+
+def test_device_owner_guide_is_linked_and_timeless():
+    """[KSM-TEST-308] (#128) the Device Owner guide is linked from the README and carries
+    no issue references or calendar dates, so it reads the same to anyone outside the tracker."""
+    guide = (ROOT / "docs" / "device-owner.md").read_text()
+    assert "](docs/device-owner.md)" in (ROOT / "README.md").read_text()
+    assert re.findall(r"(?<![\w&/])#\d+\b", guide) == []
+    assert re.findall(r"\b\d{4}-\d{2}-\d{2}\b", guide) == []

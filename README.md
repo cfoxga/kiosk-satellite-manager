@@ -102,7 +102,8 @@ remotely. Do them once per device, in order:
   saved key), **Replace launcher**, and **Enable Device Owner (advanced)**. Device Owner runs a
   read-only check, explains its side effects, and changes nothing until you confirm; on Meta
   Portals it then reopens Meta setup so you can sign back in on the device. On an Android 9 Portal
-  Gen 1, the same entry opens a confirmed Meta cleanup instead.
+  Gen 1, the same entry opens a confirmed Meta cleanup instead. See
+  [Device Owner on Meta Portals](docs/device-owner.md) for how this works without a factory reset.
 - **Configuration backup** — **Back up configuration** saves Kiosk Satellite's own settings export
   to a dated file under `config/kiosk_satellite_manager/backups/`, automatically every 24 hours by
   default (10 kept per device). **Restore configuration** imports the file chosen in
