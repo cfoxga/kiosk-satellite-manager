@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Portals no longer show a black screen when their built-in public DNS server answers for
+  your Home Assistant name. Install turns Android Private DNS off (unless you chose a specific
+  Private DNS hostname) and Uninstall puts the earlier setting back. Install on every device
+  now raises a repair when the device resolves the dashboard address to a public address that
+  Home Assistant does not use. Portals set up earlier: press **Install Kiosk Satellite** once,
+  or set Private DNS to Off on the device. The Portal recipe keys now end in `_local_dns` (#121).
 - Meta Portal Go and Portal+ Gen 2 are now **supported** on their tested Android 10
   builds. Install no longer asks for the secure-settings permission, which Kiosk
   Satellite never requests, so permission setup no longer fails on every Portal.

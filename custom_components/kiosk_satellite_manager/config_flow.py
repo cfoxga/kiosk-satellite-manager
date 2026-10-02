@@ -59,6 +59,7 @@ from .const import (
     CONF_HIDE_FOLLOWER_UPDATES,
     CONF_TARGET_VERSION,
     TARGET_VERSION_LATEST,
+    CONF_PRIVATE_DNS_PRIOR,
     CONF_TLS_SPKI,
     CONF_DEVICE_PROFILE,
     CONF_REPLACE_LAUNCHER,
@@ -854,6 +855,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._existing_install_action: str | None = None
         self._install_task: asyncio.Task | None = None
         self._tls_pin: str | None = None
+        self._private_dns_prior: str | None = None
         self._ks_probe_pin: str | None = None
         self._global: dict | None = None
         self._ha_url: str | None = None
@@ -1422,6 +1424,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     device_model=self._profile_key,
                     ha_url=self._ha_url,
                     on_tls_pinned=self._set_tls_pin,
+                    on_private_dns_disabled=self._set_private_dns_prior,
                     before_ha_setup=self._async_maybe_invite,
                     replace_launcher=launcher_replacement_wanted({}, require_recipe(self._profile_key)),
                 )
@@ -1450,6 +1453,11 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """KSM-BEHAVE-094: the device key onboarding pinned, stored in the
         created entry."""
         self._tls_pin = pin
+
+    def _set_private_dns_prior(self, prior: str) -> None:
+        """KSM-BEHAVE-152: the Private DNS mode install turned off, stored in
+        the created entry for uninstall to restore."""
+        self._private_dns_prior = prior
 
     async def async_step_install_done(self, user_input: dict | None = None) -> FlowResult:
         # Fresh installs invite from the bootstrap callback. A failed install
@@ -1704,6 +1712,8 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         }
         if self._tls_pin:
             data[CONF_TLS_SPKI] = self._tls_pin
+        if self._private_dns_prior is not None:
+            data[CONF_PRIVATE_DNS_PRIOR] = self._private_dns_prior
         if pending := meta_setup.take_unowned_pending(self.hass, self._host):
             data[meta_setup.PENDING_KEY] = pending
         if self._existing_install_action != EXISTING_INSTALL_REUSE or self._global:

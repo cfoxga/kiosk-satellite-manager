@@ -52,6 +52,9 @@ MANAGER_UNIQUE_ID: Final = "ksm_manager"
 UNMANAGED_UNIQUE_ID: Final = "ksm_unmanaged"
 CONF_HA_URL: Final = "ha_url"
 CONF_TLS_SPKI: Final = "tls_spki_sha256"
+# KSM-BEHAVE-152: the Private DNS mode an install recipe turned off ("" when
+# unset), restored on uninstall. Absent when KSM changed nothing.
+CONF_PRIVATE_DNS_PRIOR: Final = "private_dns_prior"
 CONF_ONBOARDING_MODE: Final = "onboarding_mode"
 ONBOARDING_REVIEW: Final = "review"
 ONBOARDING_AUTOMATIC: Final = "automatic"

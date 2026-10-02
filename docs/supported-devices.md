@@ -16,13 +16,13 @@ identity and executable recipe stored for that particular device.
 | Exact model | Model key | Approved recipe | Qualification note |
 |---|---|---|---|
 | onn 4K Pro, Android 14 | `onn_4k_pro_android14` | `onn_4k_pro_android14` | Assigned; qualification is build-specific |
-| Meta Portal Go | `portal_go` | `meta_portal_android10_declared_grants` | Supported on the tested SDK 29 build (2026-10-02); other builds need their own evidence |
-| Meta Portal Mini | `portal_mini` | `meta_portal_android10_declared_grants` | Assignment does not inherit Portal Go's evidence |
-| Meta Portal Gen 1 | `portal_gen1` | `meta_portal_android9_declared_grants` | Android 9 recipe |
-| Meta Portal Gen 2 | `portal_gen2` | `meta_portal_android10_declared_grants` | Android 10 recipe |
-| Meta Portal+ Gen 1 | `portal_plus_gen1` | `meta_portal_android9_declared_grants` | Android 9 recipe |
-| Meta Portal+ Gen 2 | `portal_plus_gen2` | `meta_portal_android10_declared_grants` | Supported on the tested SDK 29 build (2026-10-02); other builds need their own evidence |
-| Meta Portal TV | `portal_tv` | `meta_portal_tv_declared_grants` | Cleanup remains unqualified |
+| Meta Portal Go | `portal_go` | `meta_portal_android10_local_dns` | Supported on the tested SDK 29 build (2026-10-02); other builds need their own evidence |
+| Meta Portal Mini | `portal_mini` | `meta_portal_android10_local_dns` | Assignment does not inherit Portal Go's evidence |
+| Meta Portal Gen 1 | `portal_gen1` | `meta_portal_android9_local_dns` | Android 9 recipe |
+| Meta Portal Gen 2 | `portal_gen2` | `meta_portal_android10_local_dns` | Android 10 recipe |
+| Meta Portal+ Gen 1 | `portal_plus_gen1` | `meta_portal_android9_local_dns` | Android 9 recipe |
+| Meta Portal+ Gen 2 | `portal_plus_gen2` | `meta_portal_android10_local_dns` | Supported on the tested SDK 29 build (2026-10-02); other builds need their own evidence |
+| Meta Portal TV | `portal_tv` | `meta_portal_tv_local_dns` | Cleanup remains unqualified |
 
 The source catalog may evolve with a KSM update; the native entity always reads
 the installed catalog. For a specific device and build, the sanitized

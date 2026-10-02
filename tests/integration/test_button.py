@@ -27,6 +27,7 @@ from custom_components.kiosk_satellite_manager.const import (
     CONF_HA_TOKEN_OWNED,
     CONF_HOST,
     CONF_PASSWORD,
+    CONF_PRIVATE_DNS_PRIOR,
     CONF_TOKEN_MODE,
     DOMAIN,
     ENTRY_TYPE_MANAGER,
@@ -305,11 +306,17 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass, tmp_pa
             mock_client.get_secure_setting = AsyncMock(return_value="")
             mock_client.put_secure_setting = AsyncMock()
             mock_client.bluetooth_enabled = AsyncMock(return_value=True)
+            # KSM-BEHAVE-152: unset Private DNS, turned off and read back.
+            mock_client.get_global_setting = AsyncMock(side_effect=["", "off"])
+            mock_client.put_global_setting = AsyncMock()
+            mock_client.resolve_host = AsyncMock(return_value=None)
 
             await hass.services.async_call(
                 "button", "press", {"entity_id": button_entry.entity_id}, blocking=True
             )
 
+    mock_client.put_global_setting.assert_awaited_once_with("private_dns_mode", "off")
+    assert ctx.entry.data[CONF_PRIVATE_DNS_PRIOR] == ""
     assert mock_client.push.await_count == 1
     mock_client.install_apk.assert_awaited_once()
     shell_calls = [c.args[0] for c in mock_client.shell.await_args_list]

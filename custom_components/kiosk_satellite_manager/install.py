@@ -33,8 +33,10 @@ button promises.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import shlex
+import socket
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
@@ -45,10 +47,12 @@ from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.network import get_url
 
 from collections.abc import Callable, Mapping
 from typing import Any, Awaitable, Final
+from urllib.parse import urlsplit
 
 from . import apk_cache, ks_api_client, ks_tls
 from .adb_client import AdbClient
@@ -79,6 +83,176 @@ class KsInstallVerificationFailed(Exception):
     never matched what was expected. Raised instead of trusting a zero ADB
     shell exit or a "Success" pm-install string alone once a version target
     is known (KSM-BEHAVE-040)."""
+
+
+class PrivateDnsChangeFailed(HomeAssistantError):
+    """KSM-BEHAVE-152: Android's Private DNS mode did not read back as written."""
+
+
+PRIVATE_DNS_MODE: Final = "private_dns_mode"
+_PRIVATE_DNS_OFF: Final = "off"
+# A strict Private DNS provider the user typed in. KSM never overrides it.
+_PRIVATE_DNS_STRICT: Final = "hostname"
+
+
+async def disable_private_dns(client: AdbClient, host: str | None) -> str | None:
+    """KSM-BEHAVE-152: turn Android's opportunistic Private DNS off.
+
+    Some OEM builds add a public resolver to the DHCP DNS list, and Android's
+    default opportunistic Private DNS validates and prefers it, so the device resolves
+    a split-horizon dashboard host to its public address (#121). Returns the
+    mode it replaced ("" when unset) for the caller to keep for uninstall, or
+    None when nothing changed: already off, or a strict hostname the user
+    chose."""
+    prior = await client.get_global_setting(PRIVATE_DNS_MODE)
+    if prior == _PRIVATE_DNS_OFF:
+        return None
+    if prior == _PRIVATE_DNS_STRICT:
+        _LOGGER.warning(
+            "%s uses a Private DNS provider the user chose; KSM leaves it on, so "
+            "the dashboard host must resolve to Home Assistant through it",
+            host,
+        )
+        return None
+    await client.put_global_setting(PRIVATE_DNS_MODE, _PRIVATE_DNS_OFF)
+    after = await client.get_global_setting(PRIVATE_DNS_MODE)
+    if after != _PRIVATE_DNS_OFF:
+        raise PrivateDnsChangeFailed(
+            f"Private DNS on {host} read back {after or 'unset'!r} after turning it off"
+        )
+    return prior
+
+
+async def restore_private_dns(client: AdbClient, prior: str) -> bool:
+    """KSM-BEHAVE-152: put back the mode `disable_private_dns` replaced.
+
+    Only while it still reads off: a mode changed since install is the user's
+    newer choice and is left alone (returns False)."""
+    if await client.get_global_setting(PRIVATE_DNS_MODE) != _PRIVATE_DNS_OFF:
+        return False
+    if prior:
+        await client.put_global_setting(PRIVATE_DNS_MODE, prior)
+    else:
+        await client.delete_global_setting(PRIVATE_DNS_MODE)
+    after = await client.get_global_setting(PRIVATE_DNS_MODE)
+    if after != prior:
+        raise PrivateDnsChangeFailed(
+            f"Private DNS read back {after or 'unset'!r}, not the recorded "
+            f"{prior or 'unset'!r}, after restoring it"
+        )
+    return True
+
+
+@dataclass(frozen=True)
+class DashboardDnsCheck:
+    """KSM-BEHAVE-153: one dashboard host as the device and HA resolve it."""
+
+    hostname: str
+    device_address: str  # "" when the device could not resolve it
+    ha_addresses: frozenset[str]
+
+    @property
+    def mismatch(self) -> bool:
+        """The device cannot resolve the host, or gets a public address where
+        HA gets only private ones: the split-horizon leak (#121). A different
+        private address is a multi-homed HA answering on the device's own
+        network, and differing public addresses are a CDN, not a fault."""
+        if not self.device_address:
+            return True
+        if self.device_address in self.ha_addresses:
+            return False
+        return ipaddress.ip_address(self.device_address).is_global and not any(
+            ipaddress.ip_address(address).is_global for address in self.ha_addresses
+        )
+
+
+def _ha_addresses(hostname: str) -> set[str]:
+    """The IPv4 addresses HA's own resolver gives `hostname`."""
+    try:
+        infos = socket.getaddrinfo(hostname, None, socket.AF_INET)
+    except socket.gaierror:
+        return set()
+    return {info[4][0] for info in infos}
+
+
+async def check_dashboard_dns(
+    hass: HomeAssistant, client: AdbClient, url: str
+) -> DashboardDnsCheck | None:
+    """KSM-BEHAVE-153: compare the device's and HA's answers for the dashboard
+    host. None when there is nothing to compare: an IP-literal URL, an
+    unreadable device answer, or no non-loopback address on the HA side."""
+    hostname = urlsplit(url).hostname
+    if not hostname:
+        return None
+    try:
+        ipaddress.ip_address(hostname)
+        return None
+    except ValueError:
+        pass
+    device_address = await client.resolve_host(hostname)
+    if device_address is None:
+        return None
+    ha = await hass.async_add_executor_job(_ha_addresses, hostname)
+    ha = {a for a in ha if not ipaddress.ip_address(a).is_loopback}
+    if not ha:
+        return None
+    return DashboardDnsCheck(hostname, device_address, frozenset(ha))
+
+
+# Android applies a Private DNS change to its resolver asynchronously, so an
+# answer read straight after it can still come from the old resolver.
+_DNS_RECHECK_SECONDS: Final = 2.0
+
+
+def dashboard_dns_issue_id(host: str) -> str:
+    return f"dashboard_dns_{host}"
+
+
+async def report_dashboard_dns(
+    hass: HomeAssistant, client: AdbClient, host: str, device_name: str, ha_url: str | None
+) -> None:
+    """KSM-BEHAVE-153: raise a repair when the device would load the dashboard
+    from a different address than HA has, and clear it once they agree.
+    Best-effort: a diagnostic never fails an install."""
+    try:
+        url = ha_url or get_url(hass, prefer_external=False)
+        check = await check_dashboard_dns(hass, client, url)
+        if check is not None and check.mismatch:
+            await asyncio.sleep(_DNS_RECHECK_SECONDS)
+            check = await check_dashboard_dns(hass, client, url)
+    except Exception as err:  # noqa: BLE001 -- diagnostic only
+        _LOGGER.debug("dashboard DNS check skipped for %s: %s", host, err)
+        return
+    if check is None:
+        _LOGGER.debug("dashboard DNS check for %s: nothing to compare for %s", host, url)
+        return
+    _LOGGER.debug(
+        "dashboard DNS check for %s: %s -> device %s, HA %s",
+        host, check.hostname, check.device_address or "nothing", sorted(check.ha_addresses),
+    )
+    issue_id = dashboard_dns_issue_id(host)
+    if not check.mismatch:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    _LOGGER.warning(
+        "%s resolves %s to %s, but Home Assistant resolves it to %s",
+        host, check.hostname, check.device_address or "nothing", sorted(check.ha_addresses),
+    )
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="dashboard_dns_mismatch",
+        translation_placeholders={
+            "name": device_name,
+            "host": host,
+            "hostname": check.hostname,
+            "device_address": check.device_address or "no address",
+            "ha_addresses": ", ".join(sorted(check.ha_addresses)),
+        },
+    )
 
 
 # KSM-BEHAVE-048 (issue #20): the module-level PORTAL_PERMISSIONS/PORTAL_APPOPS
@@ -347,6 +521,7 @@ async def install_and_launch(
     on_tls_pinned: Callable[[str], None] | None = None,
     before_ha_setup: Callable[[], Awaitable[None]] | None = None,
     replace_launcher: bool = False,
+    on_private_dns_disabled: Callable[[str], None] | None = None,
 ) -> TokenCredential | None:
     """Fetch the latest universal KS APK (#71), install it, launch
     it, and grant full permissions. If a password is configured on the entry,
@@ -359,7 +534,9 @@ async def install_and_launch(
     (KSM-BEHAVE-048).
 
     `on_tls_pinned` receives the device's HTTPS key pin once the sync has
-    established it (KSM-BEHAVE-094); the caller persists it."""
+    established it (KSM-BEHAVE-094); the caller persists it.
+    `on_private_dns_disabled` receives the Private DNS mode the recipe
+    turned off (KSM-BEHAVE-152); the caller persists it for uninstall."""
     recipe = require_recipe(device_model)
     try:
         sdk_str = await client.getprop("ro.build.version.sdk")
@@ -450,7 +627,12 @@ async def install_and_launch(
     await verify_functional_capabilities(client, convergence)
     if recipe.sets_device_admin:
         await client.shell(f"dpm set-active-admin {KS_PACKAGE}/.KioskAdminReceiver")
+    if recipe.disables_private_dns:
+        prior = await disable_private_dns(client, host)
+        if prior is not None and on_private_dns_disabled is not None:
+            on_private_dns_disabled(prior)
     if host is not None:
+        await report_dashboard_dns(hass, client, host, device_name or host, ha_url)
         # KSM-BEHAVE-040 (Phase 2): "am start exit 0 proves nothing" applies
         # to the preserve/skip branch too -- am start is itself a mutation
         # every press, so its postcondition (the app actually came up and

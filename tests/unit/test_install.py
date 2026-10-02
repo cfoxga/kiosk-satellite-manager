@@ -30,6 +30,10 @@ from custom_components.kiosk_satellite_manager.install_recipes import INSTALL_RE
 from custom_components.kiosk_satellite_manager.install import (
     KsInstallVerificationFailed,
     PermissionConvergenceResult,
+    PrivateDnsChangeFailed,
+    check_dashboard_dns,
+    disable_private_dns,
+    restore_private_dns,
     _verify_health,
     _wait_for_setup_status,
     converge_permissions,
@@ -48,7 +52,7 @@ _TARGET_VERSION = "2026.9.99"
 # SDK-29 output of one named recipe version, and a device only gets them by
 # resolving to a model with an approved assignment to that recipe. The
 # values below are unchanged -- that is the point of KSM-TEST-063.
-PORTAL_RECIPE = get_recipe("meta_portal_android10_declared_grants")
+PORTAL_RECIPE = get_recipe("meta_portal_android10_local_dns")
 PORTAL_PERMISSIONS = PORTAL_RECIPE.permissions_for_sdk(29)
 PORTAL_APPOPS = PORTAL_RECIPE.appops_for_sdk(29)
 
@@ -115,6 +119,13 @@ def _fake_client():
     client.declared_bound_services = AsyncMock(return_value={})
     client.get_secure_setting = AsyncMock(return_value="")
     client.put_secure_setting = AsyncMock()
+    # KSM-BEHAVE-152: Private DNS already off, so no install changes it
+    # unless a test says otherwise. KSM-BEHAVE-153: an unreadable resolver
+    # answer skips the dashboard DNS check.
+    client.get_global_setting = AsyncMock(return_value="off")
+    client.put_global_setting = AsyncMock()
+    client.delete_global_setting = AsyncMock()
+    client.resolve_host = AsyncMock(return_value=None)
     # KSM-BEHAVE-046 (Phase 5): device-level Bluetooth radio state, distinct
     # from any per-app permission -- defaults "on" since PORTAL_PERMISSIONS
     # requests no BLUETOOTH_SCAN/CONNECT at all (sdk 29 in these tests).
@@ -1444,9 +1455,163 @@ def test_KSM_TEST_281_default_follows_recipe_and_explicit_value_wins():
     """[KSM-TEST-281] Unset: Portal recipes on, everything else off."""
     from custom_components.kiosk_satellite_manager.install import launcher_replacement_wanted
 
-    for key in ("meta_portal_android10_declared_grants", "meta_portal_android9_declared_grants", "meta_portal_tv_declared_grants"):
+    for key in ("meta_portal_android10_local_dns", "meta_portal_android9_local_dns", "meta_portal_tv_local_dns"):
         assert launcher_replacement_wanted({}, get_recipe(key)) is True
     for key in ("onn_4k_pro_android14", "android_tv"):
         assert launcher_replacement_wanted({}, get_recipe(key)) is False
-    assert launcher_replacement_wanted({"replace_launcher": False}, get_recipe("meta_portal_android10_declared_grants")) is False
+    assert launcher_replacement_wanted({"replace_launcher": False}, get_recipe("meta_portal_android10_local_dns")) is False
     assert launcher_replacement_wanted({"replace_launcher": True}, get_recipe("android_tv")) is True
+
+
+# KSM-BEHAVE-152 (#121): Portal OS adds 1.1.1.1 to the DHCP DNS list, and
+# Android's default opportunistic Private DNS validates and prefers it, so the
+# Portal resolves a split-horizon dashboard host to its public address.
+
+
+def _dns_client(*readings):
+    client = _fake_client()
+    client.get_global_setting = AsyncMock(side_effect=list(readings))
+    return client
+
+
+@pytest.mark.parametrize("prior", ["", "opportunistic"])
+async def test_KSM_TEST_305_portal_install_turns_private_dns_off_and_reports_prior(prior):
+    client = _dns_client(prior, "off")
+    reported = []
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ):
+        await install_and_launch(
+            _FakeHass(), client, _fake_session(), device_model="portal_go",
+            on_private_dns_disabled=reported.append,
+        )
+    client.put_global_setting.assert_awaited_once_with("private_dns_mode", "off")
+    assert reported == [prior]
+
+
+@pytest.mark.parametrize("current", ["off", "hostname"])
+async def test_KSM_TEST_305_private_dns_left_alone_when_off_or_user_chosen(current, caplog):
+    """A strict "hostname" Private DNS is the user's explicit choice; KSM
+    never overrides it, and an already-off device has nothing to record."""
+    client = _dns_client(current)
+    assert await disable_private_dns(client, "192.168.40.224") is None
+    client.put_global_setting.assert_not_awaited()
+    client.delete_global_setting.assert_not_awaited()
+    if current == "hostname":
+        assert "Private DNS" in caplog.text
+
+
+async def test_KSM_TEST_305_private_dns_change_is_read_back():
+    client = _dns_client("", "opportunistic")
+    with pytest.raises(PrivateDnsChangeFailed):
+        await disable_private_dns(client, "192.168.40.224")
+
+
+def _never_reported(prior):
+    raise AssertionError(f"non-Portal install reported Private DNS prior {prior!r}")
+
+
+async def test_KSM_TEST_305_non_portal_install_never_reads_or_changes_private_dns():
+    client = _fake_client()
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ):
+        await install_and_launch(
+            _FakeHass(), client, _fake_session(), device_model="onn_4k_pro_android14",
+            on_private_dns_disabled=_never_reported,
+        )
+    client.get_global_setting.assert_not_awaited()
+    client.put_global_setting.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("prior", "after", "method", "args"),
+    [
+        ("", "", "delete_global_setting", ("private_dns_mode",)),
+        ("opportunistic", "opportunistic", "put_global_setting", ("private_dns_mode", "opportunistic")),
+    ],
+)
+async def test_KSM_TEST_305_restore_puts_back_the_recorded_mode(prior, after, method, args):
+    client = _dns_client("off", after)
+    assert await restore_private_dns(client, prior) is True
+    getattr(client, method).assert_awaited_once_with(*args)
+
+
+async def test_KSM_TEST_305_restore_leaves_a_mode_changed_since_install():
+    client = _dns_client("hostname")
+    assert await restore_private_dns(client, "") is False
+    client.put_global_setting.assert_not_awaited()
+    client.delete_global_setting.assert_not_awaited()
+
+
+async def test_KSM_TEST_305_restore_is_read_back():
+    client = _dns_client("off", "off")
+    with pytest.raises(PrivateDnsChangeFailed):
+        await restore_private_dns(client, "opportunistic")
+
+
+# KSM-BEHAVE-153: every device, whatever its recipe.
+
+_HA_ADDRESSES = "custom_components.kiosk_satellite_manager.install._ha_addresses"
+
+
+@pytest.mark.parametrize(
+    ("device", "ha", "mismatch"),
+    [
+        ("99.1.33.71", {"192.168.40.115"}, True),
+        ("", {"192.168.40.115"}, True),
+        ("192.168.40.115", {"192.168.40.115", "192.168.90.2"}, False),
+        # Live dev HA (#121): multi-homed, it answers on the device's VLAN.
+        ("192.168.40.196", {"192.168.90.106"}, False),
+        # A public dashboard host behind a CDN answers differently everywhere.
+        ("104.16.1.1", {"104.16.2.2"}, False),
+        ("99.1.33.71", {"192.168.40.115", "104.16.2.2"}, False),
+    ],
+)
+async def test_KSM_TEST_306_dashboard_dns_compares_device_and_ha(device, ha, mismatch):
+    client = _fake_client()
+    client.resolve_host = AsyncMock(return_value=device)
+    with patch(_HA_ADDRESSES, return_value=ha):
+        check = await check_dashboard_dns(_FakeHass(), client, "https://ha.cfoxga.com:443/")
+    client.resolve_host.assert_awaited_once_with("ha.cfoxga.com")
+    assert check.hostname == "ha.cfoxga.com"
+    assert check.device_address == device
+    assert check.mismatch is mismatch
+
+
+@pytest.mark.parametrize(
+    ("url", "device", "ha"),
+    [
+        ("https://192.168.40.115:8123", "192.168.40.115", {"192.168.40.115"}),
+        ("https://ha.cfoxga.com", None, {"192.168.40.115"}),
+        ("https://ha.cfoxga.com", "99.1.33.71", set()),
+        ("https://ha.cfoxga.com", "99.1.33.71", {"127.0.0.1"}),
+        ("not a url", "99.1.33.71", {"192.168.40.115"}),
+    ],
+)
+async def test_KSM_TEST_306_dashboard_dns_skips_when_it_cannot_compare(url, device, ha):
+    """An IP-literal URL needs no DNS; an unreadable device answer or an HA
+    with no usable address of its own is no evidence of a mismatch."""
+    client = _fake_client()
+    client.resolve_host = AsyncMock(return_value=device)
+    with patch(_HA_ADDRESSES, return_value=ha):
+        assert await check_dashboard_dns(_FakeHass(), client, url) is None
+
+
+def test_KSM_TEST_306_ha_addresses_reads_the_ha_resolver():
+    """HA's answer is every IPv4 address getaddrinfo returns; a name HA cannot
+    resolve is an empty set, never an exception."""
+    import socket
+
+    from custom_components.kiosk_satellite_manager import install
+
+    infos = [(socket.AF_INET, 0, 0, "", ("192.168.40.115", 0)),
+             (socket.AF_INET, 0, 0, "", ("192.168.90.2", 0)),
+             (socket.AF_INET, 0, 0, "", ("192.168.40.115", 0))]
+    with patch.object(install.socket, "getaddrinfo", return_value=infos) as lookup:
+        assert install._ha_addresses("ha.cfoxga.com") == {"192.168.40.115", "192.168.90.2"}
+    lookup.assert_called_once_with("ha.cfoxga.com", None, socket.AF_INET)
+    with patch.object(install.socket, "getaddrinfo", side_effect=socket.gaierror):
+        assert install._ha_addresses("nowhere.invalid") == set()

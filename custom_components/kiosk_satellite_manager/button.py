@@ -31,6 +31,7 @@ from .device_models import collect_identity_facts
 from .const import (
     CONF_AREA_ID,
     CONF_ENTRY_TYPE,
+    CONF_PRIVATE_DNS_PRIOR,
     CONF_TLS_SPKI,
     CONF_DEVICE_PROFILE,
     CONF_HA_TOKEN,
@@ -54,7 +55,7 @@ from .credentials import TokenCredential, async_replace_entry_credential
 
 from .auto_update import is_older
 from .helpers import resolve_area_name, target_release
-from .install import install_and_launch, launcher_replacement_wanted
+from .install import install_and_launch, launcher_replacement_wanted, restore_private_dns
 from .ks_update import OUTCOME_AWAITING_CONFIRMATION, async_self_update_entry
 
 _LOGGER = logging.getLogger(__name__)
@@ -101,6 +102,12 @@ def _store_tls_pin(hass: HomeAssistant, entry: ConfigEntry, pin: str) -> None:
     it just pinned and clear any certificate-changed repair it resolves."""
     fleet.update_device(hass, entry, data={**entry.data, CONF_TLS_SPKI: pin})
     ir.async_delete_issue(hass, DOMAIN, f"tls_certificate_changed_{entry.entry_id}")
+
+
+def _store_private_dns_prior(hass: HomeAssistant, entry: ConfigEntry, prior: str) -> None:
+    """KSM-BEHAVE-152: keep the Private DNS mode install turned off, for
+    uninstall to restore."""
+    fleet.update_device(hass, entry, data={**entry.data, CONF_PRIVATE_DNS_PRIOR: prior})
 
 
 async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -165,6 +172,7 @@ async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 device_model=model_key,
                 ha_url=entry.data.get(CONF_HA_URL),
                 on_tls_pinned=lambda pin: _store_tls_pin(hass, entry, pin),
+                on_private_dns_disabled=lambda prior: _store_private_dns_prior(hass, entry, prior),
                 replace_launcher=launcher_replacement_wanted(entry.data, require_recipe(model_key)),
             )
 
@@ -246,6 +254,15 @@ class KioskSatelliteUninstallButton(ButtonEntity):
             raise _adb_unreachable_error(self._entry) from err
         try:
             await client.uninstall_ks()
+            # KSM-BEHAVE-152: put back the Private DNS mode install turned off.
+            prior = self._entry.data.get(CONF_PRIVATE_DNS_PRIOR)
+            # A mode that no longer reads off was left alone, and so is its record.
+            if prior is not None and await restore_private_dns(client, prior):
+                fleet.update_device(
+                    self.hass,
+                    self._entry,
+                    data={k: v for k, v in self._entry.data.items() if k != CONF_PRIVATE_DNS_PRIOR},
+                )
         finally:
             await client.close()
 

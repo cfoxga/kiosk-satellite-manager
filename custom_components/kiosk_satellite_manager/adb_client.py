@@ -96,6 +96,8 @@ _PM_INSTALL_FAILURE_CATEGORIES: dict[str, str] = {
     "INSTALL_FAILED_SHARED_USER_INCOMPATIBLE": "incompatible_signature",
 }
 _PM_INSTALL_FAILURE_RE = re.compile(r"Failure\s*\[\s*([A-Z_]+)")
+# `PING ha.example.com (192.168.40.115) 56(84) bytes of data.`
+_PING_HEADER = re.compile(r"^PING \S+ \((\d{1,3}(?:\.\d{1,3}){3})\)", re.MULTILINE)
 
 
 def _classify_pm_install_output(output: str) -> tuple[str | None, str]:
@@ -554,6 +556,30 @@ class AdbClient:
 
     async def put_secure_setting(self, key: str, value: str) -> None:
         await self.shell(f"settings put secure {key} {shlex.quote(value)}")
+
+    async def get_global_setting(self, key: str) -> str:
+        output = (await self.shell(f"settings get global {key}")).strip()
+        return "" if output == "null" else output
+
+    async def put_global_setting(self, key: str, value: str) -> None:
+        await self.shell(f"settings put global {key} {shlex.quote(value)}")
+
+    async def delete_global_setting(self, key: str) -> None:
+        await self.shell(f"settings delete global {key}")
+
+    async def resolve_host(self, hostname: str) -> str | None:
+        """KSM-BEHAVE-153: the IPv4 address the device's own resolver gives
+        `hostname`, read from ping's header line (the address is printed
+        before any echo is sent, so a host that drops ICMP still answers).
+        "" when the device cannot resolve it; None when the output is not
+        recognizable, which is no evidence either way. `timeout` bounds a
+        resolver that hangs, which would otherwise outlast the ADB read."""
+        output = await self.shell(f"timeout 3 ping -c 1 -W 1 {shlex.quote(hostname)}")
+        if match := _PING_HEADER.search(output):
+            return match.group(1)
+        if "unknown host" in output.lower():
+            return ""
+        return None
 
     async def bluetooth_enabled(self) -> bool:
         """KSM-BEHAVE-046 (Phase 5, "functional verification"): the device's

@@ -252,6 +252,10 @@
           }
         }
       }
+    },
+    "dashboard_dns_mismatch": {
+      "title": "{name}: dashboard address resolves differently",
+      "description": "{name} ({host}) resolves {hostname} to {device_address}, but Home Assistant resolves it to {ha_addresses}. Kiosk Satellite loads the dashboard from the device's answer, so it can reach the wrong server or refuse its HTTPS certificate and show a black screen.\n\nMake the device use your local DNS: on Android, set Settings → Network → Private DNS to Off, or fix the DNS servers DHCP gives its network. Then press Install Kiosk Satellite to check again; this repair clears once both answers agree."
     }
   },
   "config_subentries": {

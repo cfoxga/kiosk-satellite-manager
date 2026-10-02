@@ -36,6 +36,7 @@ OP_CONVERGE_CONSENT_SERVICES = "converge_consent_services"
 OP_SET_DEVICE_ADMIN = "set_device_admin"
 OP_SYNC_KS_SETTINGS = "sync_ks_settings"
 OP_VERIFY_HEALTH = "verify_health"
+OP_DISABLE_PRIVATE_DNS = "disable_private_dns"
 
 ALLOWED_OPERATIONS: frozenset[str] = frozenset(
     {
@@ -49,6 +50,7 @@ ALLOWED_OPERATIONS: frozenset[str] = frozenset(
         OP_SET_DEVICE_ADMIN,
         OP_SYNC_KS_SETTINGS,
         OP_VERIFY_HEALTH,
+        OP_DISABLE_PRIVATE_DNS,
     }
 )
 
@@ -96,6 +98,7 @@ _PROSE_FIELDS: frozenset[str] = frozenset({"name", "postconditions"})
 _CONDITIONAL_OPERATIONS: dict[str, str] = {
     OP_BATTERY_EXEMPTION: "battery_exemption",
     OP_SET_DEVICE_ADMIN: "sets_device_admin",
+    OP_DISABLE_PRIVATE_DNS: "disables_private_dns",
 }
 
 
@@ -125,6 +128,10 @@ class InstallRecipe:
     # operation list can never drift away from what actually executes.
     battery_exemption: bool = True
     sets_device_admin: bool = False
+    # KSM-BEHAVE-152: turn Android's opportunistic Private DNS off, so the
+    # device resolves through the network's own DNS. A strict hostname the
+    # user chose is never changed.
+    disables_private_dns: bool = False
     verifier_retry_on_failure: bool = False
     operations: tuple[str, ...] = ()
     parameters: tuple[tuple[str, str | int | bool], ...] = ()
@@ -284,6 +291,7 @@ _PORTAL_OPERATIONS: tuple[str, ...] = (
     OP_BATTERY_EXEMPTION,
     OP_CONVERGE_CONSENT_SERVICES,
     OP_SET_DEVICE_ADMIN,
+    OP_DISABLE_PRIVATE_DNS,
     OP_VERIFY_HEALTH,
     OP_SYNC_KS_SETTINGS,
     OP_PM_UNINSTALL,
@@ -294,6 +302,13 @@ _PORTAL_POSTCONDITIONS: tuple[str, ...] = (
     "the device's own /api/health reports the target appVersion",
     "every requested runtime permission and AppOp reads back granted from the device",
     "the battery-optimization exemption reads back applied",
+)
+
+# KSM-BEHAVE-152 (#121): this OEM build adds a public resolver to the DHCP DNS
+# list, and Android's default opportunistic Private DNS prefers it, so the
+# device resolves a split-horizon dashboard host to its public address.
+_LOCAL_DNS_POSTCONDITIONS: tuple[str, ...] = _PORTAL_POSTCONDITIONS + (
+    "Android Private DNS reads back off, unless the user chose a strict hostname",
 )
 
 
@@ -319,20 +334,21 @@ INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
         postconditions=_PORTAL_POSTCONDITIONS,
     ),
     InstallRecipe(
-        recipe_key="meta_portal_android10_declared_grants",
+        recipe_key="meta_portal_android10_local_dns",
         name="Meta Portal (Android 10)",
         device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
         redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,
         start_url_path="/portal",
         permission_policy=PERMISSION_POLICY_PORTAL,
         sets_device_admin=True,
+        disables_private_dns=True,
         verifier_retry_on_failure=True,
         operations=_PORTAL_OPERATIONS,
         parameters=(("browser.ignore_ssl_errors", True),),
-        postconditions=_PORTAL_POSTCONDITIONS,
+        postconditions=_LOCAL_DNS_POSTCONDITIONS,
     ),
     InstallRecipe(
-        recipe_key="meta_portal_android9_declared_grants",
+        recipe_key="meta_portal_android9_local_dns",
         name="Meta Portal (Android 9)",
         device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
         redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,
@@ -340,23 +356,25 @@ INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
         permission_policy=PERMISSION_POLICY_PORTAL,
         repurpose_policy=REPURPOSE_ANDROID9_META,
         sets_device_admin=True,
+        disables_private_dns=True,
         verifier_retry_on_failure=True,
         operations=_PORTAL_OPERATIONS,
         parameters=(("browser.ignore_ssl_errors", True),),
-        postconditions=_PORTAL_POSTCONDITIONS,
+        postconditions=_LOCAL_DNS_POSTCONDITIONS,
     ),
     InstallRecipe(
-        recipe_key="meta_portal_tv_declared_grants",
+        recipe_key="meta_portal_tv_local_dns",
         name="Meta Portal TV (cleanup unqualified)",
         device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
         redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,
         start_url_path="/portal",
         permission_policy=PERMISSION_POLICY_PORTAL,
         sets_device_admin=True,
+        disables_private_dns=True,
         verifier_retry_on_failure=True,
         operations=_PORTAL_OPERATIONS,
         parameters=(("browser.ignore_ssl_errors", True),),
-        postconditions=_PORTAL_POSTCONDITIONS,
+        postconditions=_LOCAL_DNS_POSTCONDITIONS,
     ),
     # Generic TV behavior remains unassigned. The live-identified onn 4K Pro
     # Android 14 model uses its own recipe above; the broad `gtv_stick`

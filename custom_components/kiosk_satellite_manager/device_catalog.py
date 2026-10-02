@@ -55,8 +55,10 @@ SCENARIO_REINSTALL = "reinstall"
 SCENARIO_PERMISSION_CONVERGENCE = "permission_convergence"
 SCENARIO_HEALTH_VERSION_READBACK = "health_version_readback"
 SCENARIO_UNINSTALL = "uninstall"
+SCENARIO_PRIVATE_DNS = "private_dns"
 SCENARIOS = frozenset(
     {
+        SCENARIO_PRIVATE_DNS,
         SCENARIO_CLEAN_INSTALL,
         SCENARIO_EXISTING_REUSE,
         SCENARIO_UPDATE,
@@ -228,59 +230,59 @@ RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
     # Native KS settings still own Home. Qualification stays model-specific.
     RecipeAssignment(
         model_key="portal_go",
-        recipe_key="meta_portal_android10_declared_grants",
+        recipe_key="meta_portal_android10_local_dns",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-22",
         rationale="Portal provisioning without KSM Home control (KSM-BEHAVE-132).",
     ),
     RecipeAssignment(
         model_key="portal_mini",
-        recipe_key="meta_portal_android10_declared_grants",
+        recipe_key="meta_portal_android10_local_dns",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Shares Portal install behavior, not qualification evidence.",
     ),
     RecipeAssignment(
         model_key="portal_gen1",
-        recipe_key="meta_portal_android9_declared_grants",
+        recipe_key="meta_portal_android9_local_dns",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Shares Portal install behavior without KSM Home control.",
     ),
     RecipeAssignment(
         model_key="portal_gen2",
-        recipe_key="meta_portal_android10_declared_grants",
+        recipe_key="meta_portal_android10_local_dns",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-27",
         rationale="Shares Portal install behavior without KSM Home control.",
     ),
     RecipeAssignment(
         model_key="portal_plus_gen1",
-        recipe_key="meta_portal_android9_declared_grants",
+        recipe_key="meta_portal_android9_local_dns",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Behavior migrated verbatim from the portal_plus_gen1 DeviceProfile.",
     ),
     RecipeAssignment(
         model_key="portal_plus_gen2",
-        recipe_key="meta_portal_android10_declared_grants",
+        recipe_key="meta_portal_android10_local_dns",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Behavior migrated verbatim from the portal_plus_gen2 DeviceProfile.",
     ),
     RecipeAssignment(
         model_key="portal_tv",
-        recipe_key="meta_portal_tv_declared_grants",
+        recipe_key="meta_portal_tv_local_dns",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Shares Portal install behavior; KS owns native Home settings.",
     ),
 )
 
-# KSM-BEHAVE-151 (#120): the Portal recipes stopped requiring a grant Kiosk
-# Satellite never declares, so they got new keys and the evidence recorded
-# against the retired keys (#40/#41, #115) was dropped. These are the full
-# physical matrix runs on the renamed recipe, against dev HA, 2026-10-02.
+# KSM-BEHAVE-152 (#121): the recipe now turns opportunistic Private DNS off,
+# so it got a new key and inherits none of the evidence recorded under the
+# previous one (#120). These are the full physical matrix runs on the renamed
+# recipe, against dev HA, 2026-10-02.
 _MATRIX_SCENARIOS: tuple[tuple[str, str, str, str], ...] = (
     (
         SCENARIO_CLEAN_INSTALL,
@@ -320,6 +322,13 @@ _MATRIX_SCENARIOS: tuple[tuple[str, str, str, str], ...] = (
         "The scenario fails on any mismatch between the two readbacks.",
     ),
     (
+        SCENARIO_PRIVATE_DNS,
+        "with private_dns_mode unset, the Install button set it to off, and the "
+        "Uninstall button removed the package and unset it again.",
+        "private_dns_mode read back unset before the press, so the off readback is KSM's.",
+        "The scenario fails unless the readback is off after install and unset after uninstall.",
+    ),
+    (
         SCENARIO_UNINSTALL,
         "the KSM Uninstall button removed me.jxl.kiosk_satellite.",
         "Package installed and the button available before the press.",
@@ -332,7 +341,7 @@ def _matrix_records(model_key: str, device: str, fingerprint: str) -> tuple[Qual
     return tuple(
         QualificationRecord(
             model_key=model_key,
-            recipe_key="meta_portal_android10_declared_grants",
+            recipe_key="meta_portal_android10_local_dns",
             scenario=scenario,
             result=RESULT_PASS,
             verified_on="2026-10-02",
@@ -342,7 +351,7 @@ def _matrix_records(model_key: str, device: str, fingerprint: str) -> tuple[Qual
             evidence=(
                 f"KS 2026.10.3 (versionCode 301) on {device}, SDK 29: {evidence} "
                 "Physical matrix via kiosk-satellite-manager/scripts/test-device-matrix.py "
-                "against dev HA, KSM issue #120."
+                "against dev HA, KSM issue #121."
             ),
             positive_control=positive,
             negative_control=negative,
@@ -396,6 +405,10 @@ def required_scenarios(recipe: InstallRecipe) -> frozenset[str]:
         SCENARIO_HEALTH_VERSION_READBACK,
         SCENARIO_UNINSTALL,
     }
+    # KSM-BEHAVE-152: a recipe that changes Private DNS must prove the change
+    # and its undo on hardware before any model on it is `supported`.
+    if recipe.disables_private_dns:
+        required.add(SCENARIO_PRIVATE_DNS)
     return frozenset(required)
 
 

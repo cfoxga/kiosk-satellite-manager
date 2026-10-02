@@ -31,11 +31,27 @@ on the device during installation.
 
 | Recipe | Assigned models | Name source | Portal URL | Device Admin | Other behavior |
 |---|---|---|---|---|---|
-| `meta_portal_android10_declared_grants` | Go, Mini, Gen 2, Plus Gen 2 | Android secure Bluetooth name | `/portal` | Set | Portal permission/AppOps policy; retry a verifier failure after checking the verifier setting |
-| `meta_portal_android9_declared_grants` | Gen 1, Plus Gen 1 | Android secure Bluetooth name | `/portal` | Set | Portal policy, confirmed Android 9 Meta cleanup, verifier retry |
-| `meta_portal_tv_declared_grants` | Portal TV | Android secure Bluetooth name | `/portal` | Set | Portal policy and verifier retry; cleanup is unqualified |
+| `meta_portal_android10_local_dns` | Go, Mini, Gen 2, Plus Gen 2 | Android secure Bluetooth name | `/portal` | Set | Portal permission/AppOps policy; Private DNS Off; retry a verifier failure after checking the verifier setting |
+| `meta_portal_android9_local_dns` | Gen 1, Plus Gen 1 | Android secure Bluetooth name | `/portal` | Set | Portal policy, Private DNS Off, confirmed Android 9 Meta cleanup, verifier retry |
+| `meta_portal_tv_local_dns` | Portal TV | Android secure Bluetooth name | `/portal` | Set | Portal policy, Private DNS Off and verifier retry; cleanup is unqualified |
 | `onn_4k_pro_android14` | onn 4K Pro Android 14 | Android global device name | none | Not set | Standard Android TV permission/AppOps policy |
 | `android_tv` | **None** | Android global device name | none | Not set | Generic standard TV behavior exists in source but cannot install on any model without an approved assignment |
+
+### Private DNS and the dashboard address
+
+Portal OS adds a public DNS server to the ones your network hands out, and Android's default
+*Automatic* Private DNS prefers it. If your Home Assistant name resolves to a local address only
+on your own DNS, the Portal gets the public one instead and Kiosk Satellite shows a black
+screen. Install on a Portal therefore sets **Settings → Network → Private DNS** to **Off**, unless
+you chose a specific Private DNS hostname, which KSM leaves alone. KSM remembers the earlier
+setting and puts it back when you press **Uninstall Kiosk Satellite**. A Portal set up before
+this change gets the fix the next time you press **Install Kiosk Satellite**, or set Private DNS
+to Off on the device yourself.
+
+On every device, Install also compares the address the device gets for the dashboard host with
+Home Assistant's own answer. When the device cannot resolve it, or gets a public address where
+Home Assistant gets only private ones, KSM raises a **dashboard address resolves differently**
+repair that says what to fix. It clears on the next Install once the answers agree.
 
 Every current recipe declares `browser.ignore_ssl_errors: true` as its KS
 parameter. This does **not** override Home Assistant's pinned HTTPS connection

@@ -839,3 +839,45 @@ async def test_KSM_TEST_279_home_selection_commands(tmp_path):
         "cmd package set-home-activity me.jxl.kiosk_satellite/.HomeAlias",
     )
     assert "resolve-activity --brief" in shell.await_args_list[1].args[0]
+
+
+async def test_KSM_TEST_305_global_setting_helpers_use_the_global_namespace(tmp_path):
+    """[KSM-TEST-305] Private DNS lives in `settings global`; "null" is unset."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(client._device, "shell", new=AsyncMock(return_value="null\n")) as shell:
+        assert await client.get_global_setting("private_dns_mode") == ""
+        await client.put_global_setting("private_dns_mode", "off")
+        await client.delete_global_setting("private_dns_mode")
+    assert [c.args[0] for c in shell.await_args_list] == [
+        "settings get global private_dns_mode",
+        "settings put global private_dns_mode off",
+        "settings delete global private_dns_mode",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        # Live Portal+ Gen 2 output (#121) with opportunistic Private DNS on.
+        ("PING ha.cfoxga.com (99.1.33.71) 56(84) bytes of data.\n", "99.1.33.71"),
+        ("ping: unknown host ha.example.invalid\n", ""),
+        ("/system/bin/sh: ping: not found\n", None),
+    ],
+)
+async def test_KSM_TEST_306_resolve_host_reads_the_device_resolver(tmp_path, output, expected):
+    """[KSM-TEST-306] The device's own resolver answer, from ping's header:
+    an address, "" when the device cannot resolve it, None when unreadable."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(client._device, "shell", new=AsyncMock(return_value=output)) as shell:
+        assert await client.resolve_host("ha.cfoxga.com") == expected
+    assert shell.await_args.args[0] == "timeout 3 ping -c 1 -W 1 ha.cfoxga.com"
+
+
+async def test_KSM_TEST_306_resolve_host_quotes_the_hostname(tmp_path):
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(client._device, "shell", new=AsyncMock(return_value="")) as shell:
+        await client.resolve_host("bad;reboot")
+    assert shell.await_args.args[0] == "timeout 3 ping -c 1 -W 1 'bad;reboot'"
