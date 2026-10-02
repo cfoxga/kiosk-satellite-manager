@@ -18,7 +18,12 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from . import ks_api_client
-from .esphome_identity import ENABLED_SETTING, NODE_NAME_SETTING, _node_name_unset
+from .esphome_identity import (
+    ENABLED_SETTING,
+    ENTITIES_SETTING,
+    NODE_NAME_SETTING,
+    _node_name_unset,
+)
 from .ks_api_client import KsApiError
 from .rename import ESPHOME_DOMAIN, _host_ip, derive_rename_names
 
@@ -104,12 +109,17 @@ async def async_adopt(
         if _node_name_unset(node_name):
             node_name = derive_rename_names(name).esphome_node_name
             payload[NODE_NAME_SETTING] = node_name
-        if not current.get(ENABLED_SETTING):
-            payload[ENABLED_SETTING] = True
+        for setting in (ENABLED_SETTING, ENTITIES_SETTING):
+            if not current.get(setting):
+                payload[setting] = True
         if payload:
             await ks_api_client.patch_settings(session, host, token, payload, pin=pin)
 
-        if await _entries_at(hass, host):
+        if existing := await _entries_at(hass, host):
+            # HA lists a device's entities only on connect: reload, never edit.
+            if ENTITIES_SETTING in payload:
+                for entry in existing:
+                    await hass.config_entries.async_reload(entry.entry_id)
             return ALREADY_ADDED
 
         async def read_key() -> str:

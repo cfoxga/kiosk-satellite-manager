@@ -33,6 +33,8 @@ _LOGGER = logging.getLogger(__name__)
 
 NODE_NAME_SETTING = "esphome.node_name"
 ENABLED_SETTING = "esphome.enabled"
+# KS publishes entities over its ESPHome server only when this is on too (#116).
+ENTITIES_SETTING = "esphome.entities"
 # Once its ESPHome server runs, Kiosk Satellite fills a blank node name with
 # this generated default (seen live on dev, KS 2026.9.88); nobody chose it.
 _KS_GENERATED_NODE_NAME = re.compile(r"kiosk-satellite-[0-9a-f]{6}")
@@ -58,8 +60,10 @@ async def async_ensure_esphome_identity(hass: HomeAssistant, entry: ConfigEntry)
         payload: dict = {}
         if _node_name_unset(current.get(NODE_NAME_SETTING)):
             payload[NODE_NAME_SETTING] = node_name
-        if pending and not current.get(ENABLED_SETTING):
-            payload[ENABLED_SETTING] = True
+        if pending:
+            for setting in (ENABLED_SETTING, ENTITIES_SETTING):
+                if not current.get(setting):
+                    payload[setting] = True
         if payload:
             await ks_api_client.patch_settings(session, host, token, payload, pin=pin)
     except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError) as err:

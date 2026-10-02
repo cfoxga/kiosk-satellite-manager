@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Adding a device with ESPHome on now also turns on Kiosk Satellite's
+  **ESPHome entities** switch, so Home Assistant gets the device's entities
+  instead of an empty ESPHome device. When the device is already in ESPHome,
+  KSM reloads that entry after turning entities on so they appear (#116).
+
 - The device catalog now carries qualification evidence for the Meta Portal+
   Gen 2 on its tested Android 10 build. Install, update, reinstall and uninstall
   passed, but that build reports **blocked** because Kiosk Satellite 2026.10.2

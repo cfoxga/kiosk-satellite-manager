@@ -28,7 +28,7 @@ FLOW = "custom_components.kiosk_satellite_manager.config_flow"
 
 @pytest.fixture
 def ks_api():
-    settings = {"esphome.node_name": "", "esphome.enabled": False}
+    settings = {"esphome.node_name": "", "esphome.enabled": False, "esphome.entities": False}
     get_settings = AsyncMock(side_effect=lambda *a, **k: dict(settings))
     patch_settings = AsyncMock(return_value={})
     with patch(f"{KS}.login", new=AsyncMock(return_value="ks-token")), patch(
@@ -108,7 +108,7 @@ async def test_pending_flag_turns_esphome_on_once(hass, ks_api):
     settings, patch_settings = ks_api
     entry = await _add_device(hass, **{CONF_ESPHOME_ENABLE_PENDING: True})
     assert _esphome_patches(patch_settings) == [
-        {"esphome.node_name": "great-room-kiosk", "esphome.enabled": True}
+        {"esphome.node_name": "great-room-kiosk", "esphome.enabled": True, "esphome.entities": True}
     ]
     assert CONF_ESPHOME_ENABLE_PENDING not in entry.data
 
@@ -117,6 +117,15 @@ async def test_pending_flag_turns_esphome_on_once(hass, ks_api):
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
     assert _esphome_patches(patch_settings) == []
+
+
+async def test_pending_flag_turns_entities_on_when_only_the_server_runs(hass, ks_api):
+    """[KSM-TEST-298] The pending flag on a device whose ESPHome server already
+    runs with entities off turns entities on, alone."""
+    settings, patch_settings = ks_api
+    settings.update({"esphome.node_name": "great-room-kiosk", "esphome.enabled": True})
+    await _add_device(hass, **{CONF_ESPHOME_ENABLE_PENDING: True})
+    assert _esphome_patches(patch_settings) == [{"esphome.entities": True}]
 
 
 async def test_pending_flag_survives_a_failed_attempt(hass, ks_api):

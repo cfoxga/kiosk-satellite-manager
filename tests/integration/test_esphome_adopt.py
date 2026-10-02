@@ -3,7 +3,7 @@ step that adds the kiosk to HA's ESPHome integration with KS's encryption key.""
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from homeassistant import config_entries, data_entry_flow
@@ -40,7 +40,13 @@ def _fast(monkeypatch):
 def ks():
     """A fake KS API. `btproxy.key` appears once ESPHome has been enabled and
     two further settings reads have passed, as on a real device."""
-    state = {"esphome.enabled": False, "esphome.node_name": "", "btproxy.key": "", "reads": 0}
+    state = {
+        "esphome.enabled": False,
+        "esphome.entities": False,
+        "esphome.node_name": "",
+        "btproxy.key": "",
+        "reads": 0,
+    }
 
     async def get_settings(*a, **k):
         if state["esphome.enabled"]:
@@ -129,16 +135,30 @@ async def test_adopt_enables_esphome_waits_for_the_key_and_adds_the_device(hass,
     assert await _adopt(hass) == esphome_adopt.ADDED
 
     assert [c.args[3] for c in patch_settings.await_args_list] == [
-        {"esphome.node_name": NODE, "esphome.enabled": True}
+        {"esphome.node_name": NODE, "esphome.enabled": True, "esphome.entities": True}
     ]
     assert flows.configured == [("f1", {}), ("f1", {"noise_psk": KEY})]
+
+
+async def test_adopt_turns_entities_on_when_only_the_server_runs(hass, ks):
+    """[KSM-TEST-298] ESPHome server on but entities off (Test Portal Plus on
+    dev, #116) gives HA an ESPHome device with no entities: the PATCH turns
+    entities on and leaves the rest alone."""
+    state, patch_settings = ks
+    state.update({"esphome.enabled": True, "esphome.node_name": NODE})
+    FakeFlows(hass, [_flow()], [_form("encryption_key"), _created(hass)]).install()
+
+    assert await _adopt(hass) == esphome_adopt.ADDED
+    assert [c.args[3] for c in patch_settings.await_args_list] == [{"esphome.entities": True}]
 
 
 async def test_adopt_leaves_settings_that_are_already_right(hass, ks):
     """[KSM-TEST-262] Negative: ESPHome already on with a chosen node name means
     no PATCH at all."""
     state, patch_settings = ks
-    state.update({"esphome.enabled": True, "esphome.node_name": "my-own-node"})
+    state.update(
+        {"esphome.enabled": True, "esphome.entities": True, "esphome.node_name": "my-own-node"}
+    )
     FakeFlows(hass, [_flow("my-own-node")], [_form("encryption_key"), _created(hass)]).install()
 
     assert await _adopt(hass) == esphome_adopt.ADDED
@@ -230,6 +250,7 @@ async def test_an_entry_that_never_loads_is_a_failure(hass, ks):
 async def test_an_existing_esphome_entry_short_circuits(hass, ks):
     """[KSM-TEST-264] An enabled ESPHome entry already at the kiosk's IP: no
     flow is submitted and KSM does not edit it."""
+    ks[0]["esphome.entities"] = True
     entry = MockConfigEntry(domain="esphome", data={"host": HOST, "port": 6053, "noise_psk": "x"})
     entry.add_to_hass(hass)
     flows = FakeFlows(hass, [_flow()], [])
@@ -237,6 +258,28 @@ async def test_an_existing_esphome_entry_short_circuits(hass, ks):
 
     assert await _adopt(hass) == esphome_adopt.ALREADY_ADDED
     assert flows.configured == []
+    assert entry.data["noise_psk"] == "x"
+
+
+@pytest.mark.parametrize(("entities_on", "reloaded"), [(False, True), (True, False)])
+async def test_an_existing_entry_is_reloaded_only_when_entities_were_just_turned_on(
+    hass, ks, entities_on, reloaded
+):
+    """[KSM-TEST-298] HA lists an ESPHome device's entities only on connect, so
+    an existing entry is reloaded after the PATCH turns entities on; with
+    entities already on it is left alone. Neither path edits the entry."""
+    state, _ = ks
+    state.update({"esphome.enabled": True, "esphome.entities": entities_on, "esphome.node_name": NODE})
+    entry = MockConfigEntry(domain="esphome", data={"host": HOST, "port": 6053, "noise_psk": "x"})
+    entry.add_to_hass(hass)
+    FakeFlows(hass, [_flow()], []).install()
+
+    with patch.object(
+        hass.config_entries, "async_reload", new=AsyncMock(return_value=True)
+    ) as reload:
+        assert await _adopt(hass) == esphome_adopt.ALREADY_ADDED
+
+    assert reload.await_args_list == ([call(entry.entry_id)] if reloaded else [])
     assert entry.data["noise_psk"] == "x"
 
 
