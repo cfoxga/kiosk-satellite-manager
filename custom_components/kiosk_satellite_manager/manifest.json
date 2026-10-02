@@ -10,5 +10,5 @@
   "loggers": ["adb_shell"],
   "requirements": ["adb-shell[async]==0.4.4"],
   "single_config_entry": false,
-  "version": "0.3.0"
+  "version": "0.4.0"
 }

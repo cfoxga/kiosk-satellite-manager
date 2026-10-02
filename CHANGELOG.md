@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
+
+- README covers every shipped surface: the device Configure menu, Replace
+  launcher, Enable ESPHome, configuration backup and restore, the Permissions
+  sensor and Fix permissions, diagnostics, Discovered followers and the
+  `onboarding_plan` service. It no longer lists a global home launcher setting,
+  and the install recipes page says Replace launcher sets Home (#117).
 
 - Adding a device with ESPHome on now also turns on Kiosk Satellite's
   **ESPHome entities** switch, so Home Assistant gets the device's entities

@@ -40,9 +40,11 @@ on the device during installation.
 
 Every current recipe declares `browser.ignore_ssl_errors: true` as its KS
 parameter. This does **not** override Home Assistant's pinned HTTPS connection
-to the Kiosk Satellite management API. Recipes do not set Kiosk Satellite's
-native Home preference; configure Home on the device itself. The Portal recipes
-remove Android's redundant model suffix from the device name when present.
+to the Kiosk Satellite management API. Recipes do not themselves set Kiosk
+Satellite's native Home preference: the per-device **Replace launcher** option
+does (on by default for the Portal recipes, off for the others), turning on KS's
+home screen and selecting it as Android's Home app during Install. The Portal
+recipes remove Android's redundant model suffix from the device name when present.
 
 Recipes contain audited operation identifiers and typed parameters, never free
 form shell commands. Qualification belongs to the exact model, recipe and Android

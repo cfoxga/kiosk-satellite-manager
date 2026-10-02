@@ -48,8 +48,15 @@ remotely — do them once per device, in order:
 - **Install** — connects over ADB, detects the device type (Meta Portal vs. Android TV stick, etc.),
   fetches the matching Kiosk Satellite APK for the device's ABI from the project's GitHub releases,
   and installs it. Each device gets an **Install Kiosk Satellite** button (install or reinstall) and
-  an **Uninstall Kiosk Satellite** button under Configuration. On launcher-capable devices, the same ADB-only path enables Kiosk
-  Satellite's fixed Home alias and verifies Android's HOME resolver selected it.
+  an **Uninstall Kiosk Satellite** button under Configuration. With the device's **Replace launcher**
+  option on (the default for Portal recipes, off for Android TV / onn devices), Install also makes
+  Kiosk Satellite the Android Home app and reads the resolver back; a miss raises a notification and
+  the install still completes. A device that already runs Kiosk Satellite can be added without ADB:
+  KSM reads it over its own API and asks only for its existing admin password.
+- **ESPHome** — the Add form's **Enable ESPHome** checkbox (defaulting to the manager option) turns
+  on the kiosk's ESPHome server and its ESPHome entities, waits for Home Assistant to discover it, and
+  adds it as an ESPHome device with its encryption key. A failure raises a notification and the device
+  is still added to KSM.
 - **Update** — KSM creates no `update` entity or version sensor. Turn on the kiosk's ESPHome
   server and add it to Home Assistant as an ESPHome device; ESPHome's update entity is what shows
   Kiosk Satellite releases in Settings → Updates. KSM checks GitHub for releases every 15 minutes
@@ -59,12 +66,32 @@ remotely — do them once per device, in order:
   option pins a release, and **Hide follower updates** keeps fleet followers from each showing
   their own update prompt.
 - **Global controls** — choose Configure KSM in the integration's Add flow to create one
-  manager entry. Its Configure form sets defaults for future devices: reuse or reinstall
-  an existing app, home launcher, auto-update, Kiosk Satellite password, Home Assistant
-  URL, and a dedicated device token or an existing token ID. The manager stores no token
-  value. Review mode lets you override defaults per device. Automatic mode still requires
-  an ADB address, on-device authorization, and a confirmation of the selected actions.
-  Changing manager settings does not rewrite existing device settings.
+  manager entry, **KSM Settings**. Its Configure form sets defaults for future devices: reuse
+  or reinstall an existing app, auto-update, Enable ESPHome, Kiosk Satellite password, Home
+  Assistant URL, and a dedicated device token or an existing token ID. It also holds the
+  fleet-wide **Install version**, **Hide follower updates**, and backup period and retention.
+  The manager stores no token value. Review mode lets you override defaults per device.
+  Automatic mode still requires an ADB address, on-device authorization, and a confirmation of
+  the selected actions. Changing manager settings does not rewrite existing device settings.
+- **Device Configure menu** — each kiosk's Configure offers **Rename device**, **Update Kiosk
+  Satellite password**, **Change host** (DNS name or IP address, verified against the device's
+  saved key), **Replace launcher**, and **Enable Device Owner (advanced)**. Device Owner runs a
+  read-only check, explains its side effects, and changes nothing until you confirm; on Meta
+  Portals it then reopens Meta setup so you can sign back in on the device. On an Android 9 Portal
+  Gen 1, the same entry opens a confirmed Meta cleanup instead.
+- **Configuration backup** — **Back up configuration** saves Kiosk Satellite's own settings export
+  to a dated file under `config/kiosk_satellite_manager/backups/`, automatically every 24 hours by
+  default (10 kept per device). **Restore configuration** imports the file chosen in
+  **Configuration backup** after a safety backup, keeping the kiosk's current password and Home
+  Assistant token. KSM Settings' **Backup All** backs up every loaded device. The files contain the
+  kiosk's passwords and token; treat them as secrets.
+- **Permissions and diagnostics** — a **Permissions** problem sensor lists any permission, AppOp or
+  battery exemption the installed Kiosk Satellite declares but does not have, and **Fix
+  permissions** re-grants them over ADB. Each device also shows **ADB enabled**, **IP address**,
+  **Device type**, **Install recipe** and **Fleet membership** diagnostics.
+- **Discovered followers** — when KSM creates a fleet entry, followers on that leader's roster that
+  KSM doesn't manage yet appear under Discovered; a follower that joins later raises one repair
+  asking whether to add it. KSM never changes fleet membership itself.
 - **Fleet release and updates** — the manager entry exposes the latest usable Kiosk
   Satellite release and check status, plus Update all. The button visits managed,
   reachable devices with an older version through the same verified install
@@ -84,7 +111,9 @@ remotely — do them once per device, in order:
 - **Capability report** — the `kiosk_satellite_manager.capability_report` response service gathers a
   versioned, read-only evidence bundle for an unfamiliar Android device. It returns parsed platform,
   management, and Kiosk Satellite facts plus explicit probe status; it never returns raw shell output,
-  account identifiers, credentials, or ADB keys.
+  account identifiers, credentials, or ADB keys. The response-only
+  `kiosk_satellite_manager.onboarding_plan` service turns that evidence into a deterministic,
+  explained dry-run plan; it executes nothing.
 - **Rename device** — the `kiosk_satellite_manager.rename_device` service renames a device's Kiosk
   Satellite identity (name, hostname, ESPHome node name) over the authenticated `:2324` settings
   API, then updates the KSM entry's title/name and migrates its DNS host once the new hostname is
@@ -107,10 +136,11 @@ directory of the separate harness repo.
 
 Requires Home Assistant 2025.3 or later (KSM uses config subentries).
 
-This repo lives on OneDev (`onedev.cfoxga.com`), not GitHub, so it is **not HACS-installable** — HACS
-only adds repositories hosted on GitHub. Install manually: copy
-`custom_components/kiosk_satellite_manager/` into your Home Assistant config's
-`custom_components/` directory, then restart Home Assistant.
+KSM is developed on OneDev (`onedev.cfoxga.com`) and is not published to HACS yet. A private
+GitHub copy is shared with invited users; it is not a HACS repository either. Install manually:
+download the latest release (tag `v0.4.0` or newer), copy `custom_components/kiosk_satellite_manager/`
+into your Home Assistant config's `custom_components/` directory, then restart Home Assistant.
+Release notes are in [CHANGELOG.md](CHANGELOG.md).
 
 Then add the integration (Settings → Devices & Services → Add Integration → Kiosk Satellite Manager).
 Choose Configure KSM once for global defaults and release controls, then add each device through
