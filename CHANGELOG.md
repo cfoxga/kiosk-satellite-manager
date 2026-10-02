@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Meta Portal Go and Portal+ Gen 2 are now **supported** on their tested Android 10
+  builds. Install no longer asks for the secure-settings permission, which Kiosk
+  Satellite never requests, so permission setup no longer fails on every Portal.
+  The Portal recipe keys gain a `_declared_grants` suffix (#120).
 - KSM installs through HACS as a custom repository from
   `github.com/cfoxga/kiosk-satellite-manager`. The README gives the HACS and
   manual steps, Home Assistant's Documentation and issue links open GitHub, and

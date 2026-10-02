@@ -62,8 +62,8 @@ def test_KSM_TEST_270_onn_4k_pro_android14_resolves_only_exact_live_identity():
         assert not resolve_catalog_entry(changed).executable
 
 
-def _qualifications(model_key: str, recipe_key: str = "meta_portal_android10", *, result: str = "pass"):
-    recipe = get_recipe("meta_portal_android10")
+def _qualifications(model_key: str, recipe_key: str = "meta_portal_android10_declared_grants", *, result: str = "pass"):
+    recipe = get_recipe("meta_portal_android10_declared_grants")
     return tuple(
         QualificationRecord(
             model_key=model_key,
@@ -109,7 +109,7 @@ def test_catalog_rejects_an_assignment_referencing_an_unknown_model():
     assignments = CATALOG.assignments + (
         RecipeAssignment(
             model_key="no_such_model",
-            recipe_key="meta_portal_android10",
+            recipe_key="meta_portal_android10_declared_grants",
             state=ASSIGNMENT_APPROVED,
             effective_date="2026-09-20",
             rationale="deliberately broken reference",
@@ -137,7 +137,7 @@ def test_catalog_rejects_two_approved_assignments_for_one_model():
     assignments = CATALOG.assignments + (
         RecipeAssignment(
             model_key="portal_go",
-            recipe_key="meta_portal_android10",
+            recipe_key="meta_portal_android10_declared_grants",
             state=ASSIGNMENT_APPROVED,
             effective_date="2026-09-20",
             rationale="deliberately ambiguous",
@@ -243,7 +243,7 @@ def test_portal_go_and_mini_share_behavior_but_retain_exact_model_identity():
     mini = resolve_catalog_entry(_PORTAL_MINI)
     assert go.model_key == "portal_go"
     assert mini.model_key == "portal_mini"
-    assert go.recipe_identity == mini.recipe_identity == "meta_portal_android10"
+    assert go.recipe_identity == mini.recipe_identity == "meta_portal_android10_declared_grants"
     assert go.executable is True
 
 
@@ -261,7 +261,7 @@ def test_portal_tv_shares_portal_provisioning_recipe():
     """[KSM-TEST-257] KSM leaves native Home behavior to KS on Portal TV too."""
     tv = resolve_catalog_entry(_PORTAL_TV)
     assert tv.model_key == "portal_tv"
-    assert tv.recipe_identity == "meta_portal_tv"
+    assert tv.recipe_identity == "meta_portal_tv_declared_grants"
 
 
 # --- KSM-TEST-060: fail closed ----------------------------------------------
@@ -335,7 +335,7 @@ def test_a_failed_scenario_blocks_the_model():
 
 def test_evidence_for_a_previous_behavior_key_goes_stale():
     """[KSM-TEST-062] A changed behavior key does not inherit old evidence."""
-    changed = dataclasses.replace(get_recipe("meta_portal_android10"), recipe_key="meta_portal_next", start_url_path="/portal-next")
+    changed = dataclasses.replace(get_recipe("meta_portal_android10_declared_grants"), recipe_key="meta_portal_next", start_url_path="/portal-next")
     assignments = tuple(
         dataclasses.replace(a, recipe_key="meta_portal_next") if a.model_key == "portal_go" else a
         for a in CATALOG.assignments
@@ -365,7 +365,7 @@ def test_evidence_outside_the_observed_build_scope_requires_revalidation():
 
 
 def test_required_scenarios_do_not_include_native_home_selection():
-    required = required_scenarios(get_recipe("meta_portal_android10"))
+    required = required_scenarios(get_recipe("meta_portal_android10_declared_grants"))
     assert "launcher_selection" not in required
     assert {"clean_install", "existing_reuse", "update", "reinstall", "uninstall"} <= required
 
@@ -417,19 +417,24 @@ _PORTAL_GO_40_FINGERPRINT = (
 )
 
 
-def test_portal_go_secure_settings_limitation_is_exact_build_evidence():
-    """[KSM-TEST-123] A denied required grant never becomes supported hardware."""
+def test_KSM_TEST_304_portal_go_full_matrix_on_the_renamed_recipe_is_supported():
+    """[KSM-TEST-304] KSM-BEHAVE-151: with no undeclared grant required, the
+    live #120 Go matrix makes that exact build supported. The evidence stays
+    scoped to the build, the model and the new recipe key."""
     observed = dataclasses.replace(_PORTAL_GO, fingerprint=_PORTAL_GO_40_FINGERPRINT)
     entry = resolve_catalog_entry(observed)
-    assert entry.support_state == SUPPORT_BLOCKED
-    assert "permission_convergence" in entry.reason
-    assert "android.permission.WRITE_SECURE_SETTINGS" in entry.recipe.permissions_for_sdk(29)
-    record, = [q for q in CATALOG.qualifications if q.model_key == "portal_go"]
-    assert record.result == "fail"
-    assert "2026.9.70" in record.evidence
-    assert record.positive_control and record.negative_control
-    assert record.min_sdk == record.max_sdk == 29
-    assert record.fingerprint_prefixes == (_PORTAL_GO_40_FINGERPRINT.lower(),)
+    assert entry.recipe.recipe_key == "meta_portal_android10_declared_grants"
+    assert "android.permission.WRITE_SECURE_SETTINGS" not in entry.recipe.permissions_for_sdk(29)
+    records = [q for q in CATALOG.qualifications if q.model_key == "portal_go"]
+    assert {q.scenario for q in records} == required_scenarios(entry.recipe)
+    assert {q.result for q in records} == {"pass"}
+    for record in records:
+        assert record.recipe_key == "meta_portal_android10_declared_grants"
+        assert "2026.10.3" in record.evidence and "#120" in record.evidence
+        assert record.positive_control and record.negative_control
+        assert record.min_sdk == record.max_sdk == 29
+        assert record.fingerprint_prefixes == (_PORTAL_GO_40_FINGERPRINT.lower(),)
+    assert entry.support_state == SUPPORT_SUPPORTED
     for facts in (
         _PORTAL_GO,
         dataclasses.replace(observed, fingerprint="another/build"),
@@ -437,6 +442,11 @@ def test_portal_go_secure_settings_limitation_is_exact_build_evidence():
     ):
         assert resolve_catalog_entry(facts).support_state == SUPPORT_REVALIDATION_REQUIRED
     assert resolve_catalog_entry(_PORTAL_MINI).support_state == SUPPORT_RECIPE_ASSIGNED
+    # No record anywhere still names a retired recipe key.
+    assert not {q.recipe_key for q in CATALOG.qualifications} & {
+        "meta_portal_android10", "meta_portal_android9", "meta_portal_tv",
+    }
+    # A later behavior change (new key) cannot inherit this evidence.
     new_recipe = dataclasses.replace(entry.recipe, recipe_key="meta_portal_next")
     assignments = tuple(
         dataclasses.replace(a, recipe_key="meta_portal_next")
@@ -451,30 +461,26 @@ _PLUS_FIXTURE = Path(__file__).parents[1] / "fixtures/profile-portal-plus-gen2-2
 
 
 def test_KSM_TEST_297_portal_plus_gen2_records_its_own_live_matrix():
-    """[KSM-TEST-297] The live Portal+ Gen 2 run (#115) resolves to its exact
-    model and derives its state from its own build-scoped records only."""
+    """[KSM-TEST-297] The live Portal+ Gen 2 run resolves to its exact model and
+    derives its state from its own build-scoped records only (#115; the
+    records were re-run on the renamed recipe in #120)."""
     fixture = json.loads(_PLUS_FIXTURE.read_text())
     platform = fixture["facts"]["platform"]
     observed = DeviceFacts.from_platform(platform)
     entry = resolve_catalog_entry(observed)
     assert entry.model_key == fixture["expected_model_key"] == "portal_plus_gen2"
-    assert entry.recipe.recipe_key == "meta_portal_android10"
+    assert entry.recipe.recipe_key == "meta_portal_android10_declared_grants"
 
     records = [q for q in CATALOG.qualifications if q.model_key == "portal_plus_gen2"]
     by_scenario = {q.scenario: q.result for q in records}
     assert set(by_scenario) == required_scenarios(entry.recipe)
-    assert by_scenario.pop("permission_convergence") == "fail"
     assert set(by_scenario.values()) == {"pass"}
     for record in records:
         assert record.min_sdk == record.max_sdk == 29
         assert record.fingerprint_prefixes == (platform["fingerprint"].lower(),)
-        assert "2026.10.2" in record.evidence
+        assert "2026.10.3" in record.evidence
         assert record.positive_control and record.negative_control
-    # The KS build does not declare the secure-settings grant the recipe requires,
-    # so the passing lifecycle runs cannot add up to a supported claim.
-    assert "android.permission.WRITE_SECURE_SETTINGS" in entry.recipe.permissions_for_sdk(29)
-    assert entry.support_state == SUPPORT_BLOCKED
-    assert "permission_convergence" in entry.reason
+    assert entry.support_state == SUPPORT_SUPPORTED
 
     # Negative controls: an unobserved build, the Gen 1 Portal+ and the
     # sibling Portal Go never inherit this evidence.
@@ -487,7 +493,7 @@ def test_KSM_TEST_297_portal_plus_gen2_records_its_own_live_matrix():
     assert gen1.model_key == "portal_plus_gen1"
     assert gen1.support_state == SUPPORT_RECIPE_ASSIGNED
     go = [q for q in CATALOG.qualifications if q.model_key == "portal_go"]
-    assert len(go) == 1
+    assert all(q.fingerprint_prefixes != records[0].fingerprint_prefixes for q in go)
 
 
 @pytest.mark.parametrize("result", ["fail", "blocked"])

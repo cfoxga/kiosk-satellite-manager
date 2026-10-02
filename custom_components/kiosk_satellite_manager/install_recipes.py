@@ -157,9 +157,8 @@ class InstallRecipe:
     def permissions_for_sdk(self, sdk: int) -> list[str]:
         """Runtime permissions adapted to what this API level actually defines.
 
-        Migrated verbatim from `DeviceProfile.permissions_for_sdk` so an
-        already-provisioned device converges on exactly the same set
-        (KSM-TEST-063).
+        Only permissions Kiosk Satellite declares: Android refuses `pm grant`
+        for anything else (KSM-BEHAVE-151).
         """
         perms = [
             "android.permission.RECORD_AUDIO",
@@ -184,8 +183,6 @@ class InstallRecipe:
             perms.append("android.permission.READ_EXTERNAL_STORAGE")
         if sdk <= 29:
             perms.append("android.permission.WRITE_EXTERNAL_STORAGE")
-        if self.permission_policy == PERMISSION_POLICY_PORTAL:
-            perms.append("android.permission.WRITE_SECURE_SETTINGS")
         return perms
 
     @property
@@ -322,7 +319,7 @@ INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
         postconditions=_PORTAL_POSTCONDITIONS,
     ),
     InstallRecipe(
-        recipe_key="meta_portal_android10",
+        recipe_key="meta_portal_android10_declared_grants",
         name="Meta Portal (Android 10)",
         device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
         redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,
@@ -335,7 +332,7 @@ INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
         postconditions=_PORTAL_POSTCONDITIONS,
     ),
     InstallRecipe(
-        recipe_key="meta_portal_android9",
+        recipe_key="meta_portal_android9_declared_grants",
         name="Meta Portal (Android 9)",
         device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
         redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,
@@ -349,7 +346,7 @@ INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
         postconditions=_PORTAL_POSTCONDITIONS,
     ),
     InstallRecipe(
-        recipe_key="meta_portal_tv",
+        recipe_key="meta_portal_tv_declared_grants",
         name="Meta Portal TV (cleanup unqualified)",
         device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
         redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,

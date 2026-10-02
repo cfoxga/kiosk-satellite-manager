@@ -48,7 +48,7 @@ _TARGET_VERSION = "2026.9.99"
 # SDK-29 output of one named recipe version, and a device only gets them by
 # resolving to a model with an approved assignment to that recipe. The
 # values below are unchanged -- that is the point of KSM-TEST-063.
-PORTAL_RECIPE = get_recipe("meta_portal_android10")
+PORTAL_RECIPE = get_recipe("meta_portal_android10_declared_grants")
 PORTAL_PERMISSIONS = PORTAL_RECIPE.permissions_for_sdk(29)
 PORTAL_APPOPS = PORTAL_RECIPE.appops_for_sdk(29)
 
@@ -686,15 +686,15 @@ async def test_install_and_launch_sync_failure_is_logged_not_raised():
             device_model="portal_go",
         )
 
-    # 15, not the pre-catalog 14: this test used to run with no device_profile
-    # at all, which took the unmatched-device fallback and granted the generic
-    # 7-permission list. portal_go always granted 8 (the Portal-only
-    # WRITE_SECURE_SETTINGS) -- the count moved because the fallback path is
-    # gone. Package verification remains enabled (KSM-BEHAVE-062), and the
-    # Portal Go v3 recipe does not issue a launcher mutation (KSM-BEHAVE-069).
-    assert client.shell.await_count == 15
+    # portal_go grants the same 7 runtime permissions as the generic list:
+    # KS never declared WRITE_SECURE_SETTINGS, so the Portal recipe no longer
+    # grants it (KSM-BEHAVE-151). Package verification remains enabled
+    # (KSM-BEHAVE-062), and the Portal recipe issues no launcher mutation
+    # (KSM-BEHAVE-069).
+    assert client.shell.await_count == 14
     grants = [c.args[0] for c in client.shell.await_args_list if c.args[0].startswith("pm grant ")]
-    assert f"pm grant me.jxl.kiosk_satellite android.permission.WRITE_SECURE_SETTINGS" in grants
+    assert len(grants) == 7
+    assert not any("WRITE_SECURE_SETTINGS" in g for g in grants)
 
 
 async def test_portal_go_shell_sequence_excludes_verifier_disable():
@@ -720,7 +720,6 @@ async def test_portal_go_shell_sequence_excludes_verifier_disable():
         "pm grant me.jxl.kiosk_satellite android.permission.READ_LOGS",
         "pm grant me.jxl.kiosk_satellite android.permission.READ_EXTERNAL_STORAGE",
         "pm grant me.jxl.kiosk_satellite android.permission.WRITE_EXTERNAL_STORAGE",
-        "pm grant me.jxl.kiosk_satellite android.permission.WRITE_SECURE_SETTINGS",
         "appops set me.jxl.kiosk_satellite SYSTEM_ALERT_WINDOW allow",
         "appops set me.jxl.kiosk_satellite WRITE_SETTINGS allow",
         "appops set me.jxl.kiosk_satellite GET_USAGE_STATS allow",
@@ -1445,9 +1444,9 @@ def test_KSM_TEST_281_default_follows_recipe_and_explicit_value_wins():
     """[KSM-TEST-281] Unset: Portal recipes on, everything else off."""
     from custom_components.kiosk_satellite_manager.install import launcher_replacement_wanted
 
-    for key in ("meta_portal_android10", "meta_portal_android9", "meta_portal_tv"):
+    for key in ("meta_portal_android10_declared_grants", "meta_portal_android9_declared_grants", "meta_portal_tv_declared_grants"):
         assert launcher_replacement_wanted({}, get_recipe(key)) is True
     for key in ("onn_4k_pro_android14", "android_tv"):
         assert launcher_replacement_wanted({}, get_recipe(key)) is False
-    assert launcher_replacement_wanted({"replace_launcher": False}, get_recipe("meta_portal_android10")) is False
+    assert launcher_replacement_wanted({"replace_launcher": False}, get_recipe("meta_portal_android10_declared_grants")) is False
     assert launcher_replacement_wanted({"replace_launcher": True}, get_recipe("android_tv")) is True

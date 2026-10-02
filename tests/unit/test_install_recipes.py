@@ -16,7 +16,7 @@ from custom_components.kiosk_satellite_manager.install_recipes import (
 
 
 def _recipe(**overrides):
-    base = get_recipe("meta_portal_android10")
+    base = get_recipe("meta_portal_android10_declared_grants")
     return dataclasses.replace(base, **overrides)
 
 
@@ -32,7 +32,7 @@ def test_native_ks_owns_home_settings_and_portal_recipes_have_no_versions():
     """[KSM-TEST-257] Portal recipes have platform names and leave Home to KS."""
     portal_recipes = [r for r in INSTALL_RECIPES if r.recipe_key.startswith("meta_portal")]
     assert {r.recipe_key for r in portal_recipes} == {
-        "meta_portal_android9", "meta_portal_android10", "meta_portal_tv",
+        "meta_portal_android9_declared_grants", "meta_portal_android10_declared_grants", "meta_portal_tv_declared_grants",
     }
     for portal in portal_recipes:
         assert not hasattr(portal, "version")
@@ -106,7 +106,7 @@ def test_recipes_are_immutable():
 
 def test_portal_recipe_retains_permissions_and_naming():
     """KSM-TEST-063: Portal permission/AppOp/name behavior remains shared."""
-    recipe = get_recipe("meta_portal_android10")
+    recipe = get_recipe("meta_portal_android10_declared_grants")
     perms = recipe.permissions_for_sdk(29)
     assert perms == [
         "android.permission.RECORD_AUDIO",
@@ -116,7 +116,6 @@ def test_portal_recipe_retains_permissions_and_naming():
         "android.permission.READ_LOGS",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.WRITE_SECURE_SETTINGS",
     ]
     assert recipe.appops_for_sdk(29) == [
         "SYSTEM_ALERT_WINDOW",
@@ -131,8 +130,21 @@ def test_portal_recipe_retains_permissions_and_naming():
     assert recipe.sets_device_admin is True
 
 
+def test_KSM_TEST_303_no_recipe_requires_write_secure_settings():
+    """[KSM-TEST-303] KSM-BEHAVE-151: Kiosk Satellite does not declare
+    WRITE_SECURE_SETTINGS, so no recipe may require it at any SDK. The changed
+    Portal behavior has new keys; the old keys resolve to nothing."""
+    for recipe in INSTALL_RECIPES:
+        for sdk in (28, 29, 30, 33, 34):
+            assert "android.permission.WRITE_SECURE_SETTINGS" not in recipe.permissions_for_sdk(sdk)
+    for old_key in ("meta_portal_android10", "meta_portal_android9", "meta_portal_tv"):
+        assert get_recipe(old_key) is None
+    # Control: the Portal policy still differs from the standard one where it should.
+    assert get_recipe("meta_portal_android10_declared_grants").replaces_launcher_by_default is True
+
+
 def test_sdk_33_portal_adds_the_modern_media_and_notification_permissions():
-    perms = get_recipe("meta_portal_android10").permissions_for_sdk(33)
+    perms = get_recipe("meta_portal_android10_declared_grants").permissions_for_sdk(33)
     assert "android.permission.POST_NOTIFICATIONS" in perms
     assert "android.permission.READ_MEDIA_IMAGES" in perms
     assert "android.permission.BLUETOOTH_SCAN" in perms
@@ -143,19 +155,19 @@ def test_android10_portal_models_share_the_same_behavior():
     """[KSM-TEST-257] Android 10 Go, Mini and Gen 2 share behavior."""
     from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
     for model in ("portal_go", "portal_mini", "portal_gen2", "portal_plus_gen2"):
-        assert require_recipe(model) is get_recipe("meta_portal_android10")
+        assert require_recipe(model) is get_recipe("meta_portal_android10_declared_grants")
 
 
 def test_android9_and_android10_portal_recipes_are_distinct():
     """[KSM-TEST-268] The Android 9 cleanup capability has its own recipe key."""
     from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
 
-    assert require_recipe("portal_gen1").recipe_key == "meta_portal_android9"
-    assert require_recipe("portal_plus_gen1").recipe_key == "meta_portal_android9"
+    assert require_recipe("portal_gen1").recipe_key == "meta_portal_android9_declared_grants"
+    assert require_recipe("portal_plus_gen1").recipe_key == "meta_portal_android9_declared_grants"
     for model in ("portal_go", "portal_mini", "portal_gen2", "portal_plus_gen2"):
-        assert require_recipe(model).recipe_key == "meta_portal_android10"
-    assert require_recipe("portal_tv").recipe_key == "meta_portal_tv"
-    assert get_recipe("meta_portal_android9") is not get_recipe("meta_portal_android10")
+        assert require_recipe(model).recipe_key == "meta_portal_android10_declared_grants"
+    assert require_recipe("portal_tv").recipe_key == "meta_portal_tv_declared_grants"
+    assert get_recipe("meta_portal_android9_declared_grants") is not get_recipe("meta_portal_android10_declared_grants")
 
 
 def test_android_tv_recipe_exists_but_is_not_portal_shaped():
@@ -182,7 +194,7 @@ def test_KSM_TEST_270_onn_recipe_carries_android14_special_grants():
 
 
 def test_device_name_normalization_strips_the_model_suffix_android_appends():
-    recipe = get_recipe("meta_portal_android10")
+    recipe = get_recipe("meta_portal_android10_declared_grants")
     assert recipe.normalize_device_name("Kitchen PortalGo") == "Kitchen"
     assert recipe.normalize_device_name("Kitchen") == "Kitchen"
     # A label that is only the suffix is left alone rather than emptied.
@@ -203,7 +215,7 @@ def test_recipe_validation_scans_every_string_field_not_an_enrolled_subset():
     Proven field-by-field: every non-prose string field rejects a smuggled
     command, and the two prose fields accept ordinary punctuation.
     """
-    recipe = get_recipe("meta_portal_android10")
+    recipe = get_recipe("meta_portal_android10_declared_grants")
     scanned = [
         f.name
         for f in dataclasses.fields(recipe)
@@ -233,7 +245,7 @@ def test_recipe_operations_cannot_drift_from_what_install_actually_branches_on()
     reads; the booleans are what `install.py` executes. If the two can
     disagree the list is decoration, so `validate_recipe` rejects both
     directions of drift."""
-    recipe = get_recipe("meta_portal_android10")
+    recipe = get_recipe("meta_portal_android10_declared_grants")
     assert OP_SET_DEVICE_ADMIN in recipe.operations and recipe.sets_device_admin
 
     undeclared = dataclasses.replace(

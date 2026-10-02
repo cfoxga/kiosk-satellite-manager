@@ -228,164 +228,142 @@ RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
     # Native KS settings still own Home. Qualification stays model-specific.
     RecipeAssignment(
         model_key="portal_go",
-        recipe_key="meta_portal_android10",
+        recipe_key="meta_portal_android10_declared_grants",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-22",
         rationale="Portal provisioning without KSM Home control (KSM-BEHAVE-132).",
     ),
     RecipeAssignment(
         model_key="portal_mini",
-        recipe_key="meta_portal_android10",
+        recipe_key="meta_portal_android10_declared_grants",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Shares Portal install behavior, not qualification evidence.",
     ),
     RecipeAssignment(
         model_key="portal_gen1",
-        recipe_key="meta_portal_android9",
+        recipe_key="meta_portal_android9_declared_grants",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Shares Portal install behavior without KSM Home control.",
     ),
     RecipeAssignment(
         model_key="portal_gen2",
-        recipe_key="meta_portal_android10",
+        recipe_key="meta_portal_android10_declared_grants",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-27",
         rationale="Shares Portal install behavior without KSM Home control.",
     ),
     RecipeAssignment(
         model_key="portal_plus_gen1",
-        recipe_key="meta_portal_android9",
+        recipe_key="meta_portal_android9_declared_grants",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Behavior migrated verbatim from the portal_plus_gen1 DeviceProfile.",
     ),
     RecipeAssignment(
         model_key="portal_plus_gen2",
-        recipe_key="meta_portal_android10",
+        recipe_key="meta_portal_android10_declared_grants",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Behavior migrated verbatim from the portal_plus_gen2 DeviceProfile.",
     ),
     RecipeAssignment(
         model_key="portal_tv",
-        recipe_key="meta_portal_tv",
+        recipe_key="meta_portal_tv_declared_grants",
         state=ASSIGNMENT_APPROVED,
         effective_date="2026-09-20",
         rationale="Shares Portal install behavior; KS owns native Home settings.",
     ),
 )
 
-# Exact-device negative qualification from issues #40/#41. This is installed-app
-# and OEM-build evidence, not a claim about sibling Portal hardware. The issue
-# #41 live run re-exercised the unchanged permission policy. KSM-BEHAVE-132
-# removes only the Home mutation; the failed permission remains applicable.
-QUALIFICATIONS: tuple[QualificationRecord, ...] = (
-    QualificationRecord(
-        model_key="portal_go",
-        recipe_key="meta_portal_android10",
-        scenario=SCENARIO_PERMISSION_CONVERGENCE,
-        result=RESULT_FAIL,
-        verified_on="2026-09-22",
-        min_sdk=29,
-        max_sdk=29,
-        fingerprint_prefixes=(
-            "facebook/terry_prod/terry:10/qkq1.210213.001/5051355900018050:user/prod-keys",
-        ),
-        evidence=(
-            "KS 2026.9.70 (versionCode 269) does not request WRITE_SECURE_SETTINGS; "
-            "Android rejects pm grant with 'has not requested permission'. "
-            "Issue #41's live v3 candidate reproduced the same sole denied grant. "
-            "See docs/developer/android-support/portal-go-permission-qualification.md "
-            "in ham-harness/kiosk-satellite-manager and KSM issue #40."
-        ),
-        positive_control="READ_LOGS grant and Android granted=true readback succeed.",
-        negative_control=(
-            "WRITE_SECURE_SETTINGS grant is rejected and remains absent from granted "
-            "permissions; the physical matrix permission assertion returns false."
-        ),
-        limitations=(
-            "Required secure-settings permission is not converged; no supported claim.",
-            "Evidence applies to the observed KS app build; revalidate after an app update.",
-            "Other Portal SKUs and launcher qualification are not covered.",
-        ),
-        rollback_notes="No new privilege or device setting was added; no rollback required.",
+# KSM-BEHAVE-151 (#120): the Portal recipes stopped requiring a grant Kiosk
+# Satellite never declares, so they got new keys and the evidence recorded
+# against the retired keys (#40/#41, #115) was dropped. These are the full
+# physical matrix runs on the renamed recipe, against dev HA, 2026-10-02.
+_MATRIX_SCENARIOS: tuple[tuple[str, str, str, str], ...] = (
+    (
+        SCENARIO_CLEAN_INSTALL,
+        "fresh install through a new KSM entry reached a GREEN e2e result.",
+        "Package and KSM entry present after setup.",
+        "The scenario fails when the package or entry is missing.",
     ),
-) + tuple(
-    # Issue #115: the full physical matrix on Test Portal Plus (Portal+ Gen 2,
-    # 14-inch). Six lifecycle scenarios passed; permission convergence is
-    # recorded as failed for the same reason as the Portal Go record above,
-    # even though the e2e verifier skips an undeclared secure-settings grant.
-    QualificationRecord(
-        model_key="portal_plus_gen2",
-        recipe_key="meta_portal_android10",
-        scenario=scenario,
-        result=result,
-        verified_on="2026-10-02",
-        min_sdk=29,
-        max_sdk=29,
-        fingerprint_prefixes=(
-            "facebook/cipher_prod/cipher:10/qkq1.210213.001/4051355900018050:user/prod-keys",
-        ),
-        evidence=(
-            f"KS 2026.10.2 (versionCode 300) on Portal+ / cipher_prod, SDK 29: {evidence} "
-            "Physical matrix via kiosk-satellite-manager/scripts/test-device-matrix.py "
-            "against dev HA, KSM issue #115."
-        ),
-        positive_control=positive,
-        negative_control=negative,
-        limitations=(
-            "Evidence applies to the observed KS app build; revalidate after an app update.",
-            "Portal+ Gen 1, other Portal SKUs, Device Owner and Test Harness are not covered.",
-        ),
-        rollback_notes="Teardown wiped the device; KSM restored its exported config and HA entry.",
+    (
+        SCENARIO_EXISTING_REUSE,
+        "setup reused the installed app without reinstalling.",
+        "Existing package kept and entry created.",
+        "The scenario fails when reuse does not complete setup.",
+    ),
+    (
+        SCENARIO_UPDATE,
+        "the Install button reinstalled the target release.",
+        "Install button press completed with the app running.",
+        "The scenario fails when the button is unavailable or the install errors.",
+    ),
+    (
+        SCENARIO_REINSTALL,
+        "setup with existing_install_action=reinstall completed.",
+        "Entry created after a reinstall.",
+        "The scenario fails when the reinstall path does not finish setup.",
+    ),
+    (
+        SCENARIO_PERMISSION_CONVERGENCE,
+        "every runtime permission the recipe requires read back granted=true, with the "
+        "overlay AppOp allowed and the battery exemption listed.",
+        "READ_LOGS readback shows granted=true in the same package dump.",
+        "BLUETOOTH_SCAN, outside the SDK-29 set, is not granted; a missing grant fails.",
+    ),
+    (
+        SCENARIO_HEALTH_VERSION_READBACK,
+        "Android package versionName matched KS /api/health appVersion.",
+        "Non-empty versions agreed; post-run dumpsys reads versionName 2026.10.3.",
+        "The scenario fails on any mismatch between the two readbacks.",
+    ),
+    (
+        SCENARIO_UNINSTALL,
+        "the KSM Uninstall button removed me.jxl.kiosk_satellite.",
+        "Package installed and the button available before the press.",
+        "The scenario fails when the package is still installed after the press.",
+    ),
+)
+
+
+def _matrix_records(model_key: str, device: str, fingerprint: str) -> tuple[QualificationRecord, ...]:
+    return tuple(
+        QualificationRecord(
+            model_key=model_key,
+            recipe_key="meta_portal_android10_declared_grants",
+            scenario=scenario,
+            result=RESULT_PASS,
+            verified_on="2026-10-02",
+            min_sdk=29,
+            max_sdk=29,
+            fingerprint_prefixes=(fingerprint,),
+            evidence=(
+                f"KS 2026.10.3 (versionCode 301) on {device}, SDK 29: {evidence} "
+                "Physical matrix via kiosk-satellite-manager/scripts/test-device-matrix.py "
+                "against dev HA, KSM issue #120."
+            ),
+            positive_control=positive,
+            negative_control=negative,
+            limitations=(
+                "Evidence applies to the observed KS app build; revalidate after an app update.",
+                "Other Portal SKUs, Device Owner and Test Harness are not covered.",
+            ),
+            rollback_notes="Teardown wiped the device; KSM restored its exported config and HA entry.",
+        )
+        for scenario, evidence, positive, negative in _MATRIX_SCENARIOS
     )
-    for scenario, result, evidence, positive, negative in (
-        (
-            SCENARIO_CLEAN_INSTALL, RESULT_PASS,
-            "fresh install through a new KSM entry reached a GREEN e2e result.",
-            "Package and KSM entry present after setup.",
-            "The scenario fails when the package or entry is missing.",
-        ),
-        (
-            SCENARIO_EXISTING_REUSE, RESULT_PASS,
-            "setup reused the installed app without reinstalling.",
-            "Existing package kept and entry created.",
-            "The scenario fails when reuse does not complete setup.",
-        ),
-        (
-            SCENARIO_UPDATE, RESULT_PASS,
-            "the Install button reinstalled the target release.",
-            "Install button press completed with the app running.",
-            "The scenario fails when the button is unavailable or the install errors.",
-        ),
-        (
-            SCENARIO_REINSTALL, RESULT_PASS,
-            "setup with existing_install_action=reinstall completed.",
-            "Entry created after a reinstall.",
-            "The scenario fails when the reinstall path does not finish setup.",
-        ),
-        (
-            SCENARIO_PERMISSION_CONVERGENCE, RESULT_FAIL,
-            "the app does not declare WRITE_SECURE_SETTINGS, which this recipe requires; "
-            "dumpsys package lists no such permission after provisioning.",
-            "READ_LOGS readback shows granted=true in the same dump.",
-            "WRITE_SECURE_SETTINGS is absent from the package dump, so it cannot be granted.",
-        ),
-        (
-            SCENARIO_HEALTH_VERSION_READBACK, RESULT_PASS,
-            "Android package versionName matched KS /api/health appVersion.",
-            "Non-empty versions agreed; post-run dumpsys reads versionName 2026.10.2.",
-            "The scenario fails on any mismatch between the two readbacks.",
-        ),
-        (
-            SCENARIO_UNINSTALL, RESULT_PASS,
-            "the KSM Uninstall button removed me.jxl.kiosk_satellite.",
-            "Package installed and the button available before the press.",
-            "The scenario fails when the package is still installed after the press.",
-        ),
-    )
+
+
+QUALIFICATIONS: tuple[QualificationRecord, ...] = _matrix_records(
+    "portal_go",
+    "Test Portal Go / terry_prod",
+    "facebook/terry_prod/terry:10/qkq1.210213.001/5051355900018050:user/prod-keys",
+) + _matrix_records(
+    "portal_plus_gen2",
+    "Test Portal Plus / cipher_prod",
+    "facebook/cipher_prod/cipher:10/qkq1.210213.001/4051355900018050:user/prod-keys",
 )
 
 _RECOVERY_QUALIFIED_MODEL_KEYS: tuple[str, ...] = (

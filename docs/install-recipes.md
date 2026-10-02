@@ -23,8 +23,7 @@ readback. The native entity lists the exact operations and postconditions.
 list: Android version and the installed app's declared components affect the
 actual grants. KSM grants common microphone, camera, location and log access;
 newer Android versions add Bluetooth and notification/media grants, while older
-versions use external-storage grants. Portal policy additionally asks for
-`WRITE_SECURE_SETTINGS`. Notification Access is converged only when the
+versions use external-storage grants. Notification Access is converged only when the
 installed KS build declares its listener. KSM verifies the applicable grants
 on the device during installation.
 
@@ -32,9 +31,9 @@ on the device during installation.
 
 | Recipe | Assigned models | Name source | Portal URL | Device Admin | Other behavior |
 |---|---|---|---|---|---|
-| `meta_portal_android10` | Go, Mini, Gen 2, Plus Gen 2 | Android secure Bluetooth name | `/portal` | Set | Portal permission/AppOps policy; retry a verifier failure after checking the verifier setting |
-| `meta_portal_android9` | Gen 1, Plus Gen 1 | Android secure Bluetooth name | `/portal` | Set | Portal policy, confirmed Android 9 Meta cleanup, verifier retry |
-| `meta_portal_tv` | Portal TV | Android secure Bluetooth name | `/portal` | Set | Portal policy and verifier retry; cleanup is unqualified |
+| `meta_portal_android10_declared_grants` | Go, Mini, Gen 2, Plus Gen 2 | Android secure Bluetooth name | `/portal` | Set | Portal permission/AppOps policy; retry a verifier failure after checking the verifier setting |
+| `meta_portal_android9_declared_grants` | Gen 1, Plus Gen 1 | Android secure Bluetooth name | `/portal` | Set | Portal policy, confirmed Android 9 Meta cleanup, verifier retry |
+| `meta_portal_tv_declared_grants` | Portal TV | Android secure Bluetooth name | `/portal` | Set | Portal policy and verifier retry; cleanup is unqualified |
 | `onn_4k_pro_android14` | onn 4K Pro Android 14 | Android global device name | none | Not set | Standard Android TV permission/AppOps policy |
 | `android_tv` | **None** | Android global device name | none | Not set | Generic standard TV behavior exists in source but cannot install on any model without an approved assignment |
 
