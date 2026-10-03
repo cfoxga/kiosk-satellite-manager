@@ -37,6 +37,23 @@ capability_report:
       selector:
         config_entry:
           integration: kiosk_satellite_manager
+
+support_request:
+  name: Device support request
+  description: >-
+    Build a request to add this device to Kiosk Satellite Manager's device library:
+    a proposed device-model entry and candidate install recipe from its read-only
+    capability report, plus a pre-filled GitHub issue link. Nothing is sent or
+    changed; the device's address, name, accounts and credentials are not included.
+  fields:
+    config_entry_id:
+      name: Device
+      description: The Kiosk Satellite Manager device to describe.
+      required: true
+      selector:
+        config_entry:
+          integration: kiosk_satellite_manager
+
 onboarding_plan:
   name: Onboarding plan
   description: >-

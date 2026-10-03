@@ -1,0 +1,50 @@
+name: Device support request
+description: Ask for a device to be added to Kiosk Satellite Manager's device library.
+title: "Device support: "
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        The easiest way to fill this in is from Home Assistant: open the
+        **device not in Kiosk Satellite Manager's library** repair (Settings > System >
+        Repairs) and follow its link, or call the `kiosk_satellite_manager.support_request`
+        action. Both pre-fill the fields below from the device's read-only capability
+        report. The proposal is reviewed and tested before anything ships; KSM keeps
+        refusing to install on the device until then.
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      description: Manufacturer, model and Android SDK, e.g. "onn 4K Streaming Box (SDK 31)".
+    validations:
+      required: true
+  - type: input
+    id: ksm_version
+    attributes:
+      label: Kiosk Satellite Manager version
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed library entry
+      description: >-
+        The device-model draft and candidate recipe Kiosk Satellite Manager built. Leave it
+        as generated; reviewers turn it into catalog rows.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Capability report
+      description: >-
+        The sanitized capability report. If it is empty, attach the device's Download
+        diagnostics instead (Settings > Devices & services > Kiosk Satellite Manager > the
+        device > Download diagnostics).
+      render: json
+  - type: textarea
+    id: notes
+    attributes:
+      label: What you tried
+      description: >-
+        Anything that helps: did Kiosk Satellite install by hand, how ADB was enabled, whether
+        the device is a kiosk display, TV or tablet, and anything that went wrong.

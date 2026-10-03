@@ -10,7 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
-from . import fleet, support_log
+from . import fleet, support_log, support_request
 from .const import (
     CONF_DEVICE_PROFILE, CONF_ENTRY_TYPE, CONF_HA_REFRESH_TOKEN_ID, CONF_HA_TOKEN, CONF_HA_URL,
     CONF_HOST, CONF_KEY_PATH, CONF_NAME, CONF_PASSWORD, CONF_TLS_SPKI, DOMAIN,
@@ -39,6 +39,8 @@ def _devices(hass: HomeAssistant, entry: ConfigEntry) -> list[dict[str, Any]]:
         {
             "model": support_log.model_label(device.data.get(CONF_DEVICE_PROFILE)),
             "meta_watch_pending": isinstance(device.data.get(PENDING_KEY), dict),
+            # KSM-BEHAVE-166: carries the whole request when the URL could not.
+            "support_request": support_request.remembered(hass, device.entry_id),
         }
         for device in devices
     ]

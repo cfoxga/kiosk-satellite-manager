@@ -98,7 +98,7 @@
       "token_not_found": "The selected long-lived access token is no longer available",
       "host_required": "Enter an ADB address to add a device",
       "password_required": "Set a Kiosk Satellite password in Configure KSM first",
-      "unsupported_device": "This device has no approved install recipe",
+      "unsupported_device": "This device is not in Kiosk Satellite Manager's device library yet, so it has no approved install recipe. [Request support for it]({support_url}): the link opens a GitHub issue pre-filled with the device's identity (not its address, name or credentials).",
       "invalid_ha_url": "Enter an absolute HTTP or HTTPS URL",
       "invalid_auth": "Kiosk Satellite did not accept that password",
       "cannot_connect_ks": "Could not connect securely to Kiosk Satellite on port 2324",
@@ -256,6 +256,26 @@
     "dashboard_dns_mismatch": {
       "title": "{name}: dashboard address resolves differently",
       "description": "{name} ({host}) resolves {hostname} to {device_address}, but Home Assistant resolves it to {ha_addresses}. Kiosk Satellite loads the dashboard from the device's answer, so it can reach the wrong server or refuse its HTTPS certificate and show a black screen.\n\nMake the device use your local DNS: on Android, set Settings → Network → Private DNS to Off, or fix the DNS servers DHCP gives its network. Then press Install Kiosk Satellite to check again; this repair clears once both answers agree."
+    },
+    "device_support": {
+      "title": "{name}: device not in Kiosk Satellite Manager's library",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Request support for {name}?",
+            "description": "Kiosk Satellite Manager has no tested install recipe for {name}, so it will not install Kiosk Satellite on it. You can ask for it to be added to the device library.\n\nSubmit to read the device's identity over ADB: manufacturer, model, Android version, build fingerprint and similar read-only facts. Its address, name, accounts and credentials are not included. Nothing is sent until you open the link on the next step."
+          },
+          "send": {
+            "title": "Send the support request for {device}",
+            "description": "Kiosk Satellite Manager prepared a request to add **{device}** to its library.\n\n- Request: {kind}\n- Proposed library entry: `{model_key}`\n- Closest existing recipe: `{candidate}`\n\n[Open the pre-filled GitHub issue]({url}), review it, and submit it there (a GitHub account is needed). If the report field is empty, attach this device's Download diagnostics.\n\nSubmit here once you have sent it; this repair will not come back for {name}."
+          }
+        },
+        "abort": {
+          "now_supported": "Kiosk Satellite Manager now recognizes {name} and has a recipe for it. Press Install Kiosk Satellite on the device's page.",
+          "cannot_connect_adb": "Could not connect to {name} over ADB. Turn on network debugging (Developer options → ADB over network or Wireless debugging), accept the authorization prompt on the device, and try again.",
+          "entry_not_found": "This device is no longer configured."
+        }
+      }
     }
   },
   "config_subentries": {

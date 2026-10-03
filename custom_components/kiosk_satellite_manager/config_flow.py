@@ -47,7 +47,10 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.helpers.network import get_url
 
-from . import apk_cache, device_owner, esphome_adopt, fleet, ks_api_client, ks_tls, meta_setup, support_log
+from . import (
+    apk_cache, device_owner, esphome_adopt, fleet, ks_api_client, ks_tls, meta_setup, support_log,
+    support_request,
+)
 from .helpers import recent_releases
 from .adb_client import AdbAuthPending, AdbClient, AdbConnectFailed, ensure_adb_key
 from .const import (
@@ -860,6 +863,8 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._key_path: str | None = None
         self._profile_key: str | None = None
         self._profile_name: str | None = None
+        # KSM-BEHAVE-167: an unsupported device's pre-filled support request.
+        self._support_url: str | None = None
         self._android_version: str | None = None
         self._discovered_name: str = ""
         self._name: str | None = None
@@ -1035,6 +1040,10 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     else raw_name.strip()
                 )
                 ks_installed = await client.is_ks_installed()
+                self._support_url = (
+                    None if entry.executable
+                    else await support_request.async_url_for_client(self.hass, client)
+                )
             finally:
                 await client.close()
 
@@ -1106,6 +1115,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders={
                 "device": self._discovered_name, "action": action,
                 "ha_url": self._global.get(CONF_HA_URL, "Home Assistant default"),
+                "support_url": self._support_url or "",
             },
         )
 

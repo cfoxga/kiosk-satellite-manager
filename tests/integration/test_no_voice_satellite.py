@@ -10,7 +10,9 @@ from unittest.mock import AsyncMock, patch
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
-from custom_components.kiosk_satellite_manager.const import CONF_HOST, CONF_TLS_SPKI, DOMAIN
+from custom_components.kiosk_satellite_manager.const import (
+    CONF_DEVICE_PROFILE, CONF_HOST, CONF_TLS_SPKI, DOMAIN,
+)
 
 from .conftest import init_integration
 
@@ -24,7 +26,10 @@ async def test_setup_leaves_voice_satellite_alone(hass):
     with patch(HEALTH, new=AsyncMock(return_value={"name": "Great Room Kiosk"})), patch(
         "aiohttp.ClientSession._request", new=AsyncMock()
     ) as http:
-        await init_integration(hass, data={CONF_HOST: "10.0.0.1", CONF_TLS_SPKI: PIN})
+        # A library model, so the device-support repair (KSM-BEHAVE-165) stays out of it.
+        await init_integration(
+            hass, data={CONF_HOST: "10.0.0.1", CONF_TLS_SPKI: PIN, CONF_DEVICE_PROFILE: "portal_go"}
+        )
         await hass.async_block_till_done(wait_background_tasks=True)
 
     http.assert_not_awaited()

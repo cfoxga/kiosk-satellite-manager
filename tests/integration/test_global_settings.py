@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, patch
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 import voluptuous as vol
 
@@ -487,6 +489,64 @@ async def test_automatic_unknown_device_stops_before_install(hass):
     assert result["step_id"] == "confirm"
     assert result["errors"]["base"] == "unsupported_device"
     install.assert_not_called()
+
+
+async def test_KSM_TEST_333_the_unsupported_refusal_links_a_prefilled_support_request(hass):
+    """[KSM-TEST-333] KSM-BEHAVE-167: automatic onboarding refuses an unknown
+    model with no entry, so the refusal itself carries the request's link."""
+    manager = MockConfigEntry(domain=DOMAIN, data={CONF_ENTRY_TYPE: "manager"}, options={
+        CONF_ONBOARDING_MODE: ONBOARDING_AUTOMATIC, CONF_PASSWORD: "global-secret",
+    })
+    manager.add_to_hass(hass)
+    with patch("custom_components.kiosk_satellite_manager.config_flow.AdbClient") as cls:
+        client = cls.return_value
+        client.connect = AsyncMock()
+        client.getprop = _getprop(**_GTV_PROPS)
+
+        async def shell(command):
+            if command.startswith("getprop "):
+                return _GTV_PROPS.get(command.removeprefix("getprop "), "")
+            return ""
+
+        client.shell = AsyncMock(side_effect=shell)
+        client.is_ks_installed = AsyncMock(return_value=False)
+        client.close = AsyncMock()
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "192.168.99.5", "port": 5555}
+        )
+    assert result["step_id"] == "confirm"
+    with patch("custom_components.kiosk_satellite_manager.config_flow.install_and_launch") as install:
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["errors"]["base"] == "unsupported_device"
+    install.assert_not_called()
+    url = urlsplit(result["description_placeholders"]["support_url"])
+    query = {key: values[0] for key, values in parse_qs(url.query).items()}
+    assert url.path.endswith("/issues/new")
+    assert query["template"] == "device-support.yml"
+    assert query["device"] == "onn Google TV (SDK 35)"
+    proposal = json.loads(query["proposal"])
+    assert proposal["kind"] == "new_device"
+    assert proposal["recipe"]["candidate"] == "android_tv"
+    assert "192.168.99.5" not in result["description_placeholders"]["support_url"]
+
+
+async def test_KSM_TEST_333_a_supported_device_reads_no_support_request(hass):
+    """[KSM-TEST-333] Control: a library model's confirm form carries no link
+    and its discovery runs no capability report."""
+    manager = MockConfigEntry(domain=DOMAIN, data={CONF_ENTRY_TYPE: "manager"}, options={
+        CONF_ONBOARDING_MODE: ONBOARDING_AUTOMATIC, CONF_PASSWORD: "global-secret",
+    })
+    manager.add_to_hass(hass)
+    with patch(
+        "custom_components.kiosk_satellite_manager.support_request.CapabilityReportCollector"
+    ) as collector:
+        result = await _device_flow(hass)
+    assert result["step_id"] == "confirm"
+    assert not result["description_placeholders"].get("support_url")
+    collector.assert_not_called()
 
 
 async def test_automatic_invalid_global_url_stops_before_install(hass):

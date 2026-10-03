@@ -75,9 +75,11 @@ from .const import (
     RENAME_API_KEY,
     SIGNAL_MANAGER_OPTIONS_UPDATED,
 )
-from . import auto_update, config_backup, fleet, follower_updates, ks_tls, meta_setup
+from . import auto_update, config_backup, fleet, follower_updates, ks_tls, meta_setup, support_request
 from .credentials import TokenCredential, async_revoke_owned_credential
-from .device_repairs import apply_dashboard_dns, clear_device_repairs, take_dashboard_dns, tls_issue_id
+from .device_repairs import (
+    apply_dashboard_dns, clear_device_repairs, sync_device_support, take_dashboard_dns, tls_issue_id,
+)
 from .ks_api import ReleaseInfo, latest_release_info
 from .ks_update import async_check_device_for_update, async_check_devices_for_update
 from .esphome_identity import async_ensure_esphome_identity
@@ -107,6 +109,7 @@ __all__ = ["DOMAIN", "async_remove_entry", "async_setup_entry", "async_unload_en
 
 SERVICE_PROVISION = "provision"
 SERVICE_CAPABILITY_REPORT = "capability_report"
+SERVICE_SUPPORT_REQUEST = "support_request"
 SERVICE_ONBOARDING_PLAN = "onboarding_plan"
 SERVICE_RENAME_DEVICE = "rename_device"
 
@@ -467,6 +470,7 @@ async def _async_setup_device(hass: HomeAssistant, entry: ConfigEntry | fleet.De
     if (check := take_dashboard_dns(hass, host)) is not None:
         # KSM-BEHAVE-154: onboarding checked DNS before this entry existed.
         apply_dashboard_dns(hass, entry.entry_id, check, entry.title, host)
+    sync_device_support(hass, entry)
 
     async def _update():
         # Read at call time: migration, the Install button and the repair
@@ -642,6 +646,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             schema=CAPABILITY_REPORT_SCHEMA, supports_response=SupportsResponse.ONLY,
         )
 
+    if not hass.services.has_service(DOMAIN, SERVICE_SUPPORT_REQUEST):
+
+        async def _handle_support_request(call: ServiceCall) -> dict:
+            """KSM-BEHAVE-166: the device's support request and its issue link."""
+            target_entry, _ = _active_target(hass, call.data["config_entry_id"])
+            await _authorize_target(call, hass, target_entry)
+            request, url = await support_request.async_build_for_device(hass, target_entry)
+            return {"request": request, "url": url}
+
+        hass.services.async_register(
+            DOMAIN, SERVICE_SUPPORT_REQUEST, _handle_support_request,
+            schema=CAPABILITY_REPORT_SCHEMA, supports_response=SupportsResponse.ONLY,
+        )
+
     if not hass.services.has_service(DOMAIN, SERVICE_ONBOARDING_PLAN):
 
         async def _handle_onboarding_plan(call: ServiceCall) -> dict:
@@ -725,6 +743,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             for service in (
                 SERVICE_PROVISION,
                 SERVICE_CAPABILITY_REPORT,
+                SERVICE_SUPPORT_REQUEST,
                 SERVICE_ONBOARDING_PLAN,
                 SERVICE_RENAME_DEVICE,
             ):

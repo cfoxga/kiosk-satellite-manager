@@ -31,3 +31,24 @@ the current support state and reason. Those states distinguish `recipe_assigned`
 `partially_qualified`, `supported`, `revalidation_required`, and `blocked`.
 
 See [install recipes](install-recipes.md) for the settings behind each recipe.
+
+## Requesting support for a device
+
+A device that is not in the library, or a supported model on an untested build,
+can be proposed for the library from Home Assistant. Nothing is installed or
+approved by a request; KSM keeps refusing the device until a tested library entry
+ships in a KSM update.
+
+- **A device KSM added but cannot install on** raises a repair, *device not in Kiosk
+  Satellite Manager's library* (Settings → System → Repairs). Submit it to read the
+  device's identity over ADB, then open the pre-filled GitHub issue it links.
+- **A device automatic onboarding refuses** shows the same link in the refusal.
+- **Any device**, including a supported model on a new build: call the
+  `kiosk_satellite_manager.support_request` action. It returns the request and the link.
+
+The request proposes a new library entry (an exact-model match rule built from the
+manufacturer, model, codename and Android SDK the device reported) and the closest
+existing install recipe, if one fits. It carries the sanitized capability report,
+never the device's address, name, accounts or credentials. When the report makes the
+link too long, attach the device's **Download diagnostics**, which carries the whole
+request.

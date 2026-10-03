@@ -6,17 +6,27 @@ it serves now. Until then every management call stays blocked by the old pin.
 
 New fleet follower (KSM-BEHAVE-146): confirming starts that follower's
 Discovered card, where the operator enters its password.
+
+Device support (KSM-BEHAVE-165, #135): confirming reads the device's
+capability report over ADB and shows a pre-filled support-request link.
 """
 from __future__ import annotations
+
+import logging
 
 import voluptuous as vol
 from homeassistant.components.repairs import RepairsFlow
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from . import follower_offers, ks_api_client, fleet
-from .const import CONF_HOST, CONF_TLS_SPKI
+from . import follower_offers, ks_api_client, fleet, support_request
+from .adb_client import AdbAuthPending, AdbConnectFailed, AdbKeySecurityError
+from .const import CONF_HOST, CONF_TLS_SPKI, DOMAIN
+from .device_repairs import SUPPORT_REQUESTED, device_support_issue_id
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class TlsCertificateChangedFlow(RepairsFlow):
@@ -67,9 +77,68 @@ class NewFollowerFlow(RepairsFlow):
         return self.async_create_entry(data={})
 
 
+class DeviceSupportFlow(RepairsFlow):
+    """KSM-BEHAVE-165: build the device's support request, then link to it."""
+
+    def __init__(self, entry_id: str) -> None:
+        self._entry_id = entry_id
+        self._placeholders: dict[str, str] = {}
+
+    async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
+        return await self.async_step_confirm()
+
+    async def async_step_confirm(self, user_input: dict | None = None) -> FlowResult:
+        entry = fleet.resolve_device(self.hass, self._entry_id)
+        if entry is None:
+            return self.async_abort(reason="entry_not_found")
+        if user_input is None:
+            return self.async_show_form(
+                step_id="confirm", data_schema=vol.Schema({}),
+                description_placeholders={"name": entry.title},
+            )
+        try:
+            request, url = await support_request.async_build_for_device(self.hass, entry)
+        except (AdbConnectFailed, AdbAuthPending, AdbKeySecurityError, OSError, TimeoutError) as err:
+            _LOGGER.warning("Support request for %s: ADB unavailable (%s)", entry.title, type(err).__name__)
+            return self.async_abort(
+                reason="cannot_connect_adb", description_placeholders={"name": entry.title}
+            )
+        if request["report"]["catalog"].get("executable_recipe"):
+            # The library now knows this device; Install stores its model.
+            ir.async_delete_issue(self.hass, DOMAIN, device_support_issue_id(self._entry_id))
+            return self.async_abort(
+                reason="now_supported", description_placeholders={"name": entry.title}
+            )
+        recipe = request["recipe"]
+        self._placeholders = {
+            "name": entry.title,
+            "device": support_request.device_label(request),
+            "kind": request["kind"],
+            "model_key": (request["device_model"] or {}).get("model_key")
+            or request["existing_model_key"] or "-",
+            "candidate": recipe.get("candidate") or recipe.get("current") or "a new recipe",
+            "url": url,
+        }
+        return await self.async_step_send()
+
+    async def async_step_send(self, user_input: dict | None = None) -> FlowResult:
+        if user_input is None:
+            return self.async_show_form(
+                step_id="send", data_schema=vol.Schema({}),
+                description_placeholders=self._placeholders,
+            )
+        entry = fleet.resolve_device(self.hass, self._entry_id)
+        if entry is None:
+            return self.async_abort(reason="entry_not_found")
+        fleet.update_device(self.hass, entry, data={**entry.data, SUPPORT_REQUESTED: True})
+        return self.async_create_entry(data={})
+
+
 async def async_create_fix_flow(
     hass: HomeAssistant, issue_id: str, data: dict | None
 ) -> RepairsFlow:
     if issue_id.startswith(follower_offers.ISSUE_PREFIX):
         return NewFollowerFlow(dict(data or {}))
+    if issue_id == device_support_issue_id((data or {}).get("entry_id", "")):
+        return DeviceSupportFlow((data or {})["entry_id"])
     return TlsCertificateChangedFlow((data or {})["entry_id"])

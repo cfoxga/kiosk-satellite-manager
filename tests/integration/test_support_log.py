@@ -289,7 +289,9 @@ async def test_diagnostics_ship_record_without_secrets(hass, device):
     await _owner_flow(hass, device, FakeDevice())
     diag = await diagnostics.async_get_config_entry_diagnostics(hass, device)
     assert diag["entry_type"] == "device"
-    assert diag["devices"] == [{"model": "portal_mini", "meta_watch_pending": False}]
+    assert diag["devices"] == [
+        {"model": "portal_mini", "meta_watch_pending": False, "support_request": None}
+    ]
     assert diag["support_log"] == support_log.runs(hass) and diag["support_log"]
     assert diag["version"]
     dumped = json.dumps(diag)
@@ -315,8 +317,8 @@ async def test_diagnostics_of_a_fleet_entry(hass):
     diag = await diagnostics.async_get_config_entry_diagnostics(hass, parent)
     assert diag["entry_type"] == "unmanaged"
     assert sorted(diag["devices"], key=lambda d: d["model"]) == [
-        {"model": "portal_go", "meta_watch_pending": True},
-        {"model": "unlisted", "meta_watch_pending": False},
+        {"model": "portal_go", "meta_watch_pending": True, "support_request": None},
+        {"model": "unlisted", "meta_watch_pending": False, "support_request": None},
     ]
     dumped = json.dumps(diag)
     for leaked in (PASSWORD, KEY, NAME, "192.0.2.6", "Chris's own tablet"):

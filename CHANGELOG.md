@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- You can now ask for a device to be added to KSM's device library from Home Assistant. A device
+  KSM cannot install on raises a repair, *device not in Kiosk Satellite Manager's library*. It
+  reads the device's identity over ADB and links a GitHub issue pre-filled with a proposed library
+  entry and the closest existing install recipe. Automatic onboarding's "no approved install
+  recipe" refusal links the same request, and the new `kiosk_satellite_manager.support_request`
+  action returns it for any device. The request never includes the device's address, name,
+  accounts or credentials, and **Download diagnostics** includes it (#135).
+
 - Reporting a problem is now one file: **Download diagnostics** on any KSM entry (Settings →
   Devices & services → Kiosk Satellite Manager → ⋮) includes a record of the last 20 installs,
   Device Owner enrollments, Android 9 cleanups and Meta setup screens: each step KSM ran on the

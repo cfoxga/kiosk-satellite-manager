@@ -51,7 +51,7 @@ from .const import (
     TOKEN_MODE_AUTO,
 )
 from . import config_backup, fleet, permissions
-from .device_repairs import apply_dashboard_dns, tls_issue_id
+from .device_repairs import apply_dashboard_dns, sync_device_support, tls_issue_id
 from .credentials import TokenCredential, async_replace_entry_credential
 
 from .auto_update import is_older
@@ -185,6 +185,7 @@ async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 fleet.update_device(
                     hass, entry, data={**entry.data, CONF_DEVICE_PROFILE: model_key}
                 )
+                sync_device_support(hass, entry)
 
             if used_token and (rotate_managed_credential or not entry.data.get(CONF_HA_TOKEN)):
                 await async_replace_entry_credential(hass, entry, used_token)

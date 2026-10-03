@@ -174,6 +174,11 @@ See [CHANGELOG.md](CHANGELOG.md).
 Report bugs and requests on [GitHub Issues](https://github.com/cfoxga/kiosk-satellite-manager/issues). See [CONTRIBUTING.md](CONTRIBUTING.md) for
 development setup.
 
+To ask for a device to be added to KSM's device library, use the *device not in Kiosk Satellite
+Manager's library* repair or the `kiosk_satellite_manager.support_request` action: both open a
+GitHub issue pre-filled with the proposed library entry
+([Requesting support for a device](docs/supported-devices.md#requesting-support-for-a-device)).
+
 When an install or Device Owner enrollment goes wrong, attach the entry's **Download
 diagnostics** file (Settings → Devices & services → Kiosk Satellite Manager → ⋮). It lists what
 KSM ran on the device and whether the device rebooted, and holds no passwords, tokens,
