@@ -121,7 +121,9 @@ async def test_failed_unload_keeps_coordinator_and_services(hass):
 
     assert ctx.entry.entry_id in hass.data[DOMAIN]
     assert hass.services.has_service(DOMAIN, "provision")
-    assert await async_unload_entry(hass, ctx.entry)
+    # Unload through HA so the entry state follows; a direct call left it
+    # LOADED and the fixture teardown unloaded it a second time.
+    assert await hass.config_entries.async_unload(ctx.entry.entry_id)
 
 
 async def test_setup_entry_succeeds_when_device_unprovisioned(hass):
