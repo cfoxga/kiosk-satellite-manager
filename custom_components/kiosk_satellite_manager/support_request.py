@@ -44,9 +44,9 @@ ATTACH_NOTE: Final = (
     "Download diagnostics); it carries the full request."
 )
 
-_PORTAL_ANDROID9: Final = "meta_portal_android9_local_dns"
-_PORTAL_ANDROID10: Final = "meta_portal_android10_local_dns"
-_PORTAL_TV: Final = "meta_portal_tv_local_dns"
+_PORTAL_ANDROID9: Final = "meta_portal_android9_verifier_off"
+_PORTAL_ANDROID10: Final = "meta_portal_android10_verifier_off"
+_PORTAL_TV: Final = "meta_portal_tv_verifier_off"
 _ANDROID_TV: Final = "android_tv"
 CANDIDATE_RECIPES: Final = (_PORTAL_ANDROID9, _PORTAL_ANDROID10, _PORTAL_TV, _ANDROID_TV)
 

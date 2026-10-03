@@ -57,6 +57,8 @@ CONF_LE_CERTIFICATE_FINGERPRINT: Final = "le_certificate_fingerprint"
 # KSM-BEHAVE-152: the Private DNS mode an install recipe turned off ("" when
 # unset), restored on uninstall. Absent when KSM changed nothing.
 CONF_PRIVATE_DNS_PRIOR: Final = "private_dns_prior"
+# KSM-BEHAVE-184: package_verifier_enable before an install recipe turned it off.
+CONF_PACKAGE_VERIFIER_PRIOR: Final = "package_verifier_prior"
 CONF_ONBOARDING_MODE: Final = "onboarding_mode"
 ONBOARDING_REVIEW: Final = "review"
 ONBOARDING_AUTOMATIC: Final = "automatic"

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Meta Portal Kiosk Satellite updates no longer fail after the Portal reboots (#179). Installing
+  KSM on a Portal now turns off Android's package verifier, which was rejecting KS's own
+  self-updates once ADB was gone. **Uninstall Kiosk Satellite** turns it back on. Other devices
+  are never touched. A Portal installed before this change gets it the next time you press
+  **Install Kiosk Satellite** while ADB is on. The Portal recipes have new names, so Portal Go and
+  Portal+ Gen 2 show as recipe assigned rather than supported until they are re-tested.
+
 - Portals no longer show stale data after Home Assistant restarts (#180). Once HA has started,
   KSM presses each Meta Portal's Kiosk Satellite **Reload page** button once. A Portal that
   hasn't reconnected yet is reloaded as soon as it does, for up to 10 minutes. Google TVs and

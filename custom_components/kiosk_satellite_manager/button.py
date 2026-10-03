@@ -28,6 +28,7 @@ from .device_models import collect_identity_facts
 from .const import (
     CONF_AREA_ID,
     CONF_ENTRY_TYPE,
+    CONF_PACKAGE_VERIFIER_PRIOR,
     CONF_PRIVATE_DNS_PRIOR,
     CONF_TLS_SPKI,
     CONF_DEVICE_PROFILE,
@@ -60,7 +61,12 @@ from .credentials import TokenCredential, async_replace_entry_credential
 
 from .auto_update import is_older
 from .helpers import resolve_area_name, target_release
-from .install import install_and_launch, launcher_replacement_wanted, restore_private_dns
+from .install import (
+    install_and_launch,
+    launcher_replacement_wanted,
+    restore_package_verifier,
+    restore_private_dns,
+)
 from .ks_update import (
     ApiInstallUnavailable, OUTCOME_AWAITING_CONFIRMATION, async_self_update_entry,
     notify_awaiting_confirmation,
@@ -117,6 +123,12 @@ def _store_private_dns_prior(hass: HomeAssistant, entry: ConfigEntry, prior: str
     """KSM-BEHAVE-152: keep the Private DNS mode install turned off, for
     uninstall to restore."""
     fleet.update_device(hass, entry, data={**entry.data, CONF_PRIVATE_DNS_PRIOR: prior})
+
+
+def _store_package_verifier_prior(hass: HomeAssistant, entry: ConfigEntry, prior: str) -> None:
+    """KSM-BEHAVE-184: keep the package verifier value install turned off, for
+    uninstall to restore."""
+    fleet.update_device(hass, entry, data={**entry.data, CONF_PACKAGE_VERIFIER_PRIOR: prior})
 
 
 async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -187,6 +199,9 @@ async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 # #137: only an entry already opted into HTTPS re-switches.
                 establish_tls=bool(entry.data.get(CONF_TLS_SPKI)),
                 on_private_dns_disabled=lambda prior: _store_private_dns_prior(hass, entry, prior),
+                on_package_verifier_disabled=lambda prior: _store_package_verifier_prior(
+                    hass, entry, prior
+                ),
                 on_dashboard_dns=lambda check: apply_dashboard_dns(
                     hass, entry.entry_id, check,
                     entry.data.get(CONF_NAME, entry.title), entry.data[CONF_HOST],
@@ -292,6 +307,17 @@ class KioskSatelliteUninstallButton(ButtonEntity):
                     self.hass,
                     self._entry,
                     data={k: v for k, v in self._entry.data.items() if k != CONF_PRIVATE_DNS_PRIOR},
+                )
+            # KSM-BEHAVE-184: likewise the package verifier, only while it reads 0.
+            prior = self._entry.data.get(CONF_PACKAGE_VERIFIER_PRIOR)
+            if prior is not None and await restore_package_verifier(client, prior):
+                fleet.update_device(
+                    self.hass,
+                    self._entry,
+                    data={
+                        k: v for k, v in self._entry.data.items()
+                        if k != CONF_PACKAGE_VERIFIER_PRIOR
+                    },
                 )
         finally:
             await client.close()

@@ -8,6 +8,7 @@ import pytest
 from custom_components.kiosk_satellite_manager.install_recipes import (
     ALLOWED_OPERATIONS,
     INSTALL_RECIPES,
+    OP_DISABLE_PACKAGE_VERIFIER,
     OP_DISABLE_PRIVATE_DNS,
     OP_SET_DEVICE_ADMIN,
     RecipeError,
@@ -17,7 +18,7 @@ from custom_components.kiosk_satellite_manager.install_recipes import (
 
 
 def _recipe(**overrides):
-    base = get_recipe("meta_portal_android10_local_dns")
+    base = get_recipe("meta_portal_android10_verifier_off")
     return dataclasses.replace(base, **overrides)
 
 
@@ -33,7 +34,7 @@ def test_native_ks_owns_home_settings_and_portal_recipes_have_no_versions():
     """[KSM-TEST-257] Portal recipes have platform names and leave Home to KS."""
     portal_recipes = [r for r in INSTALL_RECIPES if r.recipe_key.startswith("meta_portal")]
     assert {r.recipe_key for r in portal_recipes} == {
-        "meta_portal_android9_local_dns", "meta_portal_android10_local_dns", "meta_portal_tv_local_dns",
+        "meta_portal_android9_verifier_off", "meta_portal_android10_verifier_off", "meta_portal_tv_verifier_off",
     }
     for portal in portal_recipes:
         assert not hasattr(portal, "version")
@@ -107,7 +108,7 @@ def test_recipes_are_immutable():
 
 def test_portal_recipe_retains_permissions_and_naming():
     """KSM-TEST-063: Portal permission/AppOp/name behavior remains shared."""
-    recipe = get_recipe("meta_portal_android10_local_dns")
+    recipe = get_recipe("meta_portal_android10_verifier_off")
     perms = recipe.permissions_for_sdk(29)
     assert perms == [
         "android.permission.RECORD_AUDIO",
@@ -141,11 +142,11 @@ def test_KSM_TEST_303_no_recipe_requires_write_secure_settings():
     for old_key in ("meta_portal_android10", "meta_portal_android9", "meta_portal_tv"):
         assert get_recipe(old_key) is None
     # Control: the Portal policy still differs from the standard one where it should.
-    assert get_recipe("meta_portal_android10_local_dns").replaces_launcher_by_default is True
+    assert get_recipe("meta_portal_android10_verifier_off").replaces_launcher_by_default is True
 
 
 def test_sdk_33_portal_adds_the_modern_media_and_notification_permissions():
-    perms = get_recipe("meta_portal_android10_local_dns").permissions_for_sdk(33)
+    perms = get_recipe("meta_portal_android10_verifier_off").permissions_for_sdk(33)
     assert "android.permission.POST_NOTIFICATIONS" in perms
     assert "android.permission.READ_MEDIA_IMAGES" in perms
     assert "android.permission.BLUETOOTH_SCAN" in perms
@@ -156,19 +157,19 @@ def test_android10_portal_models_share_the_same_behavior():
     """[KSM-TEST-257] Android 10 Go, Mini and Gen 2 share behavior."""
     from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
     for model in ("portal_go", "portal_mini", "portal_gen2", "portal_plus_gen2"):
-        assert require_recipe(model) is get_recipe("meta_portal_android10_local_dns")
+        assert require_recipe(model) is get_recipe("meta_portal_android10_verifier_off")
 
 
 def test_android9_and_android10_portal_recipes_are_distinct():
     """[KSM-TEST-268] The Android 9 cleanup capability has its own recipe key."""
     from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
 
-    assert require_recipe("portal_gen1").recipe_key == "meta_portal_android9_local_dns"
-    assert require_recipe("portal_plus_gen1").recipe_key == "meta_portal_android9_local_dns"
+    assert require_recipe("portal_gen1").recipe_key == "meta_portal_android9_verifier_off"
+    assert require_recipe("portal_plus_gen1").recipe_key == "meta_portal_android9_verifier_off"
     for model in ("portal_go", "portal_mini", "portal_gen2", "portal_plus_gen2"):
-        assert require_recipe(model).recipe_key == "meta_portal_android10_local_dns"
-    assert require_recipe("portal_tv").recipe_key == "meta_portal_tv_local_dns"
-    assert get_recipe("meta_portal_android9_local_dns") is not get_recipe("meta_portal_android10_local_dns")
+        assert require_recipe(model).recipe_key == "meta_portal_android10_verifier_off"
+    assert require_recipe("portal_tv").recipe_key == "meta_portal_tv_verifier_off"
+    assert get_recipe("meta_portal_android9_verifier_off") is not get_recipe("meta_portal_android10_verifier_off")
 
 
 def test_android_tv_recipe_exists_but_is_not_portal_shaped():
@@ -195,7 +196,7 @@ def test_KSM_TEST_270_onn_recipe_carries_android14_special_grants():
 
 
 def test_device_name_normalization_strips_the_model_suffix_android_appends():
-    recipe = get_recipe("meta_portal_android10_local_dns")
+    recipe = get_recipe("meta_portal_android10_verifier_off")
     assert recipe.normalize_device_name("Kitchen PortalGo") == "Kitchen"
     assert recipe.normalize_device_name("Kitchen") == "Kitchen"
     # A label that is only the suffix is left alone rather than emptied.
@@ -216,7 +217,7 @@ def test_recipe_validation_scans_every_string_field_not_an_enrolled_subset():
     Proven field-by-field: every non-prose string field rejects a smuggled
     command, and the two prose fields accept ordinary punctuation.
     """
-    recipe = get_recipe("meta_portal_android10_local_dns")
+    recipe = get_recipe("meta_portal_android10_verifier_off")
     scanned = [
         f.name
         for f in dataclasses.fields(recipe)
@@ -246,7 +247,7 @@ def test_recipe_operations_cannot_drift_from_what_install_actually_branches_on()
     reads; the booleans are what `install.py` executes. If the two can
     disagree the list is decoration, so `validate_recipe` rejects both
     directions of drift."""
-    recipe = get_recipe("meta_portal_android10_local_dns")
+    recipe = get_recipe("meta_portal_android10_verifier_off")
     assert OP_SET_DEVICE_ADMIN in recipe.operations and recipe.sets_device_admin
 
     undeclared = dataclasses.replace(
@@ -272,10 +273,29 @@ def test_KSM_TEST_305_portal_recipes_turn_private_dns_off_and_others_never_do():
         assert recipe.disables_private_dns is portal, recipe.recipe_key
         assert (OP_DISABLE_PRIVATE_DNS in recipe.operations) is portal, recipe.recipe_key
     assert {r.recipe_key for r in INSTALL_RECIPES if r.disables_private_dns} == {
-        "meta_portal_android9_local_dns",
-        "meta_portal_android10_local_dns",
-        "meta_portal_tv_local_dns",
+        "meta_portal_android9_verifier_off",
+        "meta_portal_android10_verifier_off",
+        "meta_portal_tv_verifier_off",
     }
     tv = get_recipe("android_tv")
     with pytest.raises(RecipeError, match="disables_private_dns is False"):
         validate_recipe(dataclasses.replace(tv, operations=tv.operations + (OP_DISABLE_PRIVATE_DNS,)))
+
+
+def test_KSM_TEST_367_portal_recipes_turn_the_verifier_off_and_others_never_do():
+    """[KSM-TEST-367] Meta's package verifier rejects KS's own confirmed
+    self-update, and the #76 retry needs ADB a Portal loses on every power
+    cycle (#179). Every Portal recipe turns it off at install; no other recipe
+    weakens a general Android device's install checks (#36)."""
+    for recipe in INSTALL_RECIPES:
+        portal = recipe.recipe_key.startswith("meta_portal_")
+        assert recipe.disables_package_verifier is portal, recipe.recipe_key
+        assert (OP_DISABLE_PACKAGE_VERIFIER in recipe.operations) is portal, recipe.recipe_key
+    assert {r.recipe_key for r in INSTALL_RECIPES if r.disables_package_verifier} == {
+        "meta_portal_android9_verifier_off",
+        "meta_portal_android10_verifier_off",
+        "meta_portal_tv_verifier_off",
+    }
+    tv = get_recipe("android_tv")
+    with pytest.raises(RecipeError, match="disables_package_verifier is False"):
+        validate_recipe(dataclasses.replace(tv, operations=tv.operations + (OP_DISABLE_PACKAGE_VERIFIER,)))

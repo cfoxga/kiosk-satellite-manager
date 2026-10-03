@@ -28,6 +28,7 @@ from custom_components.kiosk_satellite_manager.const import (
     CONF_HA_TOKEN_OWNED,
     CONF_HOST,
     CONF_PASSWORD,
+    CONF_PACKAGE_VERIFIER_PRIOR,
     CONF_PRIVATE_DNS_PRIOR,
     CONF_TLS_SPKI,
     CONF_TOKEN_MODE,
@@ -453,7 +454,8 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass, tmp_pa
             mock_client.put_secure_setting = AsyncMock()
             mock_client.bluetooth_enabled = AsyncMock(return_value=True)
             # KSM-BEHAVE-152: unset Private DNS, turned off and read back.
-            mock_client.get_global_setting = AsyncMock(side_effect=["", "off"])
+            # KSM-BEHAVE-184: the verifier on, turned off and read back.
+            mock_client.get_global_setting = AsyncMock(side_effect=["", "off", "1", "0"])
             mock_client.put_global_setting = AsyncMock()
             mock_client.resolve_host = AsyncMock(return_value=None)
 
@@ -461,8 +463,12 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass, tmp_pa
                 "button", "press", {"entity_id": button_entry.entity_id}, blocking=True
             )
 
-    mock_client.put_global_setting.assert_awaited_once_with("private_dns_mode", "off")
+    assert [c.args for c in mock_client.put_global_setting.await_args_list] == [
+        ("private_dns_mode", "off"),
+        ("package_verifier_enable", "0"),
+    ]
     assert ctx.entry.data[CONF_PRIVATE_DNS_PRIOR] == ""
+    assert ctx.entry.data[CONF_PACKAGE_VERIFIER_PRIOR] == "1"
     assert mock_client.push.await_count == 1
     mock_client.install_apk.assert_awaited_once()
     shell_calls = [c.args[0] for c in mock_client.shell.await_args_list]

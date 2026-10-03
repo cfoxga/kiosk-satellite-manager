@@ -142,6 +142,54 @@ async def restore_private_dns(client: AdbClient, prior: str) -> bool:
     return True
 
 
+class PackageVerifierChangeFailed(HomeAssistantError):
+    """KSM-BEHAVE-184: package_verifier_enable did not read back as written."""
+
+
+PACKAGE_VERIFIER: Final = "package_verifier_enable"
+_PACKAGE_VERIFIER_OFF: Final = "0"
+
+
+async def disable_package_verifier(client: AdbClient, host: str | None = None) -> str | None:
+    """KSM-BEHAVE-184: turn Meta's package verifier off.
+
+    It rejects Kiosk Satellite's own confirmed self-update, and the #76 retry
+    needs ADB, which a Portal loses on every power cycle (#179). Returns the
+    value it replaced ("" when unset) for the caller to keep for uninstall, or
+    None when it was already off."""
+    prior = await client.get_global_setting(PACKAGE_VERIFIER)
+    if prior == _PACKAGE_VERIFIER_OFF:
+        return None
+    await client.put_global_setting(PACKAGE_VERIFIER, _PACKAGE_VERIFIER_OFF)
+    after = await client.get_global_setting(PACKAGE_VERIFIER)
+    if after != _PACKAGE_VERIFIER_OFF:
+        raise PackageVerifierChangeFailed(
+            f"Package verifier on {host or 'the device'} read back {after or 'unset'!r} "
+            "after turning it off"
+        )
+    return prior
+
+
+async def restore_package_verifier(client: AdbClient, prior: str) -> bool:
+    """KSM-BEHAVE-184: put back the value `disable_package_verifier` replaced.
+
+    Only while it still reads 0: a value changed since install is left alone
+    (returns False)."""
+    if await client.get_global_setting(PACKAGE_VERIFIER) != _PACKAGE_VERIFIER_OFF:
+        return False
+    if prior:
+        await client.put_global_setting(PACKAGE_VERIFIER, prior)
+    else:
+        await client.delete_global_setting(PACKAGE_VERIFIER)
+    after = await client.get_global_setting(PACKAGE_VERIFIER)
+    if after != prior:
+        raise PackageVerifierChangeFailed(
+            f"Package verifier read back {after or 'unset'!r}, not the recorded "
+            f"{prior or 'unset'!r}, after restoring it"
+        )
+    return True
+
+
 @dataclass(frozen=True)
 class DashboardDnsCheck:
     """KSM-BEHAVE-153: one dashboard host as the device and HA resolve it."""
@@ -496,6 +544,7 @@ async def install_and_launch(
     replace_launcher: bool = False,
     establish_tls: bool = False,
     on_private_dns_disabled: Callable[[str], None] | None = None,
+    on_package_verifier_disabled: Callable[[str], None] | None = None,
     on_dashboard_dns: Callable[[DashboardDnsCheck], None] | None = None,
     fail_on_sync_error: bool = False,
 ) -> TokenCredential | None:
@@ -514,7 +563,9 @@ async def install_and_launch(
     the device's own transport unless `establish_tls` -- the entry is already
     opted into HTTPS (#137, KSM-BEHAVE-169) -- asks it to (re-)switch.
     `on_private_dns_disabled` receives the Private DNS mode the recipe
-    turned off (KSM-BEHAVE-152); the caller persists it for uninstall.
+    turned off (KSM-BEHAVE-152), and `on_package_verifier_disabled` the
+    package verifier value (KSM-BEHAVE-184); the caller persists each for
+    uninstall.
     `on_dashboard_dns` receives the dashboard DNS check (KSM-BEHAVE-153); the
     caller raises or clears the device's repair (KSM-BEHAVE-154)."""
     recipe = require_recipe(device_model)
@@ -611,6 +662,10 @@ async def install_and_launch(
         prior = await disable_private_dns(client, host)
         if prior is not None and on_private_dns_disabled is not None:
             on_private_dns_disabled(prior)
+    if recipe.disables_package_verifier:
+        prior = await disable_package_verifier(client, host)
+        if prior is not None and on_package_verifier_disabled is not None:
+            on_package_verifier_disabled(prior)
     if host is not None:
         check = await probe_dashboard_dns(hass, client, host, ha_url)
         if check is not None and on_dashboard_dns is not None:

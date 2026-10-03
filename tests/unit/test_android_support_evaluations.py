@@ -33,7 +33,7 @@ def _report(
         "schema_version": 2,
         "catalog": {
             "model_key": "portal_go", "model_name": "Meta Portal Go",
-            "classification": None, "recipe_key": "meta_portal_android10_local_dns",
+            "classification": None, "recipe_key": "meta_portal_android10_verifier_off",
             "assignment_state": "approved",
             "support_state": "recipe_assigned",
             "reason": "an approved recipe assignment applies",

@@ -60,6 +60,7 @@ from .const import (
     CONF_HIDE_FOLLOWER_UPDATES,
     CONF_TARGET_VERSION,
     TARGET_VERSION_LATEST,
+    CONF_PACKAGE_VERIFIER_PRIOR,
     CONF_PRIVATE_DNS_PRIOR,
     CONF_TLS_SPKI,
     CONF_LE_CERTIFICATE_HOSTNAME,
@@ -1102,6 +1103,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._install_task: asyncio.Task | None = None
         self._tls_pin: str | None = None
         self._private_dns_prior: str | None = None
+        self._package_verifier_prior: str | None = None
         self._dashboard_dns: DashboardDnsCheck | None = None
         self._ks_probe_pin: str | None = None
         self._global: dict | None = None
@@ -1725,6 +1727,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         ha_url=self._ha_url,
                         on_tls_pinned=self._set_tls_pin,
                         on_private_dns_disabled=self._set_private_dns_prior,
+                        on_package_verifier_disabled=self._set_package_verifier_prior,
                         on_dashboard_dns=self._set_dashboard_dns,
                         before_ha_setup=self._async_maybe_invite,
                         replace_launcher=launcher_replacement_wanted({}, require_recipe(self._profile_key)),
@@ -1769,6 +1772,11 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """KSM-BEHAVE-152: the Private DNS mode install turned off, stored in
         the created entry for uninstall to restore."""
         self._private_dns_prior = prior
+
+    def _set_package_verifier_prior(self, prior: str) -> None:
+        """KSM-BEHAVE-184: the package verifier value install turned off,
+        stored in the created entry for uninstall to restore."""
+        self._package_verifier_prior = prior
 
     def _set_dashboard_dns(self, check: DashboardDnsCheck) -> None:
         """KSM-BEHAVE-154: the entry does not exist yet; its first setup
@@ -2034,6 +2042,8 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data[CONF_TLS_SPKI] = self._tls_pin
         if self._private_dns_prior is not None:
             data[CONF_PRIVATE_DNS_PRIOR] = self._private_dns_prior
+        if self._package_verifier_prior is not None:
+            data[CONF_PACKAGE_VERIFIER_PRIOR] = self._package_verifier_prior
         if pending := meta_setup.take_unowned_pending(self.hass, self._host):
             data[meta_setup.PENDING_KEY] = pending
         if self._dashboard_dns is not None:

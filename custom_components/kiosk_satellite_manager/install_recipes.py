@@ -37,6 +37,7 @@ OP_SET_DEVICE_ADMIN = "set_device_admin"
 OP_SYNC_KS_SETTINGS = "sync_ks_settings"
 OP_VERIFY_HEALTH = "verify_health"
 OP_DISABLE_PRIVATE_DNS = "disable_private_dns"
+OP_DISABLE_PACKAGE_VERIFIER = "disable_package_verifier"
 
 ALLOWED_OPERATIONS: frozenset[str] = frozenset(
     {
@@ -51,6 +52,7 @@ ALLOWED_OPERATIONS: frozenset[str] = frozenset(
         OP_SYNC_KS_SETTINGS,
         OP_VERIFY_HEALTH,
         OP_DISABLE_PRIVATE_DNS,
+        OP_DISABLE_PACKAGE_VERIFIER,
     }
 )
 
@@ -99,6 +101,7 @@ _CONDITIONAL_OPERATIONS: dict[str, str] = {
     OP_BATTERY_EXEMPTION: "battery_exemption",
     OP_SET_DEVICE_ADMIN: "sets_device_admin",
     OP_DISABLE_PRIVATE_DNS: "disables_private_dns",
+    OP_DISABLE_PACKAGE_VERIFIER: "disables_package_verifier",
 }
 
 
@@ -132,6 +135,10 @@ class InstallRecipe:
     # device resolves through the network's own DNS. A strict hostname the
     # user chose is never changed.
     disables_private_dns: bool = False
+    # KSM-BEHAVE-184: turn Meta's package verifier off while ADB is known to
+    # work, so a confirmed KS self-update is not rejected after a power cycle
+    # has taken ADB away (#179). Portal recipes only (#36).
+    disables_package_verifier: bool = False
     verifier_retry_on_failure: bool = False
     operations: tuple[str, ...] = ()
     parameters: tuple[tuple[str, str | int | bool], ...] = ()
@@ -292,6 +299,7 @@ _PORTAL_OPERATIONS: tuple[str, ...] = (
     OP_CONVERGE_CONSENT_SERVICES,
     OP_SET_DEVICE_ADMIN,
     OP_DISABLE_PRIVATE_DNS,
+    OP_DISABLE_PACKAGE_VERIFIER,
     OP_VERIFY_HEALTH,
     OP_SYNC_KS_SETTINGS,
     OP_PM_UNINSTALL,
@@ -309,6 +317,7 @@ _PORTAL_POSTCONDITIONS: tuple[str, ...] = (
 # device resolves a split-horizon dashboard host to its public address.
 _LOCAL_DNS_POSTCONDITIONS: tuple[str, ...] = _PORTAL_POSTCONDITIONS + (
     "Android Private DNS reads back off, unless the user chose a strict hostname",
+    "package_verifier_enable reads back 0",
 )
 
 
@@ -334,7 +343,7 @@ INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
         postconditions=_PORTAL_POSTCONDITIONS,
     ),
     InstallRecipe(
-        recipe_key="meta_portal_android10_local_dns",
+        recipe_key="meta_portal_android10_verifier_off",
         name="Meta Portal (Android 10)",
         device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
         redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,
@@ -342,13 +351,14 @@ INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
         permission_policy=PERMISSION_POLICY_PORTAL,
         sets_device_admin=True,
         disables_private_dns=True,
+        disables_package_verifier=True,
         verifier_retry_on_failure=True,
         operations=_PORTAL_OPERATIONS,
         parameters=(("browser.ignore_ssl_errors", True),),
         postconditions=_LOCAL_DNS_POSTCONDITIONS,
     ),
     InstallRecipe(
-        recipe_key="meta_portal_android9_local_dns",
+        recipe_key="meta_portal_android9_verifier_off",
         name="Meta Portal (Android 9)",
         device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
         redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,
@@ -357,13 +367,14 @@ INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
         repurpose_policy=REPURPOSE_ANDROID9_META,
         sets_device_admin=True,
         disables_private_dns=True,
+        disables_package_verifier=True,
         verifier_retry_on_failure=True,
         operations=_PORTAL_OPERATIONS,
         parameters=(("browser.ignore_ssl_errors", True),),
         postconditions=_LOCAL_DNS_POSTCONDITIONS,
     ),
     InstallRecipe(
-        recipe_key="meta_portal_tv_local_dns",
+        recipe_key="meta_portal_tv_verifier_off",
         name="Meta Portal TV (cleanup unqualified)",
         device_name_source=NAME_SOURCE_SECURE_BLUETOOTH,
         redundant_name_suffixes=_PORTAL_REDUNDANT_SUFFIXES,
@@ -371,6 +382,7 @@ INSTALL_RECIPES: tuple[InstallRecipe, ...] = (
         permission_policy=PERMISSION_POLICY_PORTAL,
         sets_device_admin=True,
         disables_private_dns=True,
+        disables_package_verifier=True,
         verifier_retry_on_failure=True,
         operations=_PORTAL_OPERATIONS,
         parameters=(("browser.ignore_ssl_errors", True),),

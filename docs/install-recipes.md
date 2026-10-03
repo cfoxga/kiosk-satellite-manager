@@ -31,9 +31,9 @@ on the device during installation.
 
 | Recipe | Assigned models | Name source | Portal URL | Device Admin | Other behavior |
 |---|---|---|---|---|---|
-| `meta_portal_android10_local_dns` | Go, Mini, Gen 2, Plus Gen 2 | Android secure Bluetooth name | `/portal` | Set | Portal permission/AppOps policy; Private DNS Off; retry a verifier failure after checking the verifier setting |
-| `meta_portal_android9_local_dns` | Gen 1, Plus Gen 1 | Android secure Bluetooth name | `/portal` | Set | Portal policy, Private DNS Off, confirmed Android 9 Meta cleanup, verifier retry |
-| `meta_portal_tv_local_dns` | Portal TV | Android secure Bluetooth name | `/portal` | Set | Portal policy, Private DNS Off and verifier retry; cleanup is unqualified |
+| `meta_portal_android10_verifier_off` | Go, Mini, Gen 2, Plus Gen 2 | Android secure Bluetooth name | `/portal` | Set | Portal permission/AppOps policy; Private DNS Off; package verifier Off (restored on Uninstall); retry a verifier failure after checking the verifier setting |
+| `meta_portal_android9_verifier_off` | Gen 1, Plus Gen 1 | Android secure Bluetooth name | `/portal` | Set | Portal policy, Private DNS Off, package verifier Off, confirmed Android 9 Meta cleanup, verifier retry |
+| `meta_portal_tv_verifier_off` | Portal TV | Android secure Bluetooth name | `/portal` | Set | Portal policy, Private DNS Off, package verifier Off and verifier retry; cleanup is unqualified |
 | `onn_4k_pro_android14` | onn 4K Pro Android 14 | Android global device name | none | Not set | Standard Android TV permission/AppOps policy |
 | `android_tv` | **None** | Android global device name | none | Not set | Generic standard TV behavior exists in source but cannot install on any model without an approved assignment |
 

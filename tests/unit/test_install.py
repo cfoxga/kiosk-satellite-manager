@@ -30,9 +30,12 @@ from custom_components.kiosk_satellite_manager.install_recipes import INSTALL_RE
 from custom_components.kiosk_satellite_manager.install import (
     KsInstallVerificationFailed,
     PermissionConvergenceResult,
+    PackageVerifierChangeFailed,
     PrivateDnsChangeFailed,
     check_dashboard_dns,
+    disable_package_verifier,
     disable_private_dns,
+    restore_package_verifier,
     restore_private_dns,
     _verify_health,
     _wait_for_setup_status,
@@ -52,7 +55,7 @@ _TARGET_VERSION = "2026.9.99"
 # SDK-29 output of one named recipe version, and a device only gets them by
 # resolving to a model with an approved assignment to that recipe. The
 # values below are unchanged -- that is the point of KSM-TEST-063.
-PORTAL_RECIPE = get_recipe("meta_portal_android10_local_dns")
+PORTAL_RECIPE = get_recipe("meta_portal_android10_verifier_off")
 PORTAL_PERMISSIONS = PORTAL_RECIPE.permissions_for_sdk(29)
 PORTAL_APPOPS = PORTAL_RECIPE.appops_for_sdk(29)
 
@@ -98,6 +101,22 @@ def _fake_health_response(app_version=_TARGET_VERSION):
     return cm
 
 
+_SETTINGS_OFF = {"private_dns_mode": "off", "package_verifier_enable": "0"}
+
+
+def _settings(readings):
+    """A `get_global_setting` side effect: each key in `readings` answers its
+    list in order; every other key reads as already off."""
+    queues = {key: list(values) for key, values in readings.items()}
+
+    async def _get(key):
+        if key in queues:
+            return queues[key].pop(0)
+        return _SETTINGS_OFF.get(key, "")
+
+    return _get
+
+
 def _fake_client():
     client = MagicMock()
     client.getprop = AsyncMock(return_value="arm64-v8a")
@@ -119,10 +138,11 @@ def _fake_client():
     client.declared_bound_services = AsyncMock(return_value={})
     client.get_secure_setting = AsyncMock(return_value="")
     client.put_secure_setting = AsyncMock()
-    # KSM-BEHAVE-152: Private DNS already off, so no install changes it
-    # unless a test says otherwise. KSM-BEHAVE-153: an unreadable resolver
-    # answer skips the dashboard DNS check.
-    client.get_global_setting = AsyncMock(return_value="off")
+    # KSM-BEHAVE-152/184: Private DNS and the package verifier already off,
+    # so no install changes them unless a test says otherwise.
+    # KSM-BEHAVE-153: an unreadable resolver answer skips the dashboard DNS
+    # check.
+    client.get_global_setting = AsyncMock(side_effect=_settings({}))
     client.put_global_setting = AsyncMock()
     client.delete_global_setting = AsyncMock()
     client.resolve_host = AsyncMock(return_value=None)
@@ -312,9 +332,9 @@ async def test_install_and_launch_runs_expected_shell_sequence():
     assert "appops set me.jxl.kiosk_satellite SYSTEM_ALERT_WINDOW allow" in shell_calls
     assert "dumpsys deviceidle whitelist +me.jxl.kiosk_satellite" in shell_calls
     assert "dpm set-active-admin me.jxl.kiosk_satellite/.KioskAdminReceiver" in shell_calls
-    # [KSM-TEST-097] Package verification is a device-wide security setting,
-    # never an installation convenience.  This covers both the Portal recipe
-    # and the installer executor: no install press may disable it.
+    # [KSM-TEST-097] The verifier is never changed through a raw shell
+    # command; KSM-BEHAVE-184's Portal change goes through the read-back
+    # settings helpers (KSM-TEST-367).
     assert "settings put global package_verifier_enable 0" not in shell_calls
 
 
@@ -1478,11 +1498,11 @@ def test_KSM_TEST_281_default_follows_recipe_and_explicit_value_wins():
     """[KSM-TEST-281] Unset: Portal recipes on, everything else off."""
     from custom_components.kiosk_satellite_manager.install import launcher_replacement_wanted
 
-    for key in ("meta_portal_android10_local_dns", "meta_portal_android9_local_dns", "meta_portal_tv_local_dns"):
+    for key in ("meta_portal_android10_verifier_off", "meta_portal_android9_verifier_off", "meta_portal_tv_verifier_off"):
         assert launcher_replacement_wanted({}, get_recipe(key)) is True
     for key in ("onn_4k_pro_android14", "android_tv"):
         assert launcher_replacement_wanted({}, get_recipe(key)) is False
-    assert launcher_replacement_wanted({"replace_launcher": False}, get_recipe("meta_portal_android10_local_dns")) is False
+    assert launcher_replacement_wanted({"replace_launcher": False}, get_recipe("meta_portal_android10_verifier_off")) is False
     assert launcher_replacement_wanted({"replace_launcher": True}, get_recipe("android_tv")) is True
 
 
@@ -1493,7 +1513,7 @@ def test_KSM_TEST_281_default_follows_recipe_and_explicit_value_wins():
 
 def _dns_client(*readings):
     client = _fake_client()
-    client.get_global_setting = AsyncMock(side_effect=list(readings))
+    client.get_global_setting = AsyncMock(side_effect=_settings({"private_dns_mode": readings}))
     return client
 
 
@@ -1638,3 +1658,99 @@ def test_KSM_TEST_306_ha_addresses_reads_the_ha_resolver():
     lookup.assert_called_once_with("ha.cfoxga.com", None, socket.AF_INET)
     with patch.object(install.socket, "getaddrinfo", side_effect=socket.gaierror):
         assert install._ha_addresses("nowhere.invalid") == set()
+
+
+# KSM-BEHAVE-184 (#179): Meta's package verifier rejects KS's own confirmed
+# self-update, and a Portal loses the ADB that the #76 retry needs on every
+# power cycle, so Portal recipes turn it off while ADB is known to work.
+
+
+def _verifier_client(*readings):
+    client = _fake_client()
+    client.get_global_setting = AsyncMock(
+        side_effect=_settings({"package_verifier_enable": readings})
+    )
+    return client
+
+
+@pytest.mark.parametrize("prior", ["", "1"])
+async def test_KSM_TEST_365_disable_puts_zero_and_returns_the_prior(prior):
+    client = _verifier_client(prior, "0")
+    assert await disable_package_verifier(client) == prior
+    client.put_global_setting.assert_awaited_once_with("package_verifier_enable", "0")
+
+
+async def test_KSM_TEST_365_disable_leaves_an_already_off_verifier_alone():
+    client = _verifier_client("0")
+    assert await disable_package_verifier(client) is None
+    client.put_global_setting.assert_not_awaited()
+    client.delete_global_setting.assert_not_awaited()
+
+
+async def test_KSM_TEST_365_disable_is_read_back():
+    client = _verifier_client("1", "1")
+    with pytest.raises(PackageVerifierChangeFailed):
+        await disable_package_verifier(client)
+
+
+@pytest.mark.parametrize(
+    ("prior", "after", "method", "args"),
+    [
+        ("", "", "delete_global_setting", ("package_verifier_enable",)),
+        ("1", "1", "put_global_setting", ("package_verifier_enable", "1")),
+    ],
+)
+async def test_KSM_TEST_366_restore_puts_back_the_recorded_value(prior, after, method, args):
+    client = _verifier_client("0", after)
+    assert await restore_package_verifier(client, prior) is True
+    getattr(client, method).assert_awaited_once_with(*args)
+
+
+async def test_KSM_TEST_366_restore_leaves_a_value_changed_since_install():
+    client = _verifier_client("1")
+    assert await restore_package_verifier(client, "") is False
+    client.put_global_setting.assert_not_awaited()
+    client.delete_global_setting.assert_not_awaited()
+
+
+async def test_KSM_TEST_366_restore_is_read_back():
+    client = _verifier_client("0", "0")
+    with pytest.raises(PackageVerifierChangeFailed):
+        await restore_package_verifier(client, "1")
+
+
+@pytest.mark.parametrize("model", ["portal_go", "portal_plus_gen2", "portal_gen1", "portal_tv"])
+async def test_KSM_TEST_367_portal_install_turns_the_verifier_off_and_reports_prior(model):
+    client = _verifier_client("1", "0")
+    reported = []
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ):
+        await install_and_launch(
+            _FakeHass(), client, _fake_session(), device_model=model,
+            on_package_verifier_disabled=reported.append,
+        )
+    client.put_global_setting.assert_awaited_once_with("package_verifier_enable", "0")
+    assert reported == ["1"]
+
+
+def _verifier_never_reported(prior):
+    raise AssertionError(f"non-Portal install reported verifier prior {prior!r}")
+
+
+async def test_KSM_TEST_367_non_portal_install_never_reads_or_changes_the_verifier():
+    client = _fake_client()
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ):
+        await install_and_launch(
+            _FakeHass(), client, _fake_session(), device_model="onn_4k_pro_android14",
+            on_package_verifier_disabled=_verifier_never_reported,
+        )
+    assert all(
+        c.args[0] != "package_verifier_enable" for c in client.get_global_setting.await_args_list
+    )
+    client.put_global_setting.assert_not_awaited()
+    client.delete_global_setting.assert_not_awaited()

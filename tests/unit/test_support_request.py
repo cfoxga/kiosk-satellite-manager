@@ -108,8 +108,8 @@ async def test_KSM_TEST_328_an_unreported_fact_stays_out_of_the_match_rule():
 
 
 @pytest.mark.parametrize(("sdk", "expected"), [
-    ("28", "meta_portal_android9_local_dns"),
-    ("29", "meta_portal_android10_local_dns"),
+    ("28", "meta_portal_android9_verifier_off"),
+    ("29", "meta_portal_android10_verifier_off"),
 ])
 async def test_KSM_TEST_328_unmatched_portal_picks_the_recipe_for_its_android(sdk, expected):
     request = sr.build_support_request(await _portal("Portal 3", sdk), ksm_version="0.4.2")
@@ -121,7 +121,7 @@ async def test_KSM_TEST_328_a_portal_reporting_tv_picks_the_portal_tv_recipe():
     request = sr.build_support_request(
         await _portal("Portal TV 2", "29", characteristics="tv"), ksm_version="0.4.2"
     )
-    assert request["recipe"]["candidate"] == "meta_portal_tv_local_dns"
+    assert request["recipe"]["candidate"] == "meta_portal_tv_verifier_off"
 
 
 async def test_KSM_TEST_328_a_non_tv_non_portal_device_needs_a_new_recipe():
@@ -143,9 +143,12 @@ def test_KSM_TEST_328_every_candidate_names_a_real_recipe():
 
 
 async def test_KSM_TEST_328_a_supported_build_needs_nothing_and_a_new_build_is_named():
-    supported = sr.build_support_request(
-        await _portal("PortalGo", "29", fingerprint=_PORTAL_GO_FINGERPRINT), ksm_version="0.4.2"
-    )
+    report = await _portal("PortalGo", "29", fingerprint=_PORTAL_GO_FINGERPRINT)
+    # KSM-BEHAVE-184: the renamed Portal recipe has no evidence yet, so even
+    # the build the #121 matrix ran on is a new build until it is re-run.
+    assert sr.build_support_request(report, ksm_version="0.4.2")["kind"] == sr.KIND_NEW_BUILD
+    report["catalog"]["support_state"] = "supported"
+    supported = sr.build_support_request(report, ksm_version="0.4.2")
     assert supported["kind"] == sr.KIND_SUPPORTED
     assert supported["device_model"] is None
 
@@ -156,7 +159,7 @@ async def test_KSM_TEST_328_a_supported_build_needs_nothing_and_a_new_build_is_n
     assert new_build["kind"] == sr.KIND_NEW_BUILD
     assert new_build["existing_model_key"] == "portal_go"
     assert new_build["device_model"] is None
-    assert new_build["recipe"]["current"] == "meta_portal_android10_local_dns"
+    assert new_build["recipe"]["current"] == "meta_portal_android10_verifier_off"
 
 
 # --- KSM-TEST-329: the pre-filled issue URL ---------------------------------

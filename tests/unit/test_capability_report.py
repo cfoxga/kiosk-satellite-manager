@@ -24,7 +24,7 @@ def _catalog_block(
         "model_key": model_key,
         "model_name": "Meta Portal Go",
         "classification": None if model_key else "unknown",
-        "recipe_key": "meta_portal_android10_local_dns" if executable else None,
+        "recipe_key": "meta_portal_android10_verifier_off" if executable else None,
         "assignment_state": "approved" if executable else None,
         "support_state": "recipe_assigned" if executable else "unknown",
         "reason": (
@@ -235,9 +235,10 @@ async def test_report_is_sanitized_and_marks_unsupported_probes():
         "model_key": "portal_go",
         "model_name": "Meta Portal Go",
         "classification": None,
-        "recipe_key": "meta_portal_android10_local_dns",
+        "recipe_key": "meta_portal_android10_verifier_off",
         "assignment_state": "approved",
-        "support_state": "revalidation_required",
+        # KSM-BEHAVE-184: no evidence on the renamed recipe yet.
+        "support_state": "recipe_assigned",
         "reason": report["catalog"]["reason"],
         "executable_recipe": True,
     }
@@ -440,7 +441,7 @@ def test_onboarding_plan_recovery_evidence_does_not_follow_recipe_assignment():
     mini = build_onboarding_plan(_observed_report(device_model_key="portal_mini"))
     go = build_onboarding_plan(_observed_report(device_model_key="portal_go"))
 
-    assert mini["catalog"]["recipe_key"] == go["catalog"]["recipe_key"] == "meta_portal_android10_local_dns"
+    assert mini["catalog"]["recipe_key"] == go["catalog"]["recipe_key"] == "meta_portal_android10_verifier_off"
     mini_reset = next(o for o in mini["destructive_options"] if o["id"] == "test_harness_reset")
     go_reset = next(o for o in go["destructive_options"] if o["id"] == "test_harness_reset")
     assert mini_reset["eligible_now"] is True

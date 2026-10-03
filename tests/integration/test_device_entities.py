@@ -110,8 +110,9 @@ async def test_manager_catalog_entities_show_models_recipes_and_assignment_bound
     assert models.state == str(len(DEVICE_MODELS))
     assert recipes.state == str(len(INSTALL_RECIPES))
     go = next(row for row in models.attributes["models"] if row["model_key"] == "portal_go")
-    assert go["recipe_key"] == "meta_portal_android10_local_dns"
-    assert go["qualification_records"] >= 1
+    assert go["recipe_key"] == "meta_portal_android10_verifier_off"
+    # KSM-BEHAVE-184: the renamed recipe inherited none of the #121 evidence.
+    assert go["qualification_records"] == 0
     assert "supported" not in go
     android_tv = next(row for row in recipes.attributes["recipes"] if row["recipe_key"] == "android_tv")
     assert android_tv["assigned_models"] == []
@@ -139,7 +140,7 @@ async def test_catalog_refuses_a_known_model_without_an_approved_recipe(hass):
     tv = next(row for row in models if row["model_key"] == "portal_tv")
     assert tv["recipe_key"] is None
     assert tv["qualification_records"] == 0
-    tv_recipe = next(row for row in recipes if row["recipe_key"] == "meta_portal_tv_local_dns")
+    tv_recipe = next(row for row in recipes if row["recipe_key"] == "meta_portal_tv_verifier_off")
     assert tv_recipe["assigned_models"] == []
 
 

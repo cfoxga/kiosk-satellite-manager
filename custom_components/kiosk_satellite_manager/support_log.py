@@ -61,6 +61,8 @@ _WORDS = frozenset({
     # flags and fixed arguments
     "--brief", "--user", "-a", "-c", "-d", "-e", "-g", "-k", "-n", "-r", "-W", "0",
     "android.intent.action.MAIN", "android.intent.category.HOME", "/proc/uptime",
+    # global settings install recipes change (KSM-BEHAVE-152/184)
+    "private_dns_mode", "package_verifier_enable",
     # KSM's own package constants
     KS_PACKAGE, KS_ADMIN, KS_MAIN_ACTIVITY, KS_HOME_ACTIVITY, KS_APK_REMOTE_PATH,
     META_SETUP_PACKAGE, META_SETUP_ACTIVITY,

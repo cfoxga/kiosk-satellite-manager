@@ -21,6 +21,8 @@ SECRET = "hunter2-password"
     ("dumpsys account", "dumpsys account"),
     ("cat /proc/uptime", "cat /proc/uptime"),
     (f"am start -n {META_SETUP_ACTIVITY}", f"am start -n {META_SETUP_ACTIVITY}"),
+    # KSM-BEHAVE-184: the Portal verifier change is legible in the record.
+    ("settings put global package_verifier_enable 0", "settings put global package_verifier_enable 0"),
 ])
 def test_label_keeps_allowlisted_tokens(command, label):
     """[KSM-TEST-318] KSM's own commands keep their subcommands, flags and
