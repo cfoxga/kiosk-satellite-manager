@@ -29,7 +29,7 @@ from .const import DOMAIN, KS_APK_REMOTE_PATH, KS_HOME_ACTIVITY, KS_MAIN_ACTIVIT
 from .device_models import DEVICE_MODELS
 from .device_owner import (
     ACCOUNT_CLEAR_PACKAGES, ANDROID9_CLEAR_PACKAGES, ANDROID9_DISABLE_PACKAGES, KS_ADMIN,
-    FACTORY_RESET_SCREENS, META_SETUP_ACTIVITY, META_SETUP_PACKAGE, DeviceOwnerError,
+    META_SETUP_ACTIVITY, META_SETUP_PACKAGE, DeviceOwnerError,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,11 +42,8 @@ MAX_STEPS = 150
 UPTIME_COMMAND = "cat /proc/uptime"
 _END_UPTIME_TIMEOUT_S = 5
 
-KINDS = frozenset({
-    "onboarding_install", "device_owner", "android9_cleanup", "meta_setup", "meta_watch",
-    "factory_reset_screen",
-})
-SOURCES = frozenset({"onboarding", "configure", "repair"})
+KINDS = frozenset({"onboarding_install", "device_owner", "android9_cleanup", "meta_setup", "meta_watch"})
+SOURCES = frozenset({"onboarding", "configure"})
 _MODELS = frozenset(model.model_key for model in DEVICE_MODELS)
 
 _PROGRAMS = frozenset({
@@ -67,7 +64,6 @@ _WORDS = frozenset({
     # KSM's own package constants
     KS_PACKAGE, KS_ADMIN, KS_MAIN_ACTIVITY, KS_HOME_ACTIVITY, KS_APK_REMOTE_PATH,
     META_SETUP_PACKAGE, META_SETUP_ACTIVITY,
-    *(action for action, _package in FACTORY_RESET_SCREENS.values()),
     *ANDROID9_CLEAR_PACKAGES, *ANDROID9_DISABLE_PACKAGES,
     *(pkg for pkgs in ACCOUNT_CLEAR_PACKAGES.values() for pkg in pkgs),
 })

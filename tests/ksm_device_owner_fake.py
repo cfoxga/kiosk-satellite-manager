@@ -10,8 +10,6 @@ SECRET = "person@example.com"
 SETUP = "com.facebook.alohaapps.devicesetup"
 SETUP_ACTIVITY = f"{SETUP}/com.facebook.aloha.app.devicesetup.DeviceSetupActivity"
 KS_ACTIVITY = "me.jxl.kiosk_satellite/.MainActivity"
-RESET_ACTION = "com.facebook.aloha.system.settings.FACTORY_RESET"
-RESET_ACTIVITY = "com.facebook.alohaapps.settings/com.facebook.aloha.system.settings.SettingsActivity"
 
 _AUTH = (
     "  RegisteredServicesCache: 4 services\n"
@@ -71,7 +69,6 @@ class FakeDevice:
         restore_readds_hw=False,
         setup_restore_works=True,
         setup_launches=True,
-        reset_screen_launches=True,
     ):
         self.account_types = list(account_types)
         self.owner = owner
@@ -89,7 +86,6 @@ class FakeDevice:
         self.setup_enabled = False
         self.setup_restore_works = setup_restore_works
         self.setup_launches = setup_launches
-        self.reset_screen_launches = reset_screen_launches
         self.front = KS_ACTIVITY
         self.commands: list[str] = []
 
@@ -144,12 +140,6 @@ class FakeDevice:
             if self.setup_launches:
                 self.front = SETUP_ACTIVITY
             return f"Starting: Intent {{ cmp={SETUP_ACTIVITY} }}\n"
-        if command == f"am start -a {RESET_ACTION}":
-            # Live (2026-10-03, Gen1 and Mini): Meta Settings answers with its
-            # "Are you sure you want to reset this Portal?" page.
-            if self.reset_screen_launches:
-                self.front = RESET_ACTIVITY
-            return f"Starting: Intent {{ act={RESET_ACTION} }}\n"
         if command == "dumpsys activity activities":
             return f"    mResumedActivity: ActivityRecord{{ae18243 u0 {self.front} t34}}\n"
         if command == "settings get global adb_enabled":

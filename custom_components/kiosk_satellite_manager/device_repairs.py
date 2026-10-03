@@ -15,7 +15,6 @@ from .adb_client import AdbClient
 from .const import CONF_DEVICE_PROFILE, CONF_HOST, CONF_KEY_PATH, CONF_PORT, DOMAIN
 from .device_catalog import NoApprovedRecipe, require_recipe, resolve_catalog_entry
 from .device_models import collect_identity_facts
-from .device_owner import FACTORY_RESET_SCREENS
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -53,16 +52,15 @@ def factory_reset_issue_id(device_id: str) -> str:
 
 
 def raise_factory_reset(hass: HomeAssistant, entry: ConfigEntry | DeviceEntry) -> None:
-    """KSM-BEHAVE-171/172: fixable (opens the reset screen) only on a model
-    whose reset screen was verified live; otherwise an explanation."""
-    fixable = entry.data.get(CONF_DEVICE_PROFILE) in FACTORY_RESET_SCREENS
+    """KSM-BEHAVE-171: an explanation and the manual reset steps; KSM has no
+    in-app reset (KSM-BEHAVE-172 retired)."""
     ir.async_create_issue(
         hass,
         DOMAIN,
         factory_reset_issue_id(entry.entry_id),
-        is_fixable=fixable,
+        is_fixable=False,
         severity=ir.IssueSeverity.WARNING,
-        translation_key="factory_reset" if fixable else "factory_reset_manual",
+        translation_key="factory_reset",
         translation_placeholders={"name": entry.title},
         data={"entry_id": entry.entry_id},
     )

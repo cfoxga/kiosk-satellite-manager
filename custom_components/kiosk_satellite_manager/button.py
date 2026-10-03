@@ -276,8 +276,9 @@ class KioskSatelliteUninstallButton(ButtonEntity):
                 raise_factory_reset(self.hass, self._entry)
                 raise HomeAssistantError(
                     f"Kiosk Satellite is the Device Owner on {self._entry.title}, so Android "
-                    "will not uninstall it. Only a factory reset removes it; see Repairs "
-                    "to open the device's factory reset screen."
+                    "will not uninstall it. A factory reset is required: power the device up "
+                    "with Volume Up and Volume Down held for 10 seconds. This erases everything "
+                    "on it."
                 ) from err
             ir.async_delete_issue(self.hass, DOMAIN, factory_reset_issue_id(self._entry.entry_id))
             # KSM-BEHAVE-152: put back the Private DNS mode install turned off.

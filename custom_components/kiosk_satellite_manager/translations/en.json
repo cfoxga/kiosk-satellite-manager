@@ -314,23 +314,7 @@
     },
     "factory_reset": {
       "title": "{name}: Kiosk Satellite is the Device Owner",
-      "fix_flow": {
-        "step": {
-          "confirm": {
-            "title": "Open the factory reset screen on {name}?",
-            "description": "Kiosk Satellite is the Device Owner on {name}, so Android will not uninstall it. Only a factory reset removes it.\n\nA factory reset erases everything on the device: Kiosk Satellite, every setting, and every account and sign-in. To use Kiosk Satellite on it again you will install it and set up Device Owner again.\n\nSubmit to turn off the kiosk lock and open the device's own factory reset screen. Nothing is erased until a person on the device presses Reset there; pressing Cancel leaves the device as it is, with the kiosk lock off until you turn it back on in Kiosk Satellite."
-          }
-        },
-        "abort": {
-          "entry_not_found": "This device is no longer in Kiosk Satellite Manager.",
-          "cannot_connect_adb": "Could not connect to {name} over ADB. Check the device is on and network debugging is still on, then try again.",
-          "factory_reset_failed": "The factory reset screen did not open on {name}. The kiosk lock was turned back on. Open Settings on the device and reset it from there."
-        }
-      }
-    },
-    "factory_reset_manual": {
-      "title": "{name}: Kiosk Satellite is the Device Owner",
-      "description": "Kiosk Satellite is the Device Owner on {name}, so Android will not uninstall it. Only a factory reset removes it, and Kiosk Satellite Manager cannot open the reset screen on this model. Factory reset the device from its own settings; this erases everything on it."
+      "description": "Kiosk Satellite is the Device Owner on {name}, so Android will not uninstall it. A factory reset is required to remove it.\n\nTo reset by hand, power the device up with Volume Up and Volume Down held for 10 seconds. A factory reset erases everything on the device: Kiosk Satellite, every setting, and every account and sign-in."
     }
   },
   "config_subentries": {

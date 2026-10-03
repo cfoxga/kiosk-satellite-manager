@@ -20,10 +20,9 @@
 - **Uninstall Kiosk Satellite** on a device where Kiosk Satellite is the Device Owner now tells
   you why it can't, instead of failing with `DELETE_FAILED_DEVICE_POLICY_MANAGER` (#140). Android
   never uninstalls a Device Owner; only a factory reset removes it. KSM now checks first, changes
-  nothing, and raises a repair, *Kiosk Satellite is the Device Owner*. On a Portal (Gen 1) or Portal
-  Mini, the repair turns the kiosk lock off and opens the Portal's own factory reset screen. A
-  person on the device still has to press **Reset**: KSM never resets a device itself. On other
-  models the repair explains how to reset from the device's settings.
+  nothing, and says a factory reset is required. It also raises a repair, *Kiosk Satellite is the
+  Device Owner*, with the steps: power the device up with Volume Up and Volume Down held for 10
+  seconds. KSM never resets a device itself.
 
 - HTTPS is now your choice, per device (#137). KSM no longer turns on Kiosk Satellite's **Use
   HTTPS** when you add, adopt or start a device. HTTPS made the device's web page answer only at
