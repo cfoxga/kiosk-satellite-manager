@@ -24,7 +24,7 @@ from .const import (
     SIGNAL_MANAGER_OPTIONS_UPDATED,
 )
 from .helpers import auto_update_all_enabled, target_release
-from .ks_update import async_self_update_entry
+from .ks_update import async_self_update_entry, notify_awaiting_confirmation
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ def async_setup(hass: HomeAssistant, entry, health):
 
     async def _install(version: str) -> None:
         try:
-            await async_self_update_entry(hass, entry)
+            notify_awaiting_confirmation(hass, entry, await async_self_update_entry(hass, entry))
         except Exception as err:  # logged, never retried for this version
             _LOGGER.warning(
                 "automatic Kiosk Satellite update to %s failed on %s: %s", version, entry.title, err

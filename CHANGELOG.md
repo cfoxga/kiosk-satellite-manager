@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- An update that Android needs confirmed on the device is no longer silent (#176). When a
+  Portal can't install silently, the update is uploaded and then waits for a tap on the device
+  screen. The **Install Kiosk Satellite** button and automatic updates used to treat that as
+  success and say nothing, so the device just stayed on the old version. KSM now raises a
+  per-device notification telling you to confirm on that device's screen, and clears it once the
+  device updates. **Update all** also no longer fails to report when a device is removed while
+  it runs.
+
 - A Let's Encrypt renewal that a slow Portal applied late no longer leaves it locked out (#175).
   KSM used to wait only 10 seconds for the device to serve the new certificate. If the device
   took longer, KSM kept the old key, reported the renewal as failed, and then raised *Trust the

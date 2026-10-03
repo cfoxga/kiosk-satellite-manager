@@ -61,7 +61,10 @@ from .credentials import TokenCredential, async_replace_entry_credential
 from .auto_update import is_older
 from .helpers import resolve_area_name, target_release
 from .install import install_and_launch, launcher_replacement_wanted, restore_private_dns
-from .ks_update import ApiInstallUnavailable, OUTCOME_AWAITING_CONFIRMATION, async_self_update_entry
+from .ks_update import (
+    ApiInstallUnavailable, OUTCOME_AWAITING_CONFIRMATION, async_self_update_entry,
+    notify_awaiting_confirmation,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -131,7 +134,9 @@ async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         )
     if entry.data.get(CONF_PASSWORD):
         try:
-            await async_self_update_entry(hass, entry, reinstall=True)
+            notify_awaiting_confirmation(
+                hass, entry, await async_self_update_entry(hass, entry, reinstall=True)
+            )
             return
         except ApiInstallUnavailable:
             _LOGGER.info("Kiosk Satellite API unavailable on %s; trying ADB install", entry.title)
@@ -447,17 +452,20 @@ class KioskSatelliteUpdateAllButton(ButtonEntity):
             # install marks its device installing before yielding, so a
             # device another action started since the snapshot is refused
             # and lands under Failed. KSM-BEHAVE-081: API only, never ADB.
+            # Titles are read now: a device removed mid-run has no title
+            # afterwards, and reporting must not crash on it (KSM-BEHAVE-181).
+            titles = [entry.title for entry in eligible]
             outcomes = await asyncio.gather(
                 *(async_self_update_entry(self.hass, entry) for entry in eligible),
                 return_exceptions=True,
             )
-            for entry, outcome in zip(eligible, outcomes):
+            for title, outcome in zip(titles, outcomes):
                 if isinstance(outcome, BaseException):
-                    failed.append(f"{entry.title}: {outcome}")
+                    failed.append(f"{title}: {outcome}")
                 elif outcome == OUTCOME_AWAITING_CONFIRMATION:
-                    awaiting.append(entry.title)
+                    awaiting.append(title)
                 else:
-                    updated.append(entry.title)
+                    updated.append(title)
             self._notify(
                 f"Release: {version}\n"
                 f"Updated: {', '.join(updated) or 'none'}\n"

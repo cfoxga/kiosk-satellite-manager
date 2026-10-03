@@ -538,3 +538,20 @@ async def test_auto_update_awaiting_confirmation_counts_as_the_one_attempt(hass,
 
         await _publish(hass, release_check, "2026.9.78")
         assert install.await_count == 2
+
+
+async def test_KSM_TEST_358_auto_update_awaiting_confirmation_is_reported(hass, release_check):
+    """[KSM-TEST-358] an automatic update ending in awaiting confirmation
+    creates the per-device confirmation notice instead of passing silently."""
+    from custom_components.kiosk_satellite_manager.ks_update import OUTCOME_AWAITING_CONFIRMATION
+
+    release_check.return_value = _release("2026.9.76")
+    with patch(_HEALTH, new=_health("2026.9.76")), patch(
+        _AUTO_INSTALL, new=AsyncMock(return_value=OUTCOME_AWAITING_CONFIRMATION)
+    ), patch("custom_components.kiosk_satellite_manager.ks_update.persistent_notification") as notify:
+        ctx = await init_integration(hass, options={CONF_AUTO_UPDATE: True})
+        await _publish(hass, release_check, "2026.9.77")
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+    notify.async_create.assert_called_once()
+    assert notify.async_create.call_args.kwargs["notification_id"].endswith(ctx.entry.entry_id)
