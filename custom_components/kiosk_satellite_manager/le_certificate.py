@@ -26,6 +26,10 @@ class CertificateUnavailable(Exception):
     """The selected HA certificate cannot be used for the device."""
 
 
+class HostnameNotCovered(CertificateUnavailable):
+    """Valid HA certificate, but its DNS SAN lacks the Portal hostname (KSM-BEHAVE-182)."""
+
+
 class CertificateMaterial(NamedTuple):
     certificate: str
     private_key: str
@@ -84,7 +88,7 @@ def load_for_hostname(hostname: str, directory: Path = Path("/ssl")) -> Certific
     if not (before <= now < after):
         raise CertificateUnavailable("HA certificate is not currently valid")
     if not any(_covers(name, hostname) for name in names):
-        raise CertificateUnavailable("HA certificate does not cover this Portal hostname")
+        raise HostnameNotCovered("HA certificate does not cover this Portal hostname")
     try:
         cert_key = cert.public_key().public_bytes(
             serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo

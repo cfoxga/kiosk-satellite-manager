@@ -2,6 +2,7 @@
 (KSM-BEHAVE-169, #137), on a per-device entry and a native subentry."""
 from __future__ import annotations
 
+import asyncio
 from types import MappingProxyType
 from unittest.mock import AsyncMock, patch
 
@@ -12,7 +13,7 @@ from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.kiosk_satellite_manager import fleet, ks_tls
-from custom_components.kiosk_satellite_manager import le_certificate
+from custom_components.kiosk_satellite_manager import config_flow, le_addon, le_certificate
 from custom_components.kiosk_satellite_manager.const import (
     CONF_HOST, CONF_NAME, CONF_PASSWORD, CONF_TLS_SPKI, DOMAIN,
 )
@@ -234,6 +235,121 @@ async def test_letsencrypt_import_failure_preserves_established_pin(hass, tls_mi
     assert result["reason"] == "https_failed"
     assert read()[CONF_TLS_SPKI] == PIN
     assert "le_certificate_hostname" not in read()
+
+
+def _slow(outcome):
+    """An add-on run that yields before finishing, as a real one (minutes) does."""
+    async def run(*_args):
+        await asyncio.sleep(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+    return AsyncMock(side_effect=run)
+
+
+def _abort_spy():
+    """Record abort reasons; a progress flow finishes inside HA's own
+    follow-up configure, so the test never sees that result directly."""
+    reasons: list[str] = []
+    original = config_flow.KioskSatelliteManagerOptionsFlow.async_abort
+
+    def spy(self, *, reason, **kwargs):
+        reasons.append(reason)
+        return original(self, reason=reason, **kwargs)
+
+    return reasons, patch.object(config_flow.KioskSatelliteManagerOptionsFlow, "async_abort", spy)
+
+
+@pytest.mark.parametrize("surface", ["entry", "subentry"])
+@pytest.mark.parametrize("pinned", [False, True])
+async def test_uncovered_hostname_is_added_then_imported(hass, surface, pinned, tls_migration):
+    """[KSM-TEST-362] The certificate doesn't cover the name: the flow shows
+    progress while the add-on reissues, then imports and pins the result."""
+    tls_migration.return_value = PIN
+    selected = le_certificate.CertificateMaterial("cert", "key", "cd" * 32, "ef" * 32)
+    loads = iter([le_certificate.HostnameNotCovered("not covered"), selected])
+    added = _slow(selected)
+    imported = AsyncMock(return_value=selected.spki_sha256)
+    manager, flow_id, read, _ = await _open(hass, surface, pinned=pinned)
+    action = {"https_action": "letsencrypt"} if pinned else {"certificate_source": "letsencrypt"}
+
+    def load(hostname):
+        outcome = next(loads)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    with patch.object(le_certificate, "load_for_hostname", side_effect=load), patch.object(
+        le_addon, "async_add_hostname", new=added
+    ), patch.object(ks_tls, "async_import_certificate", new=imported):
+        result = await manager.async_configure(flow_id, {
+            "confirm": True, **action, "certificate_hostname": "test-portal-gen2.cfoxga.com",
+        })
+        assert result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS, result
+        assert result["progress_action"] == "le_reissue"
+        await hass.async_block_till_done()  # the add-on run
+        # the frontend continues a SHOW_PROGRESS_DONE flow with an empty configure
+        await manager.async_configure(flow_id)
+    added.assert_awaited_once()
+    assert added.await_args.args[1] == "test-portal-gen2.cfoxga.com"
+    imported.assert_awaited_once()
+    assert read()[CONF_TLS_SPKI] == selected.spki_sha256
+    assert read()["le_certificate_hostname"] == "test-portal-gen2.cfoxga.com"
+    assert not [f for f in manager.async_progress() if f["flow_id"] == flow_id]
+
+
+@pytest.mark.parametrize("pinned", [False, True])
+async def test_failed_reissue_never_touches_the_device(hass, pinned, tls_migration):
+    """[KSM-TEST-362] Negative: the add-on can't issue the name -> abort
+    `https_certificate_unavailable`; HTTPS is never enabled or re-pinned."""
+    reasons, spy = _abort_spy()
+    imported = AsyncMock()
+    manager, flow_id, read, _ = await _open(hass, "entry", pinned=pinned)
+    action = {"https_action": "letsencrypt"} if pinned else {"certificate_source": "letsencrypt"}
+    with spy, patch.object(le_certificate, "load_for_hostname", side_effect=
+                           le_certificate.HostnameNotCovered("not covered")), patch.object(
+        le_addon, "async_add_hostname", new=_slow(
+            le_certificate.CertificateUnavailable("Let's Encrypt add-on did not issue it; check its log"))
+    ), patch.object(ks_tls, "async_import_certificate", new=imported):
+        result = await manager.async_configure(flow_id, {
+            "confirm": True, **action, "certificate_hostname": "test-portal-gen2.cfoxga.com",
+        })
+        assert result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS, result
+        await hass.async_block_till_done()
+        await manager.async_configure(flow_id)
+    assert reasons == ["https_certificate_unavailable"]
+    tls_migration.assert_not_awaited()
+    imported.assert_not_awaited()
+    assert read().get(CONF_TLS_SPKI) == (PIN if pinned else None)
+    assert "le_certificate_hostname" not in read()
+
+
+async def test_closing_the_dialog_lets_the_addon_run_finish(hass, tls_migration):
+    """[KSM-TEST-362] Negative: closing the dialog mid-run cancels the flow's
+    progress task, never the add-on run itself, so its rollback still happens."""
+    release, finished = asyncio.Event(), []
+
+    async def run(*_args):
+        await release.wait()
+        finished.append(True)
+        raise le_certificate.CertificateUnavailable("not issued")
+
+    manager, flow_id, read, _ = await _open(hass, "entry", pinned=False)
+    with patch.object(le_certificate, "load_for_hostname", side_effect=
+                      le_certificate.HostnameNotCovered("not covered")), patch.object(
+        le_addon, "async_add_hostname", new=AsyncMock(side_effect=run)
+    ):
+        result = await manager.async_configure(flow_id, {
+            "confirm": True, "certificate_source": "letsencrypt",
+            "certificate_hostname": "test-portal-gen2.cfoxga.com",
+        })
+        assert result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS, result
+        manager.async_abort(flow_id)
+        await asyncio.sleep(0)
+        release.set()
+        await hass.async_block_till_done(wait_background_tasks=True)
+    assert finished == [True]
+    tls_migration.assert_not_awaited()
 
 
 @pytest.mark.parametrize("surface", ["entry", "subentry"])

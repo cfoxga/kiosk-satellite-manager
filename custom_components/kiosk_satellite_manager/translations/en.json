@@ -74,7 +74,9 @@
       "confirm": {
         "title": "Confirm device onboarding",
         "description": "Device: {device}\nInstall action: {action}\nHome Assistant URL: {ha_url}\n\nChoose this device's Area and confirm to apply these settings.",
-        "data": {"area_id": "Area (recommended: HAM and Bermuda need it)"}
+        "data": {
+          "area_id": "Area (recommended: HAM and Bermuda need it)"
+        }
       },
       "onboard_device_owner": {
         "title": "Enable Device Owner for Kiosk Satellite",
@@ -200,7 +202,7 @@
       },
       "device_https_enable": {
         "title": "Use HTTPS for this device",
-        "description": "Choose the device's self-signed certificate or the certificate from Home Assistant's Let's Encrypt add-on. The Let's Encrypt choice needs a Portal DNS name covered by HA's current certificate. HA's certificate and private key will be shared with this device; the add-on continues to renew them. KSM checks the certificate before changing the device and syncs later renewals.\n\nKSM switches the device to HTTPS on port 2324 and pins its key. HTTP stops working. A browser warns about the self-signed choice, while a valid Let's Encrypt certificate avoids that warning.\n\nNeeds Kiosk Satellite 2026.9.78 or later.",
+        "description": "Choose the device's self-signed certificate or the certificate from Home Assistant's Let's Encrypt add-on. The Let's Encrypt choice needs a Portal DNS name. If HA's certificate doesn't cover it yet, KSM adds it to the add-on and runs the add-on to reissue the certificate first (a few minutes); if that fails, the add-on's domains are put back. HA's certificate and private key will be shared with this device; the add-on continues to renew them. KSM checks the certificate before changing the device and syncs later renewals.\n\nKSM switches the device to HTTPS on port 2324 and pins its key. HTTP stops working. A browser warns about the self-signed choice, while a valid Let's Encrypt certificate avoids that warning.\n\nNeeds Kiosk Satellite 2026.9.78 or later.",
         "data": {
           "confirm": "Switch this device to HTTPS",
           "certificate_source": "Certificate source",
@@ -209,13 +211,20 @@
       },
       "device_https_disable": {
         "title": "Switch this device back to HTTP",
-        "description": "This device is managed over pinned HTTPS. Choose whether to switch back to HTTP or install HA's Let's Encrypt certificate without turning HTTPS off. For Let's Encrypt, enter a Portal DNS name covered by HA's certificate. HA's certificate and private key will be shared with this device and KSM will sync later renewals.\n\nSwitching to HTTP sends future device credentials in plaintext on your network.",
+        "description": "This device is managed over pinned HTTPS. Choose whether to switch back to HTTP or install HA's Let's Encrypt certificate without turning HTTPS off. For Let's Encrypt, enter the Portal's DNS name; if HA's certificate doesn't cover it yet, KSM adds it to the add-on and reissues the certificate first. HA's certificate and private key will be shared with this device and KSM will sync later renewals.\n\nSwitching to HTTP sends future device credentials in plaintext on your network.",
         "data": {
           "confirm": "Apply this HTTPS choice",
           "https_action": "Action",
           "certificate_hostname": "Portal DNS name for Let's Encrypt"
         }
+      },
+      "le_reissue": {
+        "title": "Reissuing HA's certificate",
+        "description": "Adding {hostname} to the Let's Encrypt add-on and reissuing HA's certificate."
       }
+    },
+    "progress": {
+      "le_reissue": "Adding {hostname} to the Let's Encrypt add-on and reissuing HA's certificate. This can take a few minutes."
     },
     "error": {
       "invalid_device_name": "Enter a name containing at least one letter or number",
@@ -267,10 +276,14 @@
           "area": {
             "title": "Assign an Area to {name}",
             "description": "This device has no Home Assistant Area. KSM works without one, but HAM and Bermuda need it to place the device. Choose its Area here, or set it on the device page.",
-            "data": {"area_id": "Area"}
+            "data": {
+              "area_id": "Area"
+            }
           }
         },
-        "error": {"area_not_found": "This Area no longer exists. Choose another Area."},
+        "error": {
+          "area_not_found": "This Area no longer exists. Choose another Area."
+        },
         "abort": {
           "entry_not_found": "This device is no longer configured in Kiosk Satellite Manager.",
           "device_not_found": "Home Assistant has not created this device yet. Reload the integration and try again."
@@ -416,7 +429,7 @@
         },
         "device_https_enable": {
           "title": "Use HTTPS for this device",
-          "description": "Choose the device's self-signed certificate or the certificate from Home Assistant's Let's Encrypt add-on. The Let's Encrypt choice needs a Portal DNS name covered by HA's current certificate. HA's certificate and private key will be shared with this device; the add-on continues to renew them. KSM checks the certificate before changing the device and syncs later renewals.\n\nKSM switches the device to HTTPS on port 2324 and pins its key. HTTP stops working. A browser warns about the self-signed choice, while a valid Let's Encrypt certificate avoids that warning.\n\nNeeds Kiosk Satellite 2026.9.78 or later.",
+          "description": "Choose the device's self-signed certificate or the certificate from Home Assistant's Let's Encrypt add-on. The Let's Encrypt choice needs a Portal DNS name. If HA's certificate doesn't cover it yet, KSM adds it to the add-on and runs the add-on to reissue the certificate first (a few minutes); if that fails, the add-on's domains are put back. HA's certificate and private key will be shared with this device; the add-on continues to renew them. KSM checks the certificate before changing the device and syncs later renewals.\n\nKSM switches the device to HTTPS on port 2324 and pins its key. HTTP stops working. A browser warns about the self-signed choice, while a valid Let's Encrypt certificate avoids that warning.\n\nNeeds Kiosk Satellite 2026.9.78 or later.",
           "data": {
             "confirm": "Switch this device to HTTPS",
             "certificate_source": "Certificate source",
@@ -425,13 +438,20 @@
         },
         "device_https_disable": {
           "title": "Switch this device back to HTTP",
-          "description": "This device is managed over pinned HTTPS. Choose whether to switch back to HTTP or install HA's Let's Encrypt certificate without turning HTTPS off. For Let's Encrypt, enter a Portal DNS name covered by HA's certificate. HA's certificate and private key will be shared with this device and KSM will sync later renewals.\n\nSwitching to HTTP sends future device credentials in plaintext on your network.",
+          "description": "This device is managed over pinned HTTPS. Choose whether to switch back to HTTP or install HA's Let's Encrypt certificate without turning HTTPS off. For Let's Encrypt, enter the Portal's DNS name; if HA's certificate doesn't cover it yet, KSM adds it to the add-on and reissues the certificate first. HA's certificate and private key will be shared with this device and KSM will sync later renewals.\n\nSwitching to HTTP sends future device credentials in plaintext on your network.",
           "data": {
             "confirm": "Apply this HTTPS choice",
             "https_action": "Action",
             "certificate_hostname": "Portal DNS name for Let's Encrypt"
           }
+        },
+        "le_reissue": {
+          "title": "Reissuing HA's certificate",
+          "description": "Adding {hostname} to the Let's Encrypt add-on and reissuing HA's certificate."
         }
+      },
+      "progress": {
+        "le_reissue": "Adding {hostname} to the Let's Encrypt add-on and reissuing HA's certificate. This can take a few minutes."
       },
       "error": {
         "invalid_device_name": "Enter a name containing at least one letter or number",

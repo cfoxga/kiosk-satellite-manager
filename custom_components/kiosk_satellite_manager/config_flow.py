@@ -46,7 +46,7 @@ from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.helpers.network import get_url
 
 from . import (
-    apk_cache, device_owner, esphome_adopt, fleet, ks_api_client, ks_tls, le_certificate, meta_setup, support_log,
+    apk_cache, device_owner, esphome_adopt, fleet, ks_api_client, ks_tls, le_addon, le_certificate, meta_setup, support_log,
     support_request,
 )
 from .helpers import recent_releases
@@ -264,8 +264,20 @@ def _token_options(hass) -> list[selector.SelectOptionDict]:
     return options
 
 
+async def _shielded(task: asyncio.Task):
+    """Await `task`; cancelling the waiter never cancels `task` (asyncio.wait
+    doesn't, and unlike asyncio.shield it logs nothing when `task` then fails)."""
+    await asyncio.wait({task})
+    return task.result()
+
+
 class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
     """Manager defaults or one device's stored Kiosk Satellite password."""
+
+    # KSM-BEHAVE-182 add-on reissue state; class defaults also serve the subentry flow.
+    _le_pending: tuple[str, dict, str] | None = None
+    _le_task: asyncio.Task | None = None
+    _le_error: str = ""
 
     def __init__(self, entry: config_entries.ConfigEntry) -> None:
         self._entry = entry
@@ -382,11 +394,10 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
                 material = await self.hass.async_add_executor_job(
                     le_certificate.load_for_hostname, hostname
                 )
+            except le_certificate.HostnameNotCovered:
+                return await self._le_reissue_start("device_https_enable", user_input, hostname)
             except le_certificate.CertificateUnavailable as err:
-                return self.async_abort(
-                    reason="https_certificate_unavailable",
-                    description_placeholders={"reason": str(err)},
-                )
+                return self._certificate_unavailable(err)
         try:
             pin = await ks_tls.async_establish_tls(
                 async_get_clientsession(self.hass), data[CONF_HOST], data[CONF_PASSWORD]
@@ -425,11 +436,10 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
                 material = await self.hass.async_add_executor_job(
                     le_certificate.load_for_hostname, hostname
                 )
+            except le_certificate.HostnameNotCovered:
+                return await self._le_reissue_start("device_https_disable", user_input, hostname)
             except le_certificate.CertificateUnavailable as err:
-                return self.async_abort(
-                    reason="https_certificate_unavailable",
-                    description_placeholders={"reason": str(err)},
-                )
+                return self._certificate_unavailable(err)
             try:
                 new_pin = await ks_tls.async_import_certificate(
                     async_get_clientsession(self.hass), data[CONF_HOST], data[CONF_PASSWORD],
@@ -456,6 +466,55 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
                 CONF_TLS_SPKI, CONF_LE_CERTIFICATE_HOSTNAME, CONF_LE_CERTIFICATE_FINGERPRINT,
             )}, "https_disabled"
         )
+
+    def _certificate_unavailable(self, err: Exception) -> FlowResult:
+        return self.async_abort(
+            reason="https_certificate_unavailable",
+            description_placeholders={"reason": str(err)},
+        )
+
+    async def _le_reissue_start(
+        self, step_id: str, user_input: dict, hostname: str
+    ) -> FlowResult:
+        """KSM-BEHAVE-182: the HA certificate lacks this name -- have the
+        add-on add it, then resume the confirmed step. Only once per flow."""
+        if self._le_pending is not None:
+            return self._certificate_unavailable(le_certificate.HostnameNotCovered(
+                "HA certificate does not cover this Portal hostname"
+            ))
+        self._le_pending = (step_id, user_input, hostname)
+        return await self.async_step_le_reissue()
+
+    async def async_step_le_reissue(self, user_input: dict | None = None) -> FlowResult:
+        _step, _input, hostname = self._le_pending
+        if self._le_task is None:
+            # Closing the dialog cancels the progress task; the add-on run under
+            # it must still finish or roll back `domains`, so it is shielded.
+            run = self.hass.async_create_background_task(
+                le_addon.async_add_hostname(self.hass, hostname), f"ksm le_addon {hostname}"
+            )
+            # le_addon already logged a failure; don't leave it "never retrieved".
+            run.add_done_callback(lambda t: t.cancelled() or t.exception())
+            self._le_task = self.hass.async_create_task(_shielded(run))
+        if not self._le_task.done():
+            return self.async_show_progress(
+                step_id="le_reissue", progress_action="le_reissue",
+                progress_task=self._le_task,
+                description_placeholders={"hostname": hostname},
+            )
+        try:
+            self._le_task.result()
+        except le_certificate.CertificateUnavailable as err:
+            self._le_error = str(err)
+            return self.async_show_progress_done(next_step_id="le_reissue_failed")
+        return self.async_show_progress_done(next_step_id="le_resume")
+
+    async def async_step_le_reissue_failed(self, user_input: dict | None = None) -> FlowResult:
+        return self._certificate_unavailable(Exception(self._le_error))
+
+    async def async_step_le_resume(self, user_input: dict | None = None) -> FlowResult:
+        step_id, confirmed, _hostname = self._le_pending
+        return await getattr(self, f"async_step_{step_id}")(confirmed)
 
     def _https_form(self, step_id: str, user_input: dict | None) -> FlowResult:
         fields = {vol.Required("confirm", default=False): bool}

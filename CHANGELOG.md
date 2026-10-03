@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Use HTTPS** with Home Assistant's Let's Encrypt certificate now works for a Portal whose DNS
+  name the certificate doesn't cover yet (#178). It used to stop with *HA certificate does not
+  cover this Portal hostname*. KSM now adds the name to the Let's Encrypt add-on's domains, runs
+  the add-on (the dialog shows progress; this can take a few minutes), and continues once the
+  reissued certificate covers the name. If the add-on can't issue it, KSM removes the name again,
+  so other devices' renewals keep working, and the device is not changed. The add-on's other
+  settings, including its DNS credential, are left as they were and never logged.
+
 - An update that Android needs confirmed on the device is no longer silent (#176). When a
   Portal can't install silently, the update is uploaded and then waits for a tap on the device
   screen. The **Install Kiosk Satellite** button and automatic updates used to treat that as
@@ -22,8 +30,7 @@
   later renewals, with a Home Assistant repair if a sync fails. An already-HTTPS device can
   adopt the certificate without switching to HTTP. The device's self-signed certificate remains
   an option. Devices selecting
-  the HA certificate share its private key; KSM does not issue certificates or change the
-  add-on's configuration (#167).
+  the HA certificate share its private key; KSM does not issue certificates itself (#167).
 
 - Choosing an Area while adding a device is optional again (#151). 0.5.0 made it required on every
   add path, so adding a device without one failed. An Area is still recommended: HAM and Bermuda
