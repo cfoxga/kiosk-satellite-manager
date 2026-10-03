@@ -121,7 +121,10 @@ async def test_failed_unload_keeps_coordinator_and_services(hass):
 
     assert ctx.entry.entry_id in hass.data[DOMAIN]
     assert hass.services.has_service(DOMAIN, "provision")
-    assert await async_unload_entry(hass, ctx.entry)
+    # Unload through the config-entry machinery so entry.async_on_unload
+    # callbacks (certificate-sync timer etc.) run; a bare async_unload_entry
+    # leaves them lingering and errors the teardown (kiosk-satellite-manager#168).
+    assert await hass.config_entries.async_unload(ctx.entry.entry_id)
 
 
 async def test_setup_entry_succeeds_when_device_unprovisioned(hass):
