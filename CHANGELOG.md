@@ -2,11 +2,11 @@
 
 ## Unreleased
 
+- **Install Kiosk Satellite** no longer refuses to start when its Home Assistant device
+  has no Area (#144). The Area picker remains part of adding a device.
+
 - KSM now asks for a Home Assistant Area while adding a device, including automatic setup
-  and adoption without ADB (#144). If **Install Kiosk Satellite** is pressed on a device
-  with no Area, it stops before installing and raises a repair with an Area picker.
-  Save the Area there, then press Install again. This also helps devices added before
-  KSM asked for an Area.
+  and adoption without ADB (#144).
 
 - **Install Kiosk Satellite** now uses the device's `:2324` API first, including for a same-version
   reinstall (#145). ADB is used when the API cannot be reached before login or no API password is

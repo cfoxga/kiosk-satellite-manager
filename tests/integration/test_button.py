@@ -40,7 +40,6 @@ from custom_components.kiosk_satellite_manager.credentials import TokenCredentia
 from custom_components.kiosk_satellite_manager.device_catalog import NoApprovedRecipe
 from custom_components.kiosk_satellite_manager import fleet
 from custom_components.kiosk_satellite_manager.button import KioskSatelliteInstallButton, async_install_entry
-from custom_components.kiosk_satellite_manager.repairs import async_create_fix_flow
 from custom_components.kiosk_satellite_manager.ks_api import ReleaseInfo
 from custom_components.kiosk_satellite_manager.ks_update import ApiInstallUnavailable
 
@@ -62,8 +61,7 @@ async def init_integration(hass, *, data=None, options=None):
 
 
 @pytest.mark.parametrize("native_subentry", [False, True])
-async def test_KSM_TEST_348_install_prompts_for_missing_area_before_adb(hass, native_subentry):
-    area = ar.async_get(hass).async_create("Kitchen")
+async def test_KSM_TEST_348_install_without_area_still_starts(hass, native_subentry):
     data = {
         "host": "192.168.99.99", "port": 5555, "key_path": "/tmp/test-key",
         "area_id": None,
@@ -89,31 +87,12 @@ async def test_KSM_TEST_348_install_prompts_for_missing_area_before_adb(hass, na
     button = KioskSatelliteInstallButton(hass, entry)
     issue_id = f"area_required_{entry.entry_id}"
     with patch("custom_components.kiosk_satellite_manager.button.async_install_entry", new=AsyncMock()) as install:
-        with pytest.raises(HomeAssistantError, match="Area"):
-            await button.async_press()
-        install.assert_not_awaited()
-        issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
-        assert issue is not None and issue.is_fixable
-
-        flow = await async_create_fix_flow(hass, issue_id, {"entry_id": entry.entry_id})
-        flow.hass = hass
-        form = await flow.async_step_init()
-        assert "area_id" in {field.schema for field in form["data_schema"].schema}
-        invalid = await flow.async_step_area({"area_id": "missing-area"})
-        assert invalid["errors"]["area_id"] == "area_not_found"
-        assert dr.async_get(hass).async_get(device.id).area_id is None
-        result = await flow.async_step_area({"area_id": area.id})
-        assert result["type"] == "create_entry"
-        assert dr.async_get(hass).async_get(device.id).area_id == area.id
-        assert entry.data["area_id"] == area.id
-        assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
         await button.async_press()
         install.assert_awaited_once()
-
         dr.async_get(hass).async_update_device(device.id, area_id=None)
-        with pytest.raises(HomeAssistantError, match="Area"):
-            await button.async_press()
-        install.assert_awaited_once()
+        await button.async_press()
+        assert install.await_count == 2
+        assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 
 async def test_KSM_TEST_348_registry_area_allows_legacy_entry_to_install(hass):

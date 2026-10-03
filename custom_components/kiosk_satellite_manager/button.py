@@ -49,7 +49,7 @@ from .const import (
 )
 from . import config_backup, fleet, permissions
 from .device_repairs import (
-    apply_dashboard_dns, area_required_issue_id, raise_area_required,
+    apply_dashboard_dns,
     factory_reset_issue_id,
     raise_factory_reset,
     sync_device_support,
@@ -230,22 +230,6 @@ class KioskSatelliteInstallButton(ButtonEntity):
         )
 
     async def async_press(self) -> None:
-        device = dr.async_get(self.hass).async_get_device_by_identifier(
-            (DOMAIN, self._entry.entry_id),
-            getattr(self._entry, "parent", self._entry).entry_id,
-        )
-        # The HA registry is authoritative after device creation. The stored
-        # entry Area only covers a device whose registry row does not yet exist.
-        area_id = device.area_id if device is not None else self._entry.data.get(CONF_AREA_ID)
-        if not area_id:
-            raise_area_required(self.hass, self._entry)
-            raise HomeAssistantError(
-                f"Assign an Area to {self._entry.title} in the Kiosk Satellite Manager repair, "
-                "then press Install Kiosk Satellite again."
-            )
-        ir.async_delete_issue(
-            self.hass, DOMAIN, area_required_issue_id(self._entry.entry_id)
-        )
         await async_install_entry(self.hass, self._entry)
 
 
