@@ -128,10 +128,12 @@ remotely. Do them once per device, in order:
   service form. HA URL, dashboard and kiosk-lockdown keys are not accepted by this service.
   Per-key API rejection fails the call; `/api/health` additionally verifies `device.name`
   when supplied. Other accepted keys are not independently health-readback verified.
-- **Credential transport** — management uses pinned HTTPS on `:2324` once KSM has enabled
-  HTTPS and stored the device key (Kiosk Satellite 2026.9.78 or later). A changed key blocks
-  requests until the repair is resolved. Older/unpinned devices use HTTP, so credentials on
-  those connections remain observable on the management network. ADB remains the path for
+- **Credential transport** — HTTPS is opt-in per device: **Configure → Use HTTPS** switches
+  Kiosk Satellite (2026.9.78 or later) to HTTPS on `:2324` and pins its key, and the same step
+  switches a pinned device back to HTTP. KSM never turns HTTPS on by itself; a device that
+  already serves HTTPS is pinned when it is added. A changed key, or HTTPS turned off on a pinned
+  device, blocks requests until the repair is resolved. Unpinned devices use HTTP, so their
+  credentials are observable on the management network. ADB remains the path for
   onboarding, Install/Reinstall and Uninstall; the provision service does not use ADB.
 - **Capability report** — the `kiosk_satellite_manager.capability_report` response service gathers a
   versioned, read-only evidence bundle for an unfamiliar Android device. It returns parsed platform,

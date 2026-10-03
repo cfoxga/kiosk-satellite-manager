@@ -75,10 +75,11 @@ from .const import (
     RENAME_API_KEY,
     SIGNAL_MANAGER_OPTIONS_UPDATED,
 )
-from . import auto_update, config_backup, fleet, follower_updates, ks_tls, meta_setup, support_request
+from . import auto_update, config_backup, fleet, follower_updates, meta_setup, support_request
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .device_repairs import (
-    apply_dashboard_dns, clear_device_repairs, sync_device_support, take_dashboard_dns, tls_issue_id,
+    apply_dashboard_dns, clear_device_repairs, sync_device_support, take_dashboard_dns,
+    tls_disabled_issue_id, tls_issue_id,
 )
 from .ks_api import ReleaseInfo, latest_release_info
 from .ks_update import async_check_device_for_update, async_check_devices_for_update
@@ -395,24 +396,6 @@ def _auto_update_key(device) -> tuple[str, str]:
     return (getattr(device, "parent", device).entry_id, device.entry_id)
 
 
-async def _async_migrate_tls(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """KSM-BEHAVE-094: switch an unpinned device entry to pinned HTTPS once.
-    `None` (KS predates TLS) or an error leaves the entry as it was; the
-    next setup tries again."""
-    host = entry.data[CONF_HOST]
-    try:
-        pin = await ks_tls.async_establish_tls(
-            async_get_clientsession(hass), host, entry.data[CONF_PASSWORD]
-        )
-    except (KsApiError, aiohttp.ClientError, TimeoutError) as err:
-        _LOGGER.warning("Could not switch Kiosk Satellite %s to HTTPS: %s", host, err)
-        return
-    if pin is None:
-        return
-    fleet.update_device(hass, entry, data={**entry.data, CONF_TLS_SPKI: pin})
-    _LOGGER.info("Kiosk Satellite %s now managed over pinned HTTPS", host)
-
-
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """KSM-BEHAVE-078: ensure the manager entry exists before any entry setup.
 
@@ -458,6 +441,14 @@ async def _async_manager_options_updated(hass: HomeAssistant, entry: ConfigEntry
     await follower_updates.async_sync(hass)
 
 
+async def _answers_over_http(session: aiohttp.ClientSession, host: str) -> bool:
+    try:
+        await fetch_health(session, host, pin=None)
+    except (aiohttp.ClientError, TimeoutError, ValueError):
+        return False
+    return True
+
+
 def _device_present(entry: ConfigEntry | fleet.DeviceEntry) -> bool:
     """A plain entry always is; a device subentry until HA removes it."""
     return not isinstance(entry, fleet.DeviceEntry) or entry.present
@@ -473,10 +464,11 @@ async def _async_setup_device(hass: HomeAssistant, entry: ConfigEntry | fleet.De
     sync_device_support(hass, entry)
 
     async def _update():
-        # Read at call time: migration, the Install button and the repair
-        # flow all update the pin in place (KSM-BEHAVE-093/095).
+        # Read at call time: Use HTTPS, the Install button and the repair
+        # flows all update the pin in place (KSM-BEHAVE-093/095/169/170).
+        pin = entry.data.get(CONF_TLS_SPKI)
         try:
-            health = await fetch_health(session, host, pin=entry.data.get(CONF_TLS_SPKI))
+            health = await fetch_health(session, host, pin=pin)
         except aiohttp.ServerFingerprintMismatch as err:
             ir.async_create_issue(
                 hass,
@@ -492,6 +484,26 @@ async def _async_setup_device(hass: HomeAssistant, entry: ConfigEntry | fleet.De
                 f"{host} presented a TLS key that does not match its pin; "
                 "management is blocked until the repair is confirmed"
             ) from err
+        except (aiohttp.ClientError, TimeoutError) as err:
+            if pin is None or not await _answers_over_http(session, host):
+                raise
+            # KSM-BEHAVE-170: Use HTTPS was turned off on the device. The pin
+            # holds -- only the operator's repair confirmation drops it.
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                tls_disabled_issue_id(entry.entry_id),
+                is_fixable=True,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key="tls_disabled",
+                translation_placeholders={"name": entry.title, "host": host},
+                data={"entry_id": entry.entry_id},
+            )
+            raise UpdateFailed(
+                f"{host} answers over HTTP but is pinned to HTTPS; management "
+                "is blocked until the repair is confirmed"
+            ) from err
+        ir.async_delete_issue(hass, DOMAIN, tls_disabled_issue_id(entry.entry_id))
         return health
 
     coordinator = DataUpdateCoordinator(
@@ -527,8 +539,6 @@ async def _async_setup_device(hass: HomeAssistant, entry: ConfigEntry | fleet.De
     async def _post_setup() -> None:
         if not _device_present(entry):
             return
-        if entry.data.get(CONF_PASSWORD) and not entry.data.get(CONF_TLS_SPKI):
-            await _async_migrate_tls(hass, entry)
         # KSM-BEHAVE-110 (#67): node name always; ESPHome on only when chosen.
         await async_ensure_esphome_identity(hass, entry)
         # KSM-BEHAVE-117: the shared first check is a baseline and may run

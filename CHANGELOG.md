@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- HTTPS is now your choice, per device (#137). KSM no longer turns on Kiosk Satellite's **Use
+  HTTPS** when you add, adopt or start a device. HTTPS made the device's web page answer only at
+  `https://` with a browser certificate warning, and `http://` links stopped working. A device keeps
+  whatever transport it already uses. To switch one, open its **Configure → Use HTTPS**. That step
+  enables HTTPS and pins the device's key, and on a device already pinned it offers to switch back
+  to HTTP. Devices KSM already moved to HTTPS stay there. If someone turns Use HTTPS off on a
+  pinned device, KSM raises a repair, *device HTTPS turned off*, and confirming it moves management
+  back to HTTP. Without HTTPS, the device password and Home Assistant token cross your network in
+  plaintext, so use HTTP only on a network you trust.
+
 - **Enable Device Owner** now works on the Portal+ (Gen 2). It no longer refuses because of the
   Portal's own Meta accounts. As on Portal Gen 2, KSM removes and restores the Meta account app,
   then puts Meta's setup screen back so you can sign in again. An account from any other app

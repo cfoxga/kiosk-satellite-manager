@@ -879,13 +879,17 @@ async def _start_ks_flow(hass, host="192.168.40.250"):
     )
 
 
+@pytest.mark.parametrize("served_pin", [None, _PIN])
 async def test_ks_running_device_is_added_without_adb(
-    hass, ks_health_probe, tls_migration, ks_connect_ha
+    hass, ks_health_probe, tls_migration, ks_connect_ha, served_pin
 ):
     """[KSM-TEST-185] KSM-BEHAVE-096: a host whose Kiosk Satellite answers
-    health is added from health + password alone -- no AdbClient at all."""
-    ks_health_probe.return_value = (None, _PORTAL_MINI_HEALTH)
-    tls_migration.return_value = _PIN
+    health is added from health + password alone -- no AdbClient at all.
+    [KSM-TEST-335] KSM keeps the device's transport (#137): an HTTP device
+    stays unpinned on HTTP, an HTTPS one is pinned to the key it serves, and
+    neither is switched (`async_establish_tls` never runs)."""
+    ks_health_probe.return_value = (served_pin, _PORTAL_MINI_HEALTH)
+    tls_migration.return_value = "ef" * 32
     with patch(
         "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
     ) as mock_client_cls, patch(
@@ -913,18 +917,18 @@ async def test_ks_running_device_is_added_without_adb(
     assert data[CONF_HOST] == "192.168.40.250"
     assert data[CONF_DEVICE_PROFILE] == "portal_mini"
     assert data[CONF_PASSWORD] == "hunter222"
-    assert data["tls_spki_sha256"] == _PIN
+    assert data.get("tls_spki_sha256") == served_pin
     assert data["port"] == 5555 and data["key_path"]
     assert "home_launcher" not in data
     # KSM-BEHAVE-163: the HA credential written to the kiosk is the entry's.
     assert data[CONF_HA_TOKEN] == "minted-token"
-    assert ks_connect_ha.await_args.kwargs["pin"] == _PIN
+    assert ks_connect_ha.await_args.kwargs["pin"] == served_pin
     mock_client_cls.assert_not_called()
     mock_install.assert_not_called()
-    tls_migration.assert_awaited_once()
-    assert tls_migration.await_args.args[1:] == ("192.168.40.250", "hunter222")
-    # The password is checked over the pinned channel the TLS step returned.
-    assert mock_login.await_args.kwargs["pin"] == _PIN
+    tls_migration.assert_not_awaited()
+    # The password is checked on the transport the device already serves.
+    assert mock_login.await_count == 1
+    assert mock_login.await_args.kwargs["pin"] == served_pin
     assert mock_login.await_args.args[1:] == ("192.168.40.250", "hunter222")
 
 
@@ -949,8 +953,11 @@ async def test_host_without_kiosk_satellite_still_uses_adb(hass, ks_health_probe
 async def test_ks_device_info_rejects_wrong_password_and_tls_failure(
     hass, ks_health_probe, tls_migration
 ):
-    """[KSM-TEST-186] KSM-BEHAVE-096: a rejected login or a failed TLS
-    switch re-shows the form with an error and creates no entry."""
+    """[KSM-TEST-186] KSM-BEHAVE-096: a rejected login or an unreachable
+    pinned channel re-shows the form with an error and creates no entry; the
+    device is never switched (#137)."""
+    import aiohttp
+
     from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
 
     ks_health_probe.return_value = (_PIN, _PORTAL_MINI_HEALTH)
@@ -969,28 +976,31 @@ async def test_ks_device_info_rejects_wrong_password_and_tls_failure(
         assert result["step_id"] == "ks_device_info"
         assert result["errors"] == {"base": "invalid_auth"}
 
-        tls_migration.side_effect = KsApiError("did not answer over HTTPS")
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.login",
+        new=AsyncMock(side_effect=aiohttp.ClientConnectionError("refused")),
+    ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {CONF_PASSWORD: "hunter222"}
         )
         assert result["type"] == data_entry_flow.FlowResultType.FORM
         assert result["errors"] == {"base": "cannot_connect_ks"}
 
+    tls_migration.assert_not_awaited()
     mock_client_cls.assert_not_called()
     assert not hass.config_entries.async_entries(DOMAIN)
 
 
 @pytest.mark.parametrize(
-    ("login_effects", "tls_pin", "expected_error", "tls_awaited"),
+    ("login_effects", "expected_error"),
     [
         # HTTP device, wrong password: reported as such, TLS never switched.
-        (["bad"], None, "invalid_auth", False),
-        (["down"], None, "cannot_connect_ks", False),
-        (["tok", "down"], "ab" * 32, "cannot_connect_ks", True),
+        (["bad"], "invalid_auth"),
+        (["down"], "cannot_connect_ks"),
     ],
 )
 async def test_ks_device_info_http_device_error_paths(
-    hass, ks_health_probe, tls_migration, login_effects, tls_pin, expected_error, tls_awaited
+    hass, ks_health_probe, tls_migration, login_effects, expected_error
 ):
     """[KSM-TEST-186] KSM-BEHAVE-096 step 4 on an HTTP-only device (the
     Master Bedroom Portal's case): the password is checked before the TLS
@@ -1005,7 +1015,7 @@ async def test_ks_device_info_http_device_error_paths(
         "tok": "tok",
     }
     ks_health_probe.return_value = (None, _PORTAL_MINI_HEALTH)
-    tls_migration.return_value = tls_pin
+    tls_migration.return_value = "ab" * 32
     with patch(
         "custom_components.kiosk_satellite_manager.config_flow.login",
         new=AsyncMock(side_effect=[effects[e] for e in login_effects]),
@@ -1016,7 +1026,7 @@ async def test_ks_device_info_http_device_error_paths(
         )
 
     assert result["errors"] == {"base": expected_error}
-    assert tls_migration.await_count == (1 if tls_awaited else 0)
+    tls_migration.assert_not_awaited()
     assert not hass.config_entries.async_entries(DOMAIN)
 
 
@@ -1143,10 +1153,11 @@ async def _ks_only_add(hass, health, host="192.168.40.250", *, patch_effect=None
 async def test_ks_only_add_points_the_kiosk_at_this_ha(hass, ks_health_probe, tls_migration):
     """[KSM-TEST-326] KSM-BEHAVE-163: a kiosk still configured for another HA
     is repointed at this one -- ha.url, ha.token and the recipe start page --
-    over the pinned channel, and the entry owns the minted credential."""
-    ks_health_probe.return_value = (None, _PORTAL_MINI_HEALTH)
-    tls_migration.return_value = _PIN
+    over the pinned channel of a device already serving HTTPS (#137), and the
+    entry owns the minted credential."""
+    ks_health_probe.return_value = (_PIN, _PORTAL_MINI_HEALTH)
     result, mock_patch = await _ks_only_add(hass, _PORTAL_MINI_HEALTH)
+    tls_migration.assert_not_awaited()
 
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     mock_patch.assert_awaited_once()
@@ -1188,8 +1199,7 @@ async def test_ks_only_add_settings_failure_revokes_token_and_creates_nothing(
     retryable cannot_connect_ks, no entry, and the minted token is gone."""
     from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
 
-    ks_health_probe.return_value = (None, _PORTAL_MINI_HEALTH)
-    tls_migration.return_value = _PIN
+    ks_health_probe.return_value = (_PIN, _PORTAL_MINI_HEALTH)
     before = {t.id for t in hass.auth._store.async_get_refresh_tokens()}  # noqa: SLF001
     result, mock_patch = await _ks_only_add(
         hass, _PORTAL_MINI_HEALTH, patch_effect=KsApiError("ha.token rejected")

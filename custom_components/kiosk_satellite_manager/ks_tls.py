@@ -2,8 +2,10 @@
 
 KS 2026.9.78+ can serve its management port (:2324) over HTTPS with a
 self-signed device certificate (per-device `remote.tls`, default off). This
-module switches a device to HTTPS and returns the SPKI SHA-256 to pin; the
-pinned transport itself lives in `ks_api_client` (KSM-BEHAVE-093).
+module switches a device to HTTPS and returns the SPKI SHA-256 to pin, or
+switches a pinned device back to HTTP; HTTPS is operator opt-in (#137,
+KSM-BEHAVE-169). The pinned transport itself lives in `ks_api_client`
+(KSM-BEHAVE-093).
 """
 from __future__ import annotations
 
@@ -72,3 +74,23 @@ async def async_establish_tls(
             )
         return expected
     raise KsApiError(f"{host} did not answer over HTTPS after enabling remote.tls")
+
+
+async def async_disable_tls(
+    session: aiohttp.ClientSession, host: str, password: str, pin: str
+) -> None:
+    """Switch a pinned device back to plaintext HTTP (KSM-BEHAVE-169).
+
+    The login and the settings write travel over the pinned channel; this
+    returns only once the device answers over HTTP, so the caller drops the
+    pin knowing the device is reachable without it."""
+    token = await ks_api_client.login(session, host, password, pin=pin)
+    await ks_api_client.patch_settings(session, host, token, {"remote.tls": False}, pin=pin)
+    for _ in range(TLS_ENABLE_POLL_ATTEMPTS):
+        await asyncio.sleep(TLS_ENABLE_POLL_DELAY_S)
+        try:
+            await ks_api_client.get_health(session, host, pin=None)
+        except (KsApiError, aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            continue
+        return
+    raise KsApiError(f"{host} did not answer over HTTP after disabling remote.tls")

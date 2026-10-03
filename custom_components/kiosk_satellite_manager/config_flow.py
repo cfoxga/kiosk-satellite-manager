@@ -42,7 +42,7 @@ from homeassistant import config_entries
 from homeassistant.components import persistent_notification
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import selector
+from homeassistant.helpers import issue_registry as ir, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.helpers.network import get_url
@@ -103,7 +103,7 @@ from .const import (
 from .device_catalog import NoApprovedRecipe, require_recipe, resolve_catalog_entry
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .device_models import DeviceFacts, collect_identity_facts
-from .device_repairs import stash_dashboard_dns
+from .device_repairs import stash_dashboard_dns, tls_disabled_issue_id, tls_issue_id
 from .install import (
     DashboardDnsCheck,
     async_connect_ha,
@@ -352,8 +352,76 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_device_menu(self, user_input: dict | None = None) -> FlowResult:
         """KSM-BEHAVE-088: a device entry's Configure is a menu."""
         return self.async_show_menu(
-            step_id="device_menu", menu_options=["device_rename", "device_password", "device_host", "device_launcher", "device_owner"]
+            step_id="device_menu", menu_options=[
+                "device_rename", "device_password", "device_host", "device_launcher",
+                "device_https", "device_owner",
+            ]
         )
+
+    async def async_step_device_https(self, user_input: dict | None = None) -> FlowResult:
+        """KSM-BEHAVE-169 (#137): HTTPS is operator opt-in, one device at a time."""
+        if not self._entry.data.get(CONF_PASSWORD):
+            return self.async_abort(reason="https_password_required")
+        if self._entry.data.get(CONF_TLS_SPKI):
+            return await self.async_step_device_https_disable()
+        return await self.async_step_device_https_enable()
+
+    async def async_step_device_https_enable(self, user_input: dict | None = None) -> FlowResult:
+        if user_input is None or not user_input.get("confirm"):
+            return self._https_form("device_https_enable", user_input)
+        data = self._entry.data
+        try:
+            pin = await ks_tls.async_establish_tls(
+                async_get_clientsession(self.hass), data[CONF_HOST], data[CONF_PASSWORD]
+            )
+        except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.warning("Could not switch %s to HTTPS: %s", data[CONF_HOST], err)
+            return self._https_failed(err)
+        if pin is None:
+            return self.async_abort(reason="https_unsupported")
+        return await self._https_saved({**data, CONF_TLS_SPKI: pin}, "https_enabled")
+
+    async def async_step_device_https_disable(self, user_input: dict | None = None) -> FlowResult:
+        if user_input is None or not user_input.get("confirm"):
+            return self._https_form("device_https_disable", user_input)
+        data = self._entry.data
+        try:
+            await ks_tls.async_disable_tls(
+                async_get_clientsession(self.hass), data[CONF_HOST], data[CONF_PASSWORD],
+                data[CONF_TLS_SPKI],
+            )
+        except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.warning("Could not switch %s back to HTTP: %s", data[CONF_HOST], err)
+            return self._https_failed(err)
+        return await self._https_saved(
+            {k: v for k, v in data.items() if k != CONF_TLS_SPKI}, "https_disabled"
+        )
+
+    def _https_form(self, step_id: str, user_input: dict | None) -> FlowResult:
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=vol.Schema({vol.Required("confirm", default=False): bool}),
+            description_placeholders={"host": self._entry.data[CONF_HOST]},
+            errors={"confirm": "confirm_required"} if user_input is not None else {},
+        )
+
+    def _https_failed(self, err: Exception) -> FlowResult:
+        return self.async_abort(
+            reason="https_failed",
+            description_placeholders={"reason": str(err) or type(err).__name__},
+        )
+
+    async def _https_saved(self, data: dict, reason: str) -> FlowResult:
+        """Store the new transport, clear the TLS repairs it resolves, and
+        re-poll on it (KSM-BEHAVE-169)."""
+        fleet.update_device(self.hass, self._entry, data=data)
+        for issue_id in (tls_issue_id(self._entry.entry_id),
+                         tls_disabled_issue_id(self._entry.entry_id)):
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+        coordinator = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
+        if coordinator is not None:
+            await coordinator.async_request_refresh()
+        return self.async_abort(reason=reason)
 
     async def async_step_device_host(self, user_input: dict | None = None) -> FlowResult:
         """KSM-BEHAVE-130: change where KSM reaches this device, verified under its pin."""
@@ -1228,7 +1296,6 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             password = user_input[CONF_PASSWORD]
             session = async_get_clientsession(self.hass)
-            pin: str | None = None
             ks_token: str | None = None
             try:
                 if self._ks_probe_pin is None:
@@ -1242,19 +1309,15 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         await ks_api_client.setup_password(
                             session, self._host, password, self._discovered_name, pin=None
                         )
-                    # HTTP device: check the password before the TLS switch,
-                    # which would otherwise report a bad one as a TLS failure.
+                    # HTTP device: the password check is the login itself.
                     ks_token = await login(session, self._host, password, pin=None)
             except KsApiError:
                 errors["base"] = "invalid_auth"
             except (aiohttp.ClientError, TimeoutError, ValueError):
                 errors["base"] = "cannot_connect_ks"
-            if not errors:
-                try:
-                    pin = await ks_tls.async_establish_tls(session, self._host, password)
-                except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError) as err:
-                    _LOGGER.warning("Could not switch %s to HTTPS: %s", self._host, err)
-                    errors["base"] = "cannot_connect_ks"
+            # #137: HTTPS is opt-in (KSM-BEHAVE-169). Adopt keeps the device's
+            # transport, pinning only a key it already serves.
+            pin = self._ks_probe_pin
             if not errors and (pin is not None or ks_token is None):
                 try:
                     ks_token = await login(session, self._host, password, pin=pin)

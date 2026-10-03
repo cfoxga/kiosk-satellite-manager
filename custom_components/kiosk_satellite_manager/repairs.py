@@ -4,6 +4,9 @@ TLS key changed (KSM-BEHAVE-095, #57): the operator's confirmation is the
 trust event -- the flow re-probes the device over HTTPS and pins whatever key
 it serves now. Until then every management call stays blocked by the old pin.
 
+HTTPS turned off (KSM-BEHAVE-170, #137): confirming checks the device answers
+over HTTP and drops the pin, returning it to plaintext management.
+
 New fleet follower (KSM-BEHAVE-146): confirming starts that follower's
 Discovered card, where the operator enters its password.
 
@@ -14,6 +17,7 @@ from __future__ import annotations
 
 import logging
 
+import aiohttp
 import voluptuous as vol
 from homeassistant.components.repairs import RepairsFlow
 from homeassistant.core import HomeAssistant
@@ -24,7 +28,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from . import follower_offers, ks_api_client, fleet, support_request
 from .adb_client import AdbAuthPending, AdbConnectFailed, AdbKeySecurityError
 from .const import CONF_HOST, CONF_TLS_SPKI, DOMAIN
-from .device_repairs import SUPPORT_REQUESTED, device_support_issue_id
+from .device_repairs import SUPPORT_REQUESTED, device_support_issue_id, tls_disabled_issue_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,6 +56,40 @@ class TlsCertificateChangedFlow(RepairsFlow):
         if probed is None:
             return self.async_abort(reason="cannot_connect")
         fleet.update_device(self.hass, entry, data={**entry.data, CONF_TLS_SPKI: probed[0]})
+        coordinator = self.hass.data.get(entry.domain, {}).get(entry.entry_id)
+        if coordinator is not None:
+            await coordinator.async_request_refresh()
+        return self.async_create_entry(data={})
+
+
+class TlsDisabledFlow(RepairsFlow):
+    """KSM-BEHAVE-170: the operator turned Use HTTPS off on the device."""
+
+    def __init__(self, entry_id: str) -> None:
+        self._entry_id = entry_id
+
+    async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
+        return await self.async_step_confirm()
+
+    async def async_step_confirm(self, user_input: dict | None = None) -> FlowResult:
+        entry = fleet.resolve_device(self.hass, self._entry_id)
+        if entry is None:
+            return self.async_abort(reason="entry_not_found")
+        host = entry.data[CONF_HOST]
+        if user_input is None:
+            return self.async_show_form(
+                step_id="confirm",
+                data_schema=vol.Schema({}),
+                description_placeholders={"name": entry.title, "host": host},
+            )
+        try:
+            await ks_api_client.get_health(async_get_clientsession(self.hass), host, pin=None)
+        except (aiohttp.ClientError, TimeoutError, ValueError):
+            return self.async_abort(reason="cannot_connect")
+        fleet.update_device(
+            self.hass, entry, data={k: v for k, v in entry.data.items() if k != CONF_TLS_SPKI}
+        )
+        ir.async_delete_issue(self.hass, DOMAIN, tls_disabled_issue_id(self._entry_id))
         coordinator = self.hass.data.get(entry.domain, {}).get(entry.entry_id)
         if coordinator is not None:
             await coordinator.async_request_refresh()
@@ -141,4 +179,6 @@ async def async_create_fix_flow(
         return NewFollowerFlow(dict(data or {}))
     if issue_id == device_support_issue_id((data or {}).get("entry_id", "")):
         return DeviceSupportFlow((data or {})["entry_id"])
+    if issue_id == tls_disabled_issue_id((data or {}).get("entry_id", "")):
+        return TlsDisabledFlow((data or {})["entry_id"])
     return TlsCertificateChangedFlow((data or {})["entry_id"])

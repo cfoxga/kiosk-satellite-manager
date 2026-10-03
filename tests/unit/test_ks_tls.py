@@ -349,7 +349,10 @@ def _sync_fakes(monkeypatch, *, establish):
     return events
 
 
-async def _run_sync(pinned: list, before_ha_setup=None):
+async def _run_sync(pinned: list, before_ha_setup=None, establish_tls=True):
+    """`establish_tls=True` is Install on a pinned entry (the operator opted
+    in earlier, KSM-BEHAVE-094); False is onboarding, which keeps the device's
+    transport (#137)."""
     from custom_components.kiosk_satellite_manager.credentials import TokenCredential
 
     return await install._sync_device_and_connect_ha(
@@ -363,12 +366,14 @@ async def _run_sync(pinned: list, before_ha_setup=None):
         ha_url="https://ha.example",
         on_tls_pinned=pinned.append,
         before_ha_setup=before_ha_setup,
+        establish_tls=establish_tls,
     )
 
 
 async def test_onboarding_sends_the_ha_token_only_over_the_pinned_channel(monkeypatch):
-    """[KSM-TEST-180] ha.token goes out only after TLS is pinned, on a pinned
-    call authenticated by a login made over that pinned channel."""
+    """[KSM-TEST-180] Install on a pinned entry: ha.token goes out only after
+    TLS is pinned, on a pinned call authenticated by a login made over that
+    pinned channel."""
 
     async def establish():
         return PIN
@@ -459,6 +464,49 @@ async def test_onboarding_refuses_a_key_that_changes_mid_onboarding(monkeypatch)
     assert not [e for e in events if e[0] in ("patch", "login")]
 
 
+async def _never_establish():
+    raise AssertionError("onboarding must not switch the device to HTTPS (#137)")
+
+
+async def test_onboarding_keeps_an_http_device_on_http(monkeypatch):
+    """[KSM-TEST-335] Onboarding a TLS-capable device that serves HTTP never
+    calls async_establish_tls, sends no remote.tls, pins nothing and writes
+    the HA settings over HTTP."""
+    events = _sync_fakes(monkeypatch, establish=_never_establish)
+    pinned: list = []
+    await _run_sync(pinned, establish_tls=False)
+
+    assert ("establish",) not in events
+    assert pinned == []
+    patches = [e for e in events if e[0] == "patch"]
+    assert patches and all(e[2] is None for e in patches)
+    assert not [e for e in patches if "remote.tls" in e[1]]
+    ha_patch = next(e for e in patches if "ha.token" in e[1])
+    assert ha_patch[3] == "tok-None"
+
+
+async def test_onboarding_pins_a_device_that_already_serves_https(monkeypatch):
+    """[KSM-TEST-335] A device already on HTTPS is pinned to the key it
+    serves (trust on first use) without being switched, and every
+    authenticated call runs over that pinned channel."""
+    events = _sync_fakes(monkeypatch, establish=_never_establish)
+
+    async def wait_status(session, host):
+        events.append(("status",))
+        return {"passwordNeeded": False, "deviceName": "Old"}, PIN
+
+    monkeypatch.setattr(install, "_wait_for_setup_status", wait_status)
+    pinned: list = []
+    await _run_sync(pinned, establish_tls=False)
+
+    assert ("establish",) not in events
+    assert pinned == [PIN]
+    assert [e for e in events if e[0] == "login"] == [("login", PIN)]
+    patches = [e for e in events if e[0] == "patch"]
+    assert patches and all(e[2] == PIN for e in patches)
+    assert not [e for e in patches if "remote.tls" in e[1]]
+
+
 async def test_unauthenticated_reads_prefer_the_https_answer(monkeypatch):
     """[KSM-TEST-179] Setup status and install health read over HTTPS when
     the device serves it, with no HTTP request at all."""
@@ -478,3 +526,26 @@ async def test_unauthenticated_reads_prefer_the_https_answer(monkeypatch):
         "ef" * 32,
     )
     assert await install._read_health_any(MagicMock(), "10.0.0.5") == {"path": "/api/health"}
+
+
+@pytest.mark.parametrize("http_answers", [True, False])
+async def test_disable_switches_off_over_the_pin_and_waits_for_http(monkeypatch, http_answers):
+    """[KSM-TEST-337] Switch back to HTTP: login and remote.tls=false travel
+    over the pinned channel; success needs an HTTP health answer, and with
+    none the call raises so the caller keeps the pin."""
+    calls = _fake_api(monkeypatch, probes=[])
+    if not http_answers:
+        async def get_health(session, host, *, pin):
+            calls.append(("health", pin))
+            raise aiohttp.ClientConnectionError("still on https")
+
+        monkeypatch.setattr(ks_tls.ks_api_client, "get_health", get_health)
+    if http_answers:
+        await ks_tls.async_disable_tls(MagicMock(), "10.0.0.5", "pw", PIN)
+    else:
+        with pytest.raises(KsApiError):
+            await ks_tls.async_disable_tls(MagicMock(), "10.0.0.5", "pw", PIN)
+    assert calls[:2] == [("login", PIN), ("patch", {"remote.tls": False}, PIN)]
+    health = [c for c in calls if c[0] == "health"]
+    assert health and all(c == ("health", None) for c in health)
+    assert len(health) == (1 if http_answers else ks_tls.TLS_ENABLE_POLL_ATTEMPTS)

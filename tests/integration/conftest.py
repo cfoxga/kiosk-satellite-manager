@@ -163,10 +163,10 @@ def ks_setup_status():
 
 @pytest.fixture(autouse=True)
 def tls_migration():
-    """KSM-BEHAVE-094: setup of an unpinned entry with a password switches
-    the device to HTTPS in the background. Keep it off the network; a KS that
-    predates TLS (None) leaves the entry unchanged. `test_tls_migration.py`
-    patches the same target itself."""
+    """KSM-BEHAVE-169 (#137): only Use HTTPS and Install on a pinned entry
+    switch a device to HTTPS. Keep any such call off the network; None models
+    a KS that predates TLS, and tests assert the call never happens where
+    HTTPS is not opted into."""
     with patch(
         "custom_components.kiosk_satellite_manager.ks_tls.async_establish_tls",
         new=AsyncMock(return_value=None),

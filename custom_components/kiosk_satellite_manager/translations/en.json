@@ -169,6 +169,7 @@
           "device_password": "Update Kiosk Satellite password",
           "device_host": "Change host (DNS name or IP address)",
           "device_launcher": "Replace launcher",
+          "device_https": "Use HTTPS",
           "device_owner": "Enable Device Owner (advanced)"
         }
       },
@@ -191,6 +192,20 @@
         "description": "Kiosk Satellite is already Device Owner, but this Portal's Meta login is gone (Device Owner enrollment removes it). KSM can put Meta's setup screen back on the Portal: it turns kiosk mode off, resets Meta's setup app and opens it. You then finish setup and sign in with Facebook or WhatsApp on the Portal, and KSM turns kiosk mode back on once the Meta login is back.\n\nTick the box and submit to show the setup screen.",
         "data": {
           "confirm": "Show Meta's setup screen on the Portal"
+        }
+      },
+      "device_https_enable": {
+        "title": "Use HTTPS for this device",
+        "description": "KSM will switch Kiosk Satellite's management port to HTTPS and pin the device's own self-signed key, so the device password and Home Assistant token never cross the network in plaintext.\n\nAfter the switch the device's web page answers only at https://{host}:2324; http:// stops working. Your browser warns about the self-signed certificate the first time you open it there — that warning is expected.\n\nNeeds Kiosk Satellite 2026.9.78 or later.",
+        "data": {
+          "confirm": "Switch this device to HTTPS"
+        }
+      },
+      "device_https_disable": {
+        "title": "Switch this device back to HTTP",
+        "description": "This device is managed over pinned HTTPS. KSM will turn Use HTTPS off in Kiosk Satellite, wait for it to answer at http://{host}:2324, and then drop the pinned key.\n\nAfter that the device password and Home Assistant token travel in plaintext on your network.",
+        "data": {
+          "confirm": "Switch this device back to HTTP"
         }
       }
     },
@@ -223,7 +238,12 @@
       "device_owner_enabled_meta_failed": "Kiosk Satellite is now Device Owner, but the Meta login must be set up again and the setup screen was not shown: {reason} Open Configure → Enable Device Owner to try again.",
       "meta_setup_started": "The Portal is showing Meta's setup screen. It did not reboot or reset: finish setup and sign in with Facebook or WhatsApp there, once. A notification follows it and turns kiosk mode back on when the Meta login is back.",
       "meta_setup_failed": "Meta's setup screen was not shown: {reason}",
-      "not_supported": "Configure a physical device from its device subentry."
+      "not_supported": "Configure a physical device from its device subentry.",
+      "https_enabled": "This device is now managed over pinned HTTPS. Open its web page at https:// on port 2324.",
+      "https_disabled": "This device is back on plaintext HTTP. Its pinned HTTPS key was removed.",
+      "https_unsupported": "This device's Kiosk Satellite is too old for HTTPS (needs 2026.9.78 or later). Nothing was changed.",
+      "https_failed": "The switch did not complete: {reason}. The device's saved transport was not changed.",
+      "https_password_required": "Set this device's Kiosk Satellite password first (Update Kiosk Satellite password)."
     }
   },
   "issues": {
@@ -238,6 +258,21 @@
         },
         "abort": {
           "cannot_connect": "The device did not answer over HTTPS. Check it is online and try again.",
+          "entry_not_found": "This device is no longer configured."
+        }
+      }
+    },
+    "tls_disabled": {
+      "title": "{name}: device HTTPS turned off",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Manage {name} over HTTP?",
+            "description": "Kiosk Satellite at {host} now answers over plain HTTP, but Home Assistant has it pinned to HTTPS, so management is blocked. This happens when Use HTTPS is turned off in Kiosk Satellite. If nobody turned it off, something else may be answering at this address — do not confirm.\n\nSubmit to drop the pinned key and manage the device over HTTP; the device password and Home Assistant token then travel in plaintext. To keep HTTPS instead, turn Use HTTPS back on in Kiosk Satellite."
+          }
+        },
+        "abort": {
+          "cannot_connect": "The device did not answer over HTTP. Check it is online and try again.",
           "entry_not_found": "This device is no longer configured."
         }
       }
@@ -292,6 +327,7 @@
             "device_password": "Update Kiosk Satellite password",
             "device_host": "Change host (DNS name or IP address)",
             "device_launcher": "Replace launcher",
+            "device_https": "Use HTTPS",
             "device_owner": "Enable Device Owner (advanced)"
           }
         },
@@ -343,6 +379,20 @@
           "data": {
             "confirm": "Show Meta's setup screen on the Portal"
           }
+        },
+        "device_https_enable": {
+          "title": "Use HTTPS for this device",
+          "description": "KSM will switch Kiosk Satellite's management port to HTTPS and pin the device's own self-signed key, so the device password and Home Assistant token never cross the network in plaintext.\n\nAfter the switch the device's web page answers only at https://{host}:2324; http:// stops working. Your browser warns about the self-signed certificate the first time you open it there — that warning is expected.\n\nNeeds Kiosk Satellite 2026.9.78 or later.",
+          "data": {
+            "confirm": "Switch this device to HTTPS"
+          }
+        },
+        "device_https_disable": {
+          "title": "Switch this device back to HTTP",
+          "description": "This device is managed over pinned HTTPS. KSM will turn Use HTTPS off in Kiosk Satellite, wait for it to answer at http://{host}:2324, and then drop the pinned key.\n\nAfter that the device password and Home Assistant token travel in plaintext on your network.",
+          "data": {
+            "confirm": "Switch this device back to HTTP"
+          }
         }
       },
       "error": {
@@ -375,7 +425,12 @@
         "meta_setup_started": "The Portal is showing Meta's setup screen. It did not reboot or reset: finish setup and sign in with Facebook or WhatsApp there, once. A notification follows it and turns kiosk mode back on when the Meta login is back.",
         "meta_setup_failed": "Meta's setup screen was not shown: {reason}",
         "not_supported": "Configure a physical device from its device subentry.",
-        "reconfigure_successful": "Device configuration updated."
+        "reconfigure_successful": "Device configuration updated.",
+        "https_enabled": "This device is now managed over pinned HTTPS. Open its web page at https:// on port 2324.",
+        "https_disabled": "This device is back on plaintext HTTP. Its pinned HTTPS key was removed.",
+        "https_unsupported": "This device's Kiosk Satellite is too old for HTTPS (needs 2026.9.78 or later). Nothing was changed.",
+        "https_failed": "The switch did not complete: {reason}. The device's saved transport was not changed.",
+        "https_password_required": "Set this device's Kiosk Satellite password first (Update Kiosk Satellite password)."
       }
     }
   }

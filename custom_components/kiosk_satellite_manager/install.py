@@ -494,6 +494,7 @@ async def install_and_launch(
     on_tls_pinned: Callable[[str], None] | None = None,
     before_ha_setup: Callable[[], Awaitable[None]] | None = None,
     replace_launcher: bool = False,
+    establish_tls: bool = False,
     on_private_dns_disabled: Callable[[str], None] | None = None,
     on_dashboard_dns: Callable[[DashboardDnsCheck], None] | None = None,
 ) -> TokenCredential | None:
@@ -508,7 +509,9 @@ async def install_and_launch(
     (KSM-BEHAVE-048).
 
     `on_tls_pinned` receives the device's HTTPS key pin once the sync has
-    established it (KSM-BEHAVE-094); the caller persists it.
+    established it (KSM-BEHAVE-094); the caller persists it. The sync keeps
+    the device's own transport unless `establish_tls` -- the entry is already
+    opted into HTTPS (#137, KSM-BEHAVE-169) -- asks it to (re-)switch.
     `on_private_dns_disabled` receives the Private DNS mode the recipe
     turned off (KSM-BEHAVE-152); the caller persists it for uninstall.
     `on_dashboard_dns` receives the dashboard DNS check (KSM-BEHAVE-153); the
@@ -641,6 +644,7 @@ async def install_and_launch(
             on_tls_pinned=on_tls_pinned,
             before_ha_setup=before_ha_setup,
             replace_launcher=replace_launcher,
+            establish_tls=establish_tls,
         )
     except (KsApiError, aiohttp.ClientError, asyncio.TimeoutError) as err:
         _LOGGER.warning("device-name/HA auto-connect sync failed for %s: %s", host, err)
@@ -743,6 +747,7 @@ async def _sync_device_and_connect_ha(
     on_tls_pinned: Callable[[str], None] | None = None,
     before_ha_setup: Callable[[], Awaitable[None]] | None = None,
     replace_launcher: bool = False,
+    establish_tls: bool = False,
 ) -> TokenCredential:
     status, served = await _wait_for_setup_status(session, host)
     password_needed = status.get("passwordNeeded", True)
@@ -753,12 +758,18 @@ async def _sync_device_and_connect_ha(
         token = await ks_api_client.setup_password(
             session, host, password, device_name, pin=served
         )
-    # KSM-BEHAVE-094: an operator trust event -- re-establish the pin rather
-    # than reuse a stored one. Raises (before any HA credential is sent) if a
-    # TLS-capable device cannot be switched; None means the KS predates TLS.
-    pin = await ks_tls.async_establish_tls(session, host, password)
-    if served is not None and pin != served:
-        raise KsApiError(f"{host} changed its TLS key during onboarding; nothing pinned")
+    if establish_tls:
+        # KSM-BEHAVE-094: Install on an entry the operator opted into HTTPS
+        # is a trust event -- re-establish the pin rather than reuse a
+        # stored one. Raises (before any HA credential is sent) if the device
+        # cannot be switched; None means the KS predates TLS.
+        pin = await ks_tls.async_establish_tls(session, host, password)
+        if served is not None and pin != served:
+            raise KsApiError(f"{host} changed its TLS key during onboarding; nothing pinned")
+    else:
+        # #137: HTTPS is opt-in (KSM-BEHAVE-169). Keep the device's own
+        # transport -- pin what it already serves, never switch it.
+        pin = served
     if pin is not None and on_tls_pinned is not None:
         on_tls_pinned(pin)
     if pin is not None or token is None:

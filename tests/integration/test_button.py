@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from homeassistant.const import EntityCategory
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.kiosk_satellite_manager.adb_client import AdbConnectFailed
@@ -28,6 +28,7 @@ from custom_components.kiosk_satellite_manager.const import (
     CONF_HOST,
     CONF_PASSWORD,
     CONF_PRIVATE_DNS_PRIOR,
+    CONF_TLS_SPKI,
     CONF_TOKEN_MODE,
     DOMAIN,
     ENTRY_TYPE_MANAGER,
@@ -839,3 +840,42 @@ async def test_KSM_TEST_282_install_press_passes_launcher_choice(hass, profile, 
             client_cls.return_value.close = AsyncMock()
             await async_install_entry(hass, ctx.entry)
     assert install.await_args.kwargs["replace_launcher"] is expected
+
+
+@pytest.mark.parametrize("pinned", [False, True])
+async def test_install_re_establishes_https_only_on_an_opted_in_entry(hass, pinned):
+    """[KSM-TEST-335] #137: Install switches transport only for an entry the
+    operator already opted into HTTPS; the pin it stores clears both TLS
+    repairs."""
+    pin = "ab" * 32
+
+    async def fake_fetch_health(session, host, *, pin=None):
+        return {"appVersion": "old"}
+
+    data = {CONF_DEVICE_PROFILE: "portal_go"}
+    if pinned:
+        data[CONF_TLS_SPKI] = pin
+    with patch("custom_components.kiosk_satellite_manager.fetch_health", new=fake_fetch_health):
+        ctx = await init_integration(hass, data=data)
+        install_entry = next(
+            e for e in er.async_entries_for_config_entry(er.async_get(hass), ctx.entry.entry_id)
+            if e.unique_id == f"{ctx.entry.entry_id}_install"
+        )
+        install = AsyncMock(return_value=None)
+        with patch("custom_components.kiosk_satellite_manager.button.AdbClient") as mock_client_cls, \
+                patch("custom_components.kiosk_satellite_manager.button.install_and_launch", new=install):
+            mock_client_cls.return_value.connect = AsyncMock()
+            mock_client_cls.return_value.close = AsyncMock()
+            await hass.services.async_call(
+                "button", "press", {"entity_id": install_entry.entity_id}, blocking=True
+            )
+
+    kwargs = install.await_args.kwargs
+    assert kwargs["establish_tls"] is pinned
+    issue_ids = [f"tls_disabled_{ctx.entry.entry_id}", f"tls_certificate_changed_{ctx.entry.entry_id}"]
+    for issue_id in issue_ids:
+        ir.async_create_issue(hass, DOMAIN, issue_id, is_fixable=True,
+                              severity=ir.IssueSeverity.ERROR, translation_key="tls_disabled")
+    kwargs["on_tls_pinned"]("cd" * 32)
+    assert ctx.entry.data[CONF_TLS_SPKI] == "cd" * 32
+    assert all(ir.async_get(hass).async_get_issue(DOMAIN, i) is None for i in issue_ids)
