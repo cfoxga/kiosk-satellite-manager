@@ -29,6 +29,7 @@ from custom_components.kiosk_satellite_manager.install import (
     DashboardDnsCheck,
     probe_dashboard_dns,
 )
+from custom_components.kiosk_satellite_manager.ks_update import ApiInstallUnavailable
 
 from .conftest import init_integration
 from .test_config_flow import _PORTAL_GO_PROPS, _getprop
@@ -37,6 +38,14 @@ _BUTTON = "custom_components.kiosk_satellite_manager.button."
 _CHECK = "custom_components.kiosk_satellite_manager.install.check_dashboard_dns"
 _MISMATCH = DashboardDnsCheck("ha.cfoxga.com", "99.1.33.71", frozenset({"192.168.40.115"}))
 _MATCH = DashboardDnsCheck("ha.cfoxga.com", "192.168.40.115", frozenset({"192.168.40.115"}))
+
+
+def _no_device_api():
+    """The install press tries the device API first (#145); force the ADB path."""
+    return patch(
+        _BUTTON + "async_self_update_entry",
+        new=AsyncMock(side_effect=ApiInstallUnavailable("API offline")),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -100,7 +109,7 @@ async def test_KSM_TEST_310_install_press_keys_the_repair_by_device_id(hass):
         _BUTTON + "AdbClient"
     ) as cls, patch(
         _BUTTON + "install_and_launch", new=AsyncMock(side_effect=_install)
-    ), patch(_BUTTON + "async_get_clientsession"):
+    ), patch(_BUTTON + "async_get_clientsession"), _no_device_api():
         ctx = await init_integration(hass, data={CONF_DEVICE_PROFILE: "portal_go"})
         cls.return_value.connect = AsyncMock()
         cls.return_value.close = AsyncMock()
@@ -122,7 +131,7 @@ async def test_KSM_TEST_305_install_press_records_the_prior_private_dns_mode(has
         _BUTTON + "AdbClient"
     ) as cls, patch(
         _BUTTON + "install_and_launch", new=AsyncMock(side_effect=_install)
-    ), patch(_BUTTON + "async_get_clientsession"):
+    ), patch(_BUTTON + "async_get_clientsession"), _no_device_api():
         ctx = await init_integration(hass, data={CONF_DEVICE_PROFILE: "portal_go"})
         cls.return_value.connect = AsyncMock()
         cls.return_value.close = AsyncMock()
