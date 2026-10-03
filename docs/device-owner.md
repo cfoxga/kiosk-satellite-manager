@@ -308,19 +308,16 @@ and is blocked.
 
 ## Undoing it
 
-Android has no way to hand Device Owner from Kiosk Satellite to another app. Removing Kiosk
-Satellite as owner takes these steps, the same ones KSM's uninstall button uses:
+Only a factory reset removes Device Owner. Android won't uninstall a Device Owner app: `pm
+uninstall` fails with `DELETE_FAILED_DEVICE_POLICY_MANAGER`, and `dpm remove-active-admin` works
+only on a test-only admin. Android also has no way to hand Device Owner from Kiosk Satellite to
+another app. KSM's **Uninstall Kiosk Satellite** button checks first, changes nothing, and says a
+reset is required.
 
-```bash
-adb shell dpm remove-active-admin --user 0 me.jxl.kiosk_satellite/.KioskAdminReceiver
-adb shell pm disable-user --user 0 me.jxl.kiosk_satellite
-adb shell pm clear me.jxl.kiosk_satellite
-adb shell pm uninstall me.jxl.kiosk_satellite
-```
-
-A plain `pm uninstall` of a Device Owner app fails with `DELETE_FAILED_DEVICE_POLICY_MANAGER`.
-Confirm the removal with `pm path`, not by the command's exit code. A factory reset clears Device
-Owner and everything else.
+To reset by hand, power the device up with Volume Up and Volume Down held for 10 seconds. A factory
+reset erases everything on the device: Kiosk Satellite, every setting, and every account and
+sign-in. Meta's own Reset in Settings needs a working Meta login, so it does nothing on a Portal
+Gen 1 after the Gen 1 cleanup.
 
 ## Approaches that don't work
 
@@ -341,8 +338,8 @@ Owner and everything else.
   the same.
 - Setting up Meta again and signing in to Facebook or WhatsApp is always done by a person at the
   Portal. KSM can't do it.
-- Removing Device Owner needs either the uninstall sequence above or a factory reset. KSM can't
-  give Device Owner back to Meta or hand it to another app.
+- Removing Device Owner needs a factory reset, done by hand on the device. KSM can't reset a
+  device, give Device Owner back to Meta, or hand it to another app.
 - If you skip the Meta sign-in, Kiosk Satellite keeps working, but the Portal's own "Enable ADB"
   setting can't be switched back on later from Meta's settings.
 - Network ADB is lost on every power cycle, and KSM can't turn it back on. See

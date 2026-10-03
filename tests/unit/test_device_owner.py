@@ -17,8 +17,7 @@ from custom_components.kiosk_satellite_manager.device_owner import (
 from custom_components.kiosk_satellite_manager.device_catalog import require_recipe
 
 from ksm_device_owner_fake import (  # noqa: E402
-    KS_ACTIVITY, KS_ADMIN, META, RESET_ACTION, RESET_ACTIVITY, SECRET, SETUP, SETUP_ACTIVITY,
-    _META_TYPES, FakeDevice,
+    KS_ACTIVITY, KS_ADMIN, META, SECRET, SETUP, SETUP_ACTIVITY, _META_TYPES, FakeDevice,
 )
 
 
@@ -652,44 +651,13 @@ def test_meta_login_text_offers_facebook_and_whatsapp():
     assert [t for t in whatsapp if "Facebook" not in t] == []
 
 
-# --- KSM-BEHAVE-172 (#140): the factory-reset screen --------------------------
 
-@pytest.mark.parametrize("model_key", ["portal_gen1", "portal_mini"])
-async def test_KSM_TEST_342_opens_the_verified_reset_screen(model_key):
-    """[KSM-TEST-342] A live-verified model gets its settings reset page in
-    front; success is the resumed activity, not am start's output."""
-    dev = FakeDevice(owner="me.jxl.kiosk_satellite")
-    await device_owner.open_factory_reset_screen(dev, model_key)
-    assert dev.front == RESET_ACTIVITY
-    # [KSM-TEST-344] opening the page is the only thing it does.
-    assert dev.commands[0] == f"am start -a {RESET_ACTION}"
-    assert set(dev.commands[1:]) == {"dumpsys activity activities"}
-
-
-@pytest.mark.parametrize("model_key", ["portal_go", "portal_gen2", "portal_plus_gen2", None])
-async def test_KSM_TEST_342_unverified_model_is_refused_without_a_shell_call(model_key):
-    """[KSM-TEST-342] Negative: no live evidence for the model, no command."""
-    dev = FakeDevice(owner="me.jxl.kiosk_satellite")
-    with pytest.raises(DeviceOwnerError) as err:
-        await device_owner.open_factory_reset_screen(dev, model_key)
-    assert err.value.code == "factory_reset_unsupported"
-    assert dev.commands == []
-
-
-async def test_KSM_TEST_342_a_screen_that_stays_hidden_fails():
-    """[KSM-TEST-342] Negative: Kiosk Satellite still in front (a kiosk lock
-    that kept it pinned) is a failure, never a success."""
-    dev = FakeDevice(owner="me.jxl.kiosk_satellite", reset_screen_launches=False)
-    with pytest.raises(DeviceOwnerError) as err:
-        await device_owner.open_factory_reset_screen(dev, "portal_gen1")
-    assert err.value.code == "factory_reset_failed"
-    assert dev.front == KS_ACTIVITY
-
-
-def test_KSM_TEST_344_reset_screen_table_holds_only_verified_models():
-    """[KSM-TEST-344] The table is the evidence boundary: exactly the two
-    live-verified models, each a fixed intent action and its answering package."""
-    assert device_owner.FACTORY_RESET_SCREENS == {
-        "portal_gen1": (RESET_ACTION, "com.facebook.alohaapps.settings"),
-        "portal_mini": (RESET_ACTION, "com.facebook.alohaapps.settings"),
-    }
+def test_KSM_TEST_346_no_reset_screen_remains():
+    """[KSM-TEST-346] KSM-BEHAVE-172 is retired: KSM has no way to open or
+    send a factory reset."""
+    from custom_components.kiosk_satellite_manager import support_log
+    assert hasattr(device_owner, "owner_package"), "positive control: module is the real one"
+    assert not hasattr(device_owner, "FACTORY_RESET_SCREENS")
+    assert not hasattr(device_owner, "open_factory_reset_screen")
+    assert "factory_reset_screen" not in support_log.KINDS
+    assert "repair" not in support_log.SOURCES
