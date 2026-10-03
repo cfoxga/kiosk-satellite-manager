@@ -186,7 +186,8 @@ happens until the confirmation box is ticked.
 ### Enrollment
 
 - KSM removes only the packages approved for that exact model. Today that is
-  `com.facebook.alohaservices.alohausers` on Portal Mini, Portal Go and Portal Gen 2. Sharing an
+  `com.facebook.alohaservices.alohausers` on Portal Mini, Portal Go, Portal Gen 2 and Portal+
+  Gen 2. Sharing an
   Android version or a recipe with a supported model doesn't make another model eligible. With zero
   accounts, no package is touched.
 - KSM always restores every package it removed, even when a later step fails or the ADB connection
@@ -200,7 +201,7 @@ happens until the confirmation box is ticked.
 
 ### Bringing Meta setup back
 
-On Portal Mini, Portal Go and Portal Gen 2, enrollment always ends by putting Meta setup back on
+On Portal Mini, Portal Go, Portal Gen 2 and Portal+ Gen 2, enrollment always ends by putting Meta setup back on
 screen:
 
 1. KSM signs in to Kiosk Satellite's settings API with the device's password and turns off

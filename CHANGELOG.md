@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Enable Device Owner** now works on the Portal+ (Gen 2). It no longer refuses because of the
+  Portal's own Meta accounts. As on Portal Gen 2, KSM removes and restores the Meta account app,
+  then puts Meta's setup screen back so you can sign in again. An account from any other app
+  still blocks enrollment, and the Gen 1 Portal+ is unchanged (#136).
+
 - You can now ask for a device to be added to KSM's device library from Home Assistant. A device
   KSM cannot install on raises a repair, *device not in Kiosk Satellite Manager's library*. It
   reads the device's identity over ADB and links a GitHub issue pre-filled with a proposed library

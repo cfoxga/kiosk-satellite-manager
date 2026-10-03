@@ -493,6 +493,45 @@ async def test_portal_gen2_clears_accounts_and_requests_meta_setup():
     assert dev.owner == "me.jxl.kiosk_satellite"
 
 
+async def test_portal_plus_gen2_clears_accounts_and_shows_meta_setup():
+    """[KSM-TEST-334] Basement Office Portal+ Gen 2 has the Gen 2 account
+    shape (2026-10-03 read-only ADB): it clears through alohausers, flags
+    Meta setup, reports a missing identity, and can relaunch Meta setup."""
+    dev = FakeDevice(restore_readds_hw=True)
+    pre = await run_preflight(dev, "portal_plus_gen2")
+    assert pre.ready and pre.clear_packages == (META,)
+    assert pre.meta_identity_missing == ()
+    result = await enable_device_owner(dev, "portal_plus_gen2")
+    assert dev.mutations() == [
+        f"pm uninstall -k --user 0 {META}",
+        f"dpm set-device-owner {KS_ADMIN}",
+        f"cmd package install-existing --user 0 {META}",
+    ]
+    assert result.meta_setup_needed is True
+    assert dev.owner == "me.jxl.kiosk_satellite"
+    assert await device_owner.read_meta_identity_missing(dev) == IDENTITY
+    await device_owner.restart_meta_setup(dev, "portal_plus_gen2")
+    assert dev.front == SETUP_ACTIVITY
+
+
+@pytest.mark.parametrize("model_key,types", [
+    # A foreign authenticator still blocks on the newly listed model.
+    ("portal_plus_gen2", ("com.facebook.aloha.sso", "com.example.other")),
+    # Its Android 9 sibling stays off the Android 10 alohausers path.
+    ("portal_plus_gen1", tuple(f"com.facebook.aloha.{t}" for t in _META_TYPES)),
+])
+async def test_portal_plus_negatives_block_without_mutation(model_key, types):
+    """[KSM-TEST-334] Negative: listing Portal+ Gen 2 approves only its
+    alohausers accounts, and never the Gen 1 Portal+ Meta setup path."""
+    dev = FakeDevice(account_types=types)
+    pre = await run_preflight(dev, model_key)
+    assert "accounts_blocked" in pre.blockers and pre.ready is False
+    with pytest.raises(DeviceOwnerError) as err:
+        await device_owner.restart_meta_setup(dev, "portal_plus_gen1")
+    assert err.value.code == "meta_setup_unsupported"
+    assert dev.mutations() == []
+
+
 @pytest.mark.parametrize("model_key,types,needed", [
     ("portal_mini", tuple(f"com.facebook.aloha.{t}" for t in _META_TYPES), True),
     # Nothing cleared, but the identity is already gone: setup still needed.
