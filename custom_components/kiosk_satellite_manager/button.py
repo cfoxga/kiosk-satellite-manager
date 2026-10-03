@@ -25,7 +25,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
-from .adb_client import AdbClient, AdbConnectFailed
+from .adb_client import AdbClient, AdbConnectFailed, UninstallDeviceOwner
 from .device_catalog import NoApprovedRecipe, require_recipe, resolve_catalog_entry
 from .device_models import collect_identity_facts
 from .const import (
@@ -53,6 +53,8 @@ from .const import (
 from . import config_backup, fleet, permissions
 from .device_repairs import (
     apply_dashboard_dns,
+    factory_reset_issue_id,
+    raise_factory_reset,
     sync_device_support,
     tls_disabled_issue_id,
     tls_issue_id,
@@ -267,7 +269,17 @@ class KioskSatelliteUninstallButton(ButtonEntity):
         except AdbConnectFailed as err:
             raise _adb_unreachable_error(self._entry) from err
         try:
-            await client.uninstall_ks()
+            try:
+                await client.uninstall_ks()
+            except UninstallDeviceOwner as err:
+                # KSM-BEHAVE-171: nothing was changed; say why and offer the way out.
+                raise_factory_reset(self.hass, self._entry)
+                raise HomeAssistantError(
+                    f"Kiosk Satellite is the Device Owner on {self._entry.title}, so Android "
+                    "will not uninstall it. Only a factory reset removes it; see Repairs "
+                    "to open the device's factory reset screen."
+                ) from err
+            ir.async_delete_issue(self.hass, DOMAIN, factory_reset_issue_id(self._entry.entry_id))
             # KSM-BEHAVE-152: put back the Private DNS mode install turned off.
             prior = self._entry.data.get(CONF_PRIVATE_DNS_PRIOR)
             # A mode that no longer reads off was left alone, and so is its record.

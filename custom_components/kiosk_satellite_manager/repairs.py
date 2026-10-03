@@ -12,6 +12,10 @@ Discovered card, where the operator enters its password.
 
 Device support (KSM-BEHAVE-165, #135): confirming reads the device's
 capability report over ADB and shows a pre-filled support-request link.
+
+Factory reset (KSM-BEHAVE-172, #140): Kiosk Satellite is Device Owner, so only
+a reset removes it. Confirming turns the kiosk lock off and opens the device's
+own reset confirmation; a person on the device presses Reset, never KSM.
 """
 from __future__ import annotations
 
@@ -25,10 +29,15 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from . import follower_offers, ks_api_client, fleet, support_request
-from .adb_client import AdbAuthPending, AdbConnectFailed, AdbKeySecurityError
-from .const import CONF_HOST, CONF_TLS_SPKI, DOMAIN
-from .device_repairs import SUPPORT_REQUESTED, device_support_issue_id, tls_disabled_issue_id
+from . import device_owner, follower_offers, ks_api_client, fleet, meta_setup, support_log, support_request
+from .adb_client import AdbAuthPending, AdbClient, AdbConnectFailed, AdbKeySecurityError
+from .const import (
+    CONF_DEVICE_PROFILE, CONF_HOST, CONF_KEY_PATH, CONF_NAME, CONF_PASSWORD, CONF_PORT,
+    CONF_TLS_SPKI, DOMAIN,
+)
+from .device_repairs import (
+    SUPPORT_REQUESTED, device_support_issue_id, factory_reset_issue_id, tls_disabled_issue_id,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -172,6 +181,59 @@ class DeviceSupportFlow(RepairsFlow):
         return self.async_create_entry(data={})
 
 
+class FactoryResetFlow(RepairsFlow):
+    """KSM-BEHAVE-172: open the device's factory reset confirmation."""
+
+    def __init__(self, entry_id: str) -> None:
+        self._entry_id = entry_id
+
+    async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
+        return await self.async_step_confirm()
+
+    async def async_step_confirm(self, user_input: dict | None = None) -> FlowResult:
+        entry = fleet.resolve_device(self.hass, self._entry_id)
+        if entry is None:
+            return self.async_abort(reason="entry_not_found")
+        placeholders = {"name": entry.title}
+        if user_input is None:
+            return self.async_show_form(
+                step_id="confirm", data_schema=vol.Schema({}),
+                description_placeholders=placeholders,
+            )
+        data = entry.data
+        model_key = data.get(CONF_DEVICE_PROFILE)
+        target = meta_setup.Target(
+            host=data[CONF_HOST], port=data[CONF_PORT], key_path=data[CONF_KEY_PATH],
+            password=data.get(CONF_PASSWORD), pin=data.get(CONF_TLS_SPKI),
+            model_key=model_key, name=data.get(CONF_NAME) or entry.title,
+            entry_id=entry.entry_id,
+        )
+        client = AdbClient(target.host, target.port, target.key_path)
+        turned_off: tuple[str, ...] | None = None
+        try:
+            async with support_log.async_run(
+                self.hass, "factory_reset_screen", source="repair",
+                model_key=model_key, client=client,
+            ):
+                await client.connect()
+                # The kiosk lock pins Kiosk Satellite in front and would hide the screen.
+                turned_off = await meta_setup.kiosk_lock_off(self.hass, target)
+                await device_owner.open_factory_reset_screen(client, model_key)
+        except (AdbConnectFailed, AdbAuthPending, AdbKeySecurityError, OSError, TimeoutError) as err:
+            _LOGGER.warning("Factory reset for %s: ADB unavailable (%s)", entry.title, type(err).__name__)
+            await meta_setup.restore_kiosk_lock(self.hass, target, turned_off or ())
+            return self.async_abort(reason="cannot_connect_adb", description_placeholders=placeholders)
+        except device_owner.DeviceOwnerError as err:
+            _LOGGER.warning("Factory reset screen for %s: %s", entry.title, err.code)
+            await meta_setup.restore_kiosk_lock(self.hass, target, turned_off or ())
+            return self.async_abort(reason="factory_reset_failed", description_placeholders=placeholders)
+        finally:
+            await client.close()
+        # The lock stays off: putting it back would cover the screen. Finishing
+        # the flow closes the repair; Uninstall raises it again if still owner.
+        return self.async_create_entry(data={})
+
+
 async def async_create_fix_flow(
     hass: HomeAssistant, issue_id: str, data: dict | None
 ) -> RepairsFlow:
@@ -179,6 +241,8 @@ async def async_create_fix_flow(
         return NewFollowerFlow(dict(data or {}))
     if issue_id == device_support_issue_id((data or {}).get("entry_id", "")):
         return DeviceSupportFlow((data or {})["entry_id"])
+    if issue_id == factory_reset_issue_id((data or {}).get("entry_id", "")):
+        return FactoryResetFlow((data or {})["entry_id"])
     if issue_id == tls_disabled_issue_id((data or {}).get("entry_id", "")):
         return TlsDisabledFlow((data or {})["entry_id"])
     return TlsCertificateChangedFlow((data or {})["entry_id"])

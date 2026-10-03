@@ -13,6 +13,7 @@ from homeassistant.helpers import issue_registry as ir
 
 from .const import CONF_DEVICE_PROFILE, DOMAIN
 from .device_catalog import NoApprovedRecipe, require_recipe
+from .device_owner import FACTORY_RESET_SCREENS
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -42,6 +43,27 @@ def dashboard_dns_issue_id(device_id: str) -> str:
 
 def device_support_issue_id(device_id: str) -> str:
     return f"device_support_{device_id}"
+
+
+def factory_reset_issue_id(device_id: str) -> str:
+    """KSM-BEHAVE-171: Kiosk Satellite is Device Owner; only a reset removes it."""
+    return f"factory_reset_{device_id}"
+
+
+def raise_factory_reset(hass: HomeAssistant, entry: ConfigEntry | DeviceEntry) -> None:
+    """KSM-BEHAVE-171/172: fixable (opens the reset screen) only on a model
+    whose reset screen was verified live; otherwise an explanation."""
+    fixable = entry.data.get(CONF_DEVICE_PROFILE) in FACTORY_RESET_SCREENS
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        factory_reset_issue_id(entry.entry_id),
+        is_fixable=fixable,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="factory_reset" if fixable else "factory_reset_manual",
+        translation_placeholders={"name": entry.title},
+        data={"entry_id": entry.entry_id},
+    )
 
 
 # Set on a device entry once its support request was sent (KSM-BEHAVE-165).
@@ -117,5 +139,6 @@ def clear_device_repairs(hass: HomeAssistant, device_id: str) -> None:
     for issue_id in (
         tls_issue_id(device_id), tls_disabled_issue_id(device_id),
         dashboard_dns_issue_id(device_id), device_support_issue_id(device_id),
+        factory_reset_issue_id(device_id),
     ):
         ir.async_delete_issue(hass, DOMAIN, issue_id)

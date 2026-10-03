@@ -49,6 +49,18 @@ ACCOUNT_CLEAR_PACKAGES: dict[str, tuple[str, ...]] = {
     "portal_gen1": ("com.facebook.alohaservices.alohausers",),
 }
 
+# KSM-BEHAVE-172: per exact device_models key, the intent action that opens the
+# device's own factory-reset confirmation and the settings package that answers
+# it. Live-verified 2026-10-03 on each model listed (Meta's "Are you sure you
+# want to reset this Portal?" with Cancel/Reset). KSM opens the page; a person
+# on the device presses Reset.
+_META_FACTORY_RESET = ("com.facebook.aloha.system.settings.FACTORY_RESET",
+                       "com.facebook.alohaapps.settings")
+FACTORY_RESET_SCREENS: dict[str, tuple[str, str]] = {
+    "portal_gen1": _META_FACTORY_RESET,
+    "portal_mini": _META_FACTORY_RESET,
+}
+
 # KSM-BEHAVE-136: audited Android 9 aloha packages from unmetaportal's package
 # set. These are fixed source constants, never device or recipe supplied text.
 # The Meta settings, system, input and ADB implementation packages are absent.
@@ -200,7 +212,7 @@ def _identity_missing(counts: dict[str, int]) -> tuple[str, ...]:
     return tuple(t for t in META_IDENTITY_TYPES if t not in counts)
 
 
-def _owner_package(policy: str) -> str | None:
+def owner_package(policy: str) -> str | None:
     match = _OWNER_RE.search(policy)
     return match.group(1) if match else None
 
@@ -212,7 +224,7 @@ async def run_preflight(client: ShellClient, model_key: str | None) -> Preflight
     users = await client.shell("pm list users")
     ks_path = await client.shell(f"pm path {KS_PACKAGE}")
 
-    owner = _owner_package(policy)
+    owner = owner_package(policy)
     blockers: list[str] = []
     if (
         "Accounts:" not in accounts_dump
@@ -306,7 +318,7 @@ async def enable_device_owner(client: ShellClient, model_key: str | None) -> Enr
         out = await client.shell(f"dpm set-device-owner {KS_ADMIN}")
         if "Success" not in out:
             raise DeviceOwnerError("set_owner_failed", "dpm set-device-owner was refused")
-        if _owner_package(await client.shell("dumpsys device_policy")) != KS_PACKAGE:
+        if owner_package(await client.shell("dumpsys device_policy")) != KS_PACKAGE:
             raise DeviceOwnerError(
                 "readback_failed", "device_policy does not list Kiosk Satellite as owner"
             )
@@ -404,7 +416,7 @@ async def repurpose_android9_portal(
     accounts_dump = await client.shell("dumpsys account")
     if "Accounts:" not in accounts_dump or _account_counts(accounts_dump):
         raise DeviceOwnerError("cleanup_partial", "accounts remain or cannot be read")
-    if _owner_package(await client.shell("dumpsys device_policy")) != KS_PACKAGE:
+    if owner_package(await client.shell("dumpsys device_policy")) != KS_PACKAGE:
         raise DeviceOwnerError("cleanup_partial", "Kiosk Satellite is not Device Owner")
     listed = set((await client.shell("pm list packages -d")).splitlines())
     if any(f"package:{package}" not in listed for package in disabled):
@@ -473,4 +485,30 @@ async def restart_meta_setup(client: ShellClient, model_key: str | None) -> None
     raise DeviceOwnerError(
         "meta_setup_failed",
         "the setup screen did not come to the front (is the kiosk lock on?)",
+    )
+
+
+async def open_factory_reset_screen(client: ShellClient, model_key: str | None) -> None:
+    """KSM-BEHAVE-172: put the device's factory-reset confirmation in front.
+
+    Only opens the page: no input event, broadcast or wipe command is ever
+    sent. Success is the settings package resumed, not am start's output.
+    Raises DeviceOwnerError factory_reset_unsupported (no shell call) or
+    factory_reset_failed.
+    """
+    screen = FACTORY_RESET_SCREENS.get(model_key or "")
+    if screen is None:
+        raise DeviceOwnerError("factory_reset_unsupported", "no verified reset screen on this model")
+    action, package = screen
+    out = await client.shell(f"am start -a {action}")
+    if "Error" in out:
+        raise DeviceOwnerError("factory_reset_failed", "the reset screen could not be started")
+    for attempt in range(_POLL_ATTEMPTS):
+        if package in await _front_activity(client):
+            return
+        if attempt + 1 < _POLL_ATTEMPTS:
+            await asyncio.sleep(_POLL_INTERVAL_S)
+    raise DeviceOwnerError(
+        "factory_reset_failed",
+        "the reset screen did not come to the front (is the kiosk lock on?)",
     )

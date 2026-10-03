@@ -34,6 +34,7 @@ from custom_components.kiosk_satellite_manager.adb_client import (
     AdbKeySecurityError,
     PmInstallFailed,
     PmUninstallFailed,
+    UninstallDeviceOwner,
     UninstallPolicyBlocked,
     ensure_adb_key,
 )
@@ -881,3 +882,47 @@ async def test_KSM_TEST_306_resolve_host_quotes_the_hostname(tmp_path):
     with patch.object(client._device, "shell", new=AsyncMock(return_value="")) as shell:
         await client.resolve_host("bad;reboot")
     assert shell.await_args.args[0] == "timeout 3 ping -c 1 -W 1 'bad;reboot'"
+
+
+# KSM-BEHAVE-171 (#140): live Test Portal Gen1 shape, 2026-10-03.
+_LIVE_DEVICE_OWNER_KS_BLOCK = (
+    "Current Device Policy Manager state:\n"
+    "  Device Owner: \n"
+    "    admin=ComponentInfo{me.jxl.kiosk_satellite/me.jxl.kiosk_satellite.KioskAdminReceiver}\n"
+    "    name=\n"
+    "    package=me.jxl.kiosk_satellite\n"
+    "  Enabled Device Admins (User 0, provisioningState: 3):\n"
+    "    me.jxl.kiosk_satellite/.KioskAdminReceiver:\n"
+    "      testOnlyAdmin=false\n"
+)
+
+
+async def test_KSM_TEST_340_device_owner_is_refused_before_any_change(tmp_path):
+    """[KSM-TEST-340] Kiosk Satellite as Device Owner: one read, then
+    UninstallDeviceOwner -- no dpm, disable, clear or uninstall is sent."""
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(
+        client._device, "shell", new=AsyncMock(return_value=_LIVE_DEVICE_OWNER_KS_BLOCK)
+    ) as mock_shell:
+        with pytest.raises(UninstallDeviceOwner):
+            await client.uninstall_ks()
+    assert [c.args[0] for c in mock_shell.await_args_list] == ["dumpsys device_policy"]
+
+
+async def test_KSM_TEST_340_another_owner_runs_the_normal_sequence(tmp_path):
+    """[KSM-TEST-340] Negative: an owner block naming another package is not
+    Kiosk Satellite's -- the KSM-BEHAVE-042 sequence runs unchanged."""
+    other = _LIVE_DEVICE_OWNER_KS_BLOCK.replace(
+        "admin=ComponentInfo{me.jxl.kiosk_satellite/", "admin=ComponentInfo{com.example.dpc/"
+    )
+    key_path = ensure_adb_key(str(tmp_path / "keys"))
+    client = AdbClient("1.2.3.4", 5555, key_path)
+    with patch.object(
+        client._device,
+        "shell",
+        new=AsyncMock(side_effect=[other, "No device owner", "", "", "", "", "", _NO_ADMINS_BLOCK]),
+    ) as mock_shell:
+        await client.uninstall_ks()
+    calls = [c.args[0] for c in mock_shell.await_args_list]
+    assert "pm uninstall me.jxl.kiosk_satellite" in calls

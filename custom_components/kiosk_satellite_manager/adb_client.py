@@ -42,6 +42,7 @@ from adb_shell.exceptions import (
 
 from .const import ADB_PROBE_TIMEOUT_S, KS_HOME_ACTIVITY, KS_PACKAGE
 from . import support_log
+from .device_owner import owner_package
 
 _VERSION_NAME_RE = re.compile(r"\bversionName=([^\s]+)")
 _RUNTIME_PERMISSION_RE = re.compile(r"^\s*(android\.permission\.\S+): granted=(true|false)", re.MULTILINE)
@@ -136,6 +137,15 @@ class UninstallPolicyBlocked(Exception):
     def __init__(self, category: str) -> None:
         self.category = category
         super().__init__(f"could not clear device policy state: {category}")
+
+
+class UninstallDeviceOwner(Exception):
+    """KSM-BEHAVE-171: Kiosk Satellite is the device's Device Owner. Android
+    refuses to uninstall it and only a factory reset removes it, so
+    `uninstall_ks()` raises this before sending any changing command."""
+
+    def __init__(self) -> None:
+        super().__init__("Kiosk Satellite is this device's Device Owner")
 
 
 # KSM-BEHAVE-042: OEM/user-restriction failures are the same shaped
@@ -464,7 +474,12 @@ class AdbClient:
         postcondition and raises UninstallPolicyBlocked if a previously
         privileged package's admin registration somehow survived it.
         """
-        was_admin = await self.is_active_admin()
+        policy = await self.shell("dumpsys device_policy")
+        # KSM-BEHAVE-171: a Device Owner cannot be uninstalled; refuse before
+        # any changing command rather than half-disable it.
+        if owner_package(policy) == KS_PACKAGE:
+            raise UninstallDeviceOwner()
+        was_admin = f"{KS_PACKAGE}/.KioskAdminReceiver" in policy
         owner_output = await self.device_owner_component()
         was_owner = owner_output is not None and KS_PACKAGE in owner_output
 

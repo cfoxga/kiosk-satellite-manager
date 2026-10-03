@@ -78,7 +78,8 @@ async def _open_owner_step(hass, device):
     result = await hass.config_entries.options.async_init(device.entry_id)
     assert result["type"] == data_entry_flow.FlowResultType.MENU
     assert set(result["menu_options"]) == {
-        "device_rename", "device_password", "device_host", "device_owner", "device_launcher"
+        "device_rename", "device_password", "device_host", "device_owner", "device_launcher",
+        "device_https",
     }
     return await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "device_owner"}
