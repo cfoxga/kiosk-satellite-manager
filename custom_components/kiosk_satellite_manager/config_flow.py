@@ -97,6 +97,7 @@ from .const import (
     RENAME_API_KEY,
     EXISTING_INSTALL_REINSTALL,
     EXISTING_INSTALL_REUSE,
+    EXISTING_INSTALL_UPDATE_SETTINGS,
     TOKEN_MODE_AUTO,
 )
 
@@ -304,7 +305,8 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
         fields = {
             vol.Required(CONF_EXISTING_INSTALL_ACTION, default=saved.get(
                 CONF_EXISTING_INSTALL_ACTION, EXISTING_INSTALL_REUSE
-            )): vol.In([EXISTING_INSTALL_REUSE, EXISTING_INSTALL_REINSTALL]),
+            )): vol.In([EXISTING_INSTALL_REUSE, EXISTING_INSTALL_REINSTALL,
+                        EXISTING_INSTALL_UPDATE_SETTINGS]),
             vol.Required(CONF_AUTO_UPDATE, default=saved.get(CONF_AUTO_UPDATE, False)): bool,
             vol.Required(
                 CONF_ESPHOME_NEW_DEVICES, default=saved.get(CONF_ESPHOME_NEW_DEVICES, False)
@@ -1400,7 +1402,9 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         user keep it as-is or replace it with a fresh install."""
         if user_input is not None:
             self._existing_install_action = user_input[CONF_EXISTING_INSTALL_ACTION]
-            if self._existing_install_action == EXISTING_INSTALL_REUSE:
+            if self._existing_install_action in (
+                EXISTING_INSTALL_REUSE, EXISTING_INSTALL_UPDATE_SETTINGS
+            ):
                 return await self.async_step_existing_device_info()
             return await self.async_step_device_info()
 
@@ -1422,6 +1426,10 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 selector.SelectOptionDict(
                                     value=EXISTING_INSTALL_REINSTALL,
                                     label="Uninstall and reinstall Kiosk Satellite",
+                                ),
+                                selector.SelectOptionDict(
+                                    value=EXISTING_INSTALL_UPDATE_SETTINGS,
+                                    label="Update settings without uninstalling",
                                 ),
                             ],
                             mode=selector.SelectSelectorMode.DROPDOWN,
@@ -1549,6 +1557,9 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         on_dashboard_dns=self._set_dashboard_dns,
                         before_ha_setup=self._async_maybe_invite,
                         replace_launcher=launcher_replacement_wanted({}, require_recipe(self._profile_key)),
+                        fail_on_sync_error=(
+                            self._existing_install_action == EXISTING_INSTALL_UPDATE_SETTINGS
+                        ),
                     )
                     if used_token:
                         self._credential = used_token
@@ -1560,14 +1571,21 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "automatic install failed for %s; use the Install button to retry",
                 self._host,
             )
+            updating = self._existing_install_action == EXISTING_INSTALL_UPDATE_SETTINGS
             persistent_notification.async_create(
                 self.hass,
                 message=(
+                    f"Kiosk Satellite settings could not be updated on {self._host}. "
+                    "The device was added, but its settings may still point to the old "
+                    "Home Assistant. Check the existing Web UI password and retry with "
+                    "the Install/Reinstall button."
+                    if updating else
                     f"Kiosk Satellite could not be installed automatically on "
                     f"{self._host}. The device was still added to Kiosk Satellite "
                     "Manager; use its Install/Reinstall button to retry."
                 ),
-                title="Kiosk Satellite automatic installation failed",
+                title=("Kiosk Satellite settings update failed" if updating else
+                       "Kiosk Satellite automatic installation failed"),
                 notification_id=f"{DOMAIN}_install_failed_{self._host}",
             )
 

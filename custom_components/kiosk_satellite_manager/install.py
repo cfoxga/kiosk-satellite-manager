@@ -497,6 +497,7 @@ async def install_and_launch(
     establish_tls: bool = False,
     on_private_dns_disabled: Callable[[str], None] | None = None,
     on_dashboard_dns: Callable[[DashboardDnsCheck], None] | None = None,
+    fail_on_sync_error: bool = False,
 ) -> TokenCredential | None:
     """Fetch the latest universal KS APK (#71), install it, launch
     it, and grant full permissions. If a password is configured on the entry,
@@ -647,6 +648,8 @@ async def install_and_launch(
             establish_tls=establish_tls,
         )
     except (KsApiError, aiohttp.ClientError, asyncio.TimeoutError) as err:
+        if fail_on_sync_error:
+            raise
         _LOGGER.warning("device-name/HA auto-connect sync failed for %s: %s", host, err)
     if replace_launcher:
         await _select_home_launcher(hass, client, host)

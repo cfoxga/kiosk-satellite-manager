@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- When adding a device that already has Kiosk Satellite, **Update settings without uninstalling**
+  now refreshes its Home Assistant connection and start page using the existing Web UI password
+  (#143). This also works when Kiosk Satellite is Device Owner: the app, its data and Device Owner
+  stay in place. Keep and Uninstall and reinstall remain separate choices. KSM shows a notification
+  if the settings update fails.
+
 - Supported devices added before their model was in the device library no longer show *Request
   support for …?* (#141). These devices were saved with no model, and KSM treated "no model" as
   "unsupported". Now, when such a device starts, KSM reads its identity over ADB in the background

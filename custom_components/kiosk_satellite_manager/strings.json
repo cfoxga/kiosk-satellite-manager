@@ -30,14 +30,14 @@
       },
       "existing_install": {
         "title": "Kiosk Satellite is already installed",
-        "description": "Kiosk Satellite is already installed on this device. Choose whether to keep that installation (and its settings) or uninstall it and install it fresh.",
+        "description": "Kiosk Satellite is already installed on this device. Keep it unchanged, update its Home Assistant settings without uninstalling, or uninstall it for a fresh start. Updating requires its existing Web UI password and preserves Device Owner and other app data.",
         "data": {
           "existing_install_action": "Installation"
         }
       },
       "existing_device_info": {
         "title": "Connect Kiosk Satellite Manager",
-        "description": "Kiosk Satellite is already installed, so its own Home settings and Home Assistant token will be left unchanged. Enter its existing Web UI password so Kiosk Satellite Manager can connect to port 2324 when needed. Home Assistant will collect this device's Name and Area on its next screen.",
+        "description": "Enter Kiosk Satellite's existing Web UI password. If you chose Keep, its Home Assistant settings stay unchanged. If you chose Update settings, KSM replaces its Home Assistant connection and start page without uninstalling the app. Home Assistant will collect this device's Name and Area on its next screen.",
         "data": {
           "password": "Existing Password",
           "ha_url": "Home Assistant URL",

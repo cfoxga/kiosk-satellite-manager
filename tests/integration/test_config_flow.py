@@ -739,6 +739,79 @@ async def test_adb_flow_adds_esphome_after_install_when_ticked(hass):
     assert adopt.await_args.kwargs["host"] == "192.168.50.64"
 
 
+async def test_update_existing_settings_preserves_device_owner_and_calls_install(hass):
+    """[KSM-TEST-347] Update settings uses the existing password without removal."""
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
+    ) as mock_client_cls, patch(
+        "custom_components.kiosk_satellite_manager.fetch_health",
+        new=AsyncMock(return_value={"appVersion": "2026.9.62"}),
+    ), patch(
+        "custom_components.kiosk_satellite_manager.config_flow.install_and_launch",
+        new_callable=AsyncMock,
+    ) as mock_install:
+        mock_client = mock_client_cls.return_value
+        mock_client.connect = AsyncMock()
+        mock_client.getprop = _getprop(**_PORTAL_GO_PROPS)
+        mock_client.shell = AsyncMock(return_value="Living Room Portal")
+        mock_client.is_ks_installed = AsyncMock(return_value=True)
+        mock_client.uninstall_ks = AsyncMock()
+        mock_client.close = AsyncMock()
+        mock_install.return_value = TokenCredential("new-ha-token", None, owned=False)
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "192.168.50.64", "port": 5555}
+        )
+        assert result["step_id"] == "existing_install"
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_EXISTING_INSTALL_ACTION: "update_settings"},
+        )
+        assert result["step_id"] == "existing_device_info"
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_PASSWORD: "existing-admin-password"}
+        )
+        while result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS:
+            await hass.async_block_till_done()
+            result = await hass.config_entries.flow.async_configure(result["flow_id"])
+
+    assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_HA_TOKEN] == "new-ha-token"
+    mock_client.uninstall_ks.assert_not_awaited()
+    mock_install.assert_awaited_once()
+    assert mock_install.await_args.kwargs["password"] == "existing-admin-password"
+    assert mock_install.await_args.kwargs["fail_on_sync_error"] is True
+
+
+async def test_update_existing_settings_failure_is_visible(hass):
+    """[KSM-TEST-347] A rejected settings write is shown to the operator."""
+    flow = KioskSatelliteManagerConfigFlow()
+    flow.hass = hass
+    flow._host = "192.168.50.64"
+    flow._profile_key = "portal_go"
+    flow._password = "existing-admin-password"
+    flow._existing_install_action = "update_settings"
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
+    ) as client_cls, patch(
+        "custom_components.kiosk_satellite_manager.config_flow.install_and_launch",
+        new=AsyncMock(side_effect=RuntimeError("settings rejected")),
+    ), patch(
+        "custom_components.kiosk_satellite_manager.config_flow.persistent_notification.async_create"
+    ) as notice:
+        client = client_cls.return_value
+        client.connect = AsyncMock()
+        client.close = AsyncMock()
+        client.uninstall_ks = AsyncMock()
+        await flow._async_do_install()
+
+    client.uninstall_ks.assert_not_awaited()
+    assert "settings could not be updated" in notice.call_args.kwargs["message"]
+
+
 async def test_user_flow_reinstall_uninstalls_before_install(hass):
     """[KSM-TEST-022] Reinstall keeps the full fresh-install form (including
     token selection) and uninstalls before installing.

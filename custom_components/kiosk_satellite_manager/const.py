@@ -69,6 +69,7 @@ RENAME_API_KEY: Final = f"{DOMAIN}_rename"
 CONF_EXISTING_INSTALL_ACTION: Final = "existing_install_action"
 EXISTING_INSTALL_REUSE: Final = "reuse"
 EXISTING_INSTALL_REINSTALL: Final = "reinstall"
+EXISTING_INSTALL_UPDATE_SETTINGS: Final = "update_settings"
 
 DEFAULT_ADB_PORT: Final = 5555
 HEALTH_PORT: Final = 2324

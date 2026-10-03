@@ -708,6 +708,29 @@ async def test_install_and_launch_sync_failure_is_logged_not_raised():
     assert not any("WRITE_SECURE_SETTINGS" in g for g in grants)
 
 
+async def test_install_and_launch_update_settings_reports_rejected_sync():
+    """[KSM-TEST-347] A failed settings update must reach the onboarding caller."""
+    hass = _FakeHass()
+    client = _fake_client()
+    session = _fake_session()
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.install.latest_release",
+        new=AsyncMock(return_value=("https://example.invalid/ks.apk", _TARGET_VERSION)),
+    ), patch(
+        "custom_components.kiosk_satellite_manager.install.ks_api_client"
+    ) as mock_api:
+        mock_api.probe_https = AsyncMock(return_value=None)
+        mock_api.get_setup_status = AsyncMock(side_effect=KsApiError("password rejected"))
+
+        with pytest.raises(KsApiError, match="password rejected"):
+            await install_and_launch(
+                hass, client, session, host="192.168.1.50", device_name="Kitchen",
+                password="existing-password", device_model="portal_go",
+                fail_on_sync_error=True,
+            )
+
+
 async def test_portal_go_shell_sequence_excludes_verifier_disable():
     """[KSM-TEST-097] The Portal sequence retains its explicit grants but
     excludes the device-wide package-verifier mutation."""
