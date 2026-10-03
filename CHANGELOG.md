@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Kiosk Satellite Manager now has its own icon in Home Assistant (Settings → Devices & services,
+  HACS, and the integration picker) instead of the blank placeholder (#134).
+
 ## 0.4.2
 
 - Install no longer fails right after a Home Assistant restart when GitHub's API is
