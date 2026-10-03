@@ -8,6 +8,11 @@
   Save the Area there, then press Install again. This also helps devices added before
   KSM asked for an Area.
 
+- **Install Kiosk Satellite** now uses the device's `:2324` API first, including for a same-version
+  reinstall (#145). ADB is used when the API cannot be reached before login or no API password is
+  stored. API authentication, TLS, upload and installer failures stay visible instead of triggering
+  an ADB retry.
+
 - When adding a device that already has Kiosk Satellite, **Update settings without uninstalling**
   now refreshes its Home Assistant connection and start page using the existing Web UI password
   (#143). This also works when Kiosk Satellite is Device Owner: the app, its data and Device Owner
