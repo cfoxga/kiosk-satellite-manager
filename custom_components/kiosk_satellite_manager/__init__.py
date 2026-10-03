@@ -76,7 +76,7 @@ from .const import (
     RENAME_API_KEY,
     SIGNAL_MANAGER_OPTIONS_UPDATED,
 )
-from . import auto_update, config_backup, fleet, follower_updates, le_certificate, le_certificate_sync, meta_setup, support_request
+from . import auto_update, config_backup, fleet, follower_updates, le_certificate, le_certificate_sync, meta_setup, portal_reload, support_request
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .device_repairs import (
     apply_dashboard_dns, async_resolve_device_model, async_track_area_repairs, clear_device_repairs,
@@ -414,6 +414,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     (async_setup_component) is still holding open.
     """
     fleet.mark_domain_loading(hass)
+    # KSM-BEHAVE-183: reload each Portal's page once this HA start.
+    portal_reload.async_setup(hass)
 
     async def _trusted_rename(
         config_entry_id: str, name: str, *, allow_adb: bool = False

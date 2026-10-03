@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Portals no longer show stale data after Home Assistant restarts (#180). Once HA has started,
+  KSM presses each Meta Portal's Kiosk Satellite **Reload page** button once. A Portal that
+  hasn't reconnected yet is reloaded as soon as it does, for up to 10 minutes. Google TVs and
+  other devices are left alone, and reloading the integration doesn't trigger it.
+
 - **Use HTTPS** with Home Assistant's Let's Encrypt certificate now works for a Portal whose DNS
   name the certificate doesn't cover yet (#178). It used to stop with *HA certificate does not
   cover this Portal hostname*. KSM now adds the name to the Let's Encrypt add-on's domains, runs
