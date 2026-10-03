@@ -87,6 +87,61 @@ async def test_no_usable_release_raises():
         await ks_update.async_self_update_entry(hass, _entry())
 
 
+@pytest.mark.parametrize("reinstall", [False, True])
+async def test_KSM_TEST_349_same_build_only_reinstalls_on_explicit_press(cached_apk, reinstall):
+    prefix = "custom_components.kiosk_satellite_manager.ks_update."
+    with patch(_SESSION), patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(
+        prefix + "ks_api_client.upload_update", new=AsyncMock(return_value={
+            "ok": True, "data": {"buildNumber": 2, "currentBuild": 2}
+        })
+    ), patch(_RUN_COMMAND, new=AsyncMock(return_value={
+        "ok": True, "data": {"lastOutcome": "silent", "installing": False}
+    })) as command, patch(
+        _POLL_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.77"})
+    ):
+        assert await ks_update.async_self_update_entry(_hass(), _entry(), reinstall=reinstall) == ks_update.OUTCOME_UPDATED
+    installs = [call for call in command.await_args_list if call.args[3] == "installUploadedApk"]
+    assert len(installs) == int(reinstall)
+
+
+async def test_KSM_TEST_349_login_connection_failure_allows_adb_recovery():
+    connection = aiohttp.ClientConnectorError(None, OSError("refused"))
+    with patch(_SESSION), patch(_LOGIN, new=AsyncMock(side_effect=connection)), patch(
+        "custom_components.kiosk_satellite_manager.ks_update.apk_cache.async_release_apk",
+        new=AsyncMock(),
+    ) as apk:
+        with pytest.raises(ks_update.ApiInstallUnavailable, match="API is unreachable"):
+            await ks_update.async_self_update_entry(_hass(), _entry(), reinstall=True)
+    apk.assert_not_awaited()
+
+
+async def test_KSM_TEST_349_login_rejection_is_not_adb_recovery():
+    with patch(_SESSION), patch(_LOGIN, new=AsyncMock(side_effect=KsApiError("bad password"))):
+        with pytest.raises(HomeAssistantError, match="bad password") as error:
+            await ks_update.async_self_update_entry(_hass(), _entry(), reinstall=True)
+    assert not isinstance(error.value, ks_update.ApiInstallUnavailable)
+
+
+async def test_KSM_TEST_349_tls_pin_mismatch_is_not_adb_recovery():
+    mismatch = aiohttp.ServerFingerprintMismatch(b"a", b"b", "device", 2324)
+    with patch(_SESSION), patch(_LOGIN, new=AsyncMock(side_effect=mismatch)):
+        with pytest.raises(HomeAssistantError) as error:
+            await ks_update.async_self_update_entry(_hass(), _entry(), reinstall=True)
+    assert not isinstance(error.value, ks_update.ApiInstallUnavailable)
+
+
+async def test_KSM_TEST_349_same_build_health_does_not_hide_confirmation():
+    with patch(_POLL_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.77"})), patch(
+        _RUN_COMMAND, new=AsyncMock(return_value={
+            "ok": True, "data": {"lastOutcome": "confirm", "installing": False}
+        })
+    ), patch("custom_components.kiosk_satellite_manager.ks_update.SELF_UPDATE_POLL_ATTEMPTS", 1):
+        assert await ks_update._poll_until_resolved(
+            None, "192.168.1.50", "tok", "2026.9.77", _entry(), pin=None,
+            same_build_reinstall=True,
+        ) == ks_update.OUTCOME_AWAITING_CONFIRMATION
+
+
 async def test_portal_verifier_failure_remediates_and_retries_once(cached_apk):
     """[KSM-TEST-229] Only a confirmed Portal verifier rejection opens ADB.
     The prior value is read and the changed value is verified before retry."""

@@ -1,12 +1,12 @@
 """Kiosk Satellite self-update sequence (KSM-BEHAVE-082, #47, #70).
 
 Updates run over Kiosk Satellite's own `:2324` API, so an install works even
-when ADB is disabled after onboarding (KSM-BEHAVE-081). ADB stays only
-behind the explicit Install/Reinstall and Uninstall buttons in button.py.
+when ADB is disabled after onboarding (KSM-BEHAVE-081). The single-device
+Install button can fall back to ADB only before the API install begins.
 Since #70 the device no longer downloads from GitHub itself: KSM uploads its
 cached, signer-verified copy (KSM-BEHAVE-107/108).
 
-Shared by the update entity's Install, per-device auto-update and the
+Shared by the single-device Install button, per-device auto-update and the
 manager's Update all -- one verified sequence, not three copies.
 """
 from __future__ import annotations
@@ -44,6 +44,11 @@ _LOGGER = logging.getLogger(__name__)
 
 OUTCOME_UPDATED = "updated"
 OUTCOME_AWAITING_CONFIRMATION = "awaiting_confirmation"
+
+
+class ApiInstallUnavailable(HomeAssistantError):
+    """The device API could not be reached before installation began."""
+
 
 _TRANSIENT_ERRORS = (KsApiError, aiohttp.ClientError, asyncio.TimeoutError)
 _UPLOAD_CHUNK = 1 << 20
@@ -126,14 +131,17 @@ def _status_data(response: dict, entry: ConfigEntry) -> dict:
     return response["data"]
 
 
-async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> str:
+async def async_self_update_entry(
+    hass: HomeAssistant, entry: ConfigEntry, *, reinstall: bool = False
+) -> str:
     """KSM-BEHAVE-082: update Kiosk Satellite to the shared release check's
     latest version (or the version pinned in global settings, KSM-BEHAVE-114)
     over its own API.
 
     Returns OUTCOME_UPDATED or OUTCOME_AWAITING_CONFIRMATION. Raises
-    HomeAssistantError for the "failed" outcome -- never
-    constructs an AdbClient.
+    HomeAssistantError for the "failed" outcome. Only the explicit install
+    button sets ``reinstall``; it requests installation even for the same build.
+    The verifier recovery for an approved Portal recipe may use ADB.
     """
     coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if coordinator is not None and coordinator.ksm_installing:
@@ -160,7 +168,16 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
         coordinator.async_update_listeners()
     try:
         try:
-            token = await ks_api_client.login(session, host, password, pin=pin)
+            try:
+                token = await ks_api_client.login(session, host, password, pin=pin)
+            except (aiohttp.ClientConnectorError, asyncio.TimeoutError) as err:
+                # A certificate or TLS failure is a trust failure, not an
+                # unavailable API. Never bypass it by crossing to ADB.
+                if isinstance(err, (aiohttp.ClientConnectorCertificateError, aiohttp.ClientSSLError)):
+                    raise
+                raise ApiInstallUnavailable(
+                    f"Kiosk Satellite API is unreachable on {entry.title}"
+                ) from err
             abis = await _async_device_abis(session, host, token, pin)
             try:
                 apk = await apk_cache.async_release_apk(hass, release_info, abis)
@@ -181,7 +198,9 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
                             f"{uploaded.get('error') or 'upload refused'}"
                         )
                     data = uploaded.get("data") or {}
-                    if data.get("buildNumber") is not None and data.get("buildNumber") == data.get("currentBuild"):
+                    same_build = (data.get("buildNumber") is not None
+                                  and data.get("buildNumber") == data.get("currentBuild"))
+                    if same_build and not reinstall:
                         if coordinator is not None:
                             await coordinator.async_request_refresh()
                         return OUTCOME_UPDATED
@@ -193,7 +212,10 @@ async def async_self_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> st
                             f"Kiosk Satellite update failed on {entry.title}: "
                             f"{result.get('error') or 'installUploadedApk rejected'}"
                         )
-                    outcome = await _poll_until_resolved(session, host, token, version, entry, pin=pin)
+                    outcome = await _poll_until_resolved(
+                        session, host, token, version, entry, pin=pin,
+                        same_build_reinstall=same_build and reinstall,
+                    )
                     if coordinator is not None:
                         await coordinator.async_request_refresh()
                     return outcome
@@ -226,6 +248,7 @@ async def _poll_until_resolved(
     entry: ConfigEntry,
     *,
     pin: str | None,
+    same_build_reinstall: bool = False,
 ) -> str:
     """Poll /api/health and getUpdateStatus for a bounded window. A
     connection refused while the app restarts is expected, not a failure."""
@@ -235,7 +258,8 @@ async def _poll_until_resolved(
             health = await fetch_health(session, host, pin=pin)
         except (aiohttp.ClientError, asyncio.TimeoutError):
             health = None
-        if health is not None and health.get("appVersion") == version:
+        health_matches = health is not None and health.get("appVersion") == version
+        if health_matches and not same_build_reinstall:
             return OUTCOME_UPDATED
 
         try:
@@ -251,6 +275,9 @@ async def _poll_until_resolved(
                     f"Kiosk Satellite update failed on {entry.title}: {status['lastError']}"
                 )
             last_outcome = status.get("lastOutcome")
+            if (same_build_reinstall and health_matches and last_outcome == "silent"
+                    and status.get("installing") is False):
+                return OUTCOME_UPDATED
 
         if attempt < SELF_UPDATE_POLL_ATTEMPTS - 1:
             await asyncio.sleep(SELF_UPDATE_POLL_DELAY_S)

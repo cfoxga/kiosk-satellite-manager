@@ -1,12 +1,9 @@
-"""Install/Reinstall Kiosk Satellite button entity (Phase 1).
+"""Install/Reinstall Kiosk Satellite button entity.
 
-Delegates the fetch/push/install/launch/grant/sync sequence to
-install.install_and_launch (KSM-BEHAVE-007/008/010/011) so the config flow's
-auto-install step (KSM-BEHAVE-012) can reuse it unchanged. Flags the
-coordinator "installing" for the duration so the version sensor can show a
-transitional state instead of "Unavailable" (KSM-BEHAVE-007), then polls a
-few times after install so the sensor updates without waiting for the next
-5-minute cycle.
+Uses the KS API for an already-running device. If the API is unavailable before
+login, delegates the fetch/push/install/launch/grant/sync sequence to
+install.install_and_launch (KSM-BEHAVE-007/008/010/011), shared with the config
+flow's first-install step (KSM-BEHAVE-012).
 """
 from __future__ import annotations
 
@@ -64,7 +61,7 @@ from .credentials import TokenCredential, async_replace_entry_credential
 from .auto_update import is_older
 from .helpers import resolve_area_name, target_release
 from .install import install_and_launch, launcher_replacement_wanted, restore_private_dns
-from .ks_update import OUTCOME_AWAITING_CONFIRMATION, async_self_update_entry
+from .ks_update import ApiInstallUnavailable, OUTCOME_AWAITING_CONFIRMATION, async_self_update_entry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -120,23 +117,24 @@ def _store_private_dns_prior(hass: HomeAssistant, entry: ConfigEntry, prior: str
 
 
 async def async_install_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Install/upgrade Kiosk Satellite over ADB on one entry's device.
+    """Install on one device over its API, falling back to ADB when unavailable.
 
-    The Install/Reinstall button's own sequence -- *superseded 2026-09-24
-    (`#47`, KSM-BEHAVE-081/082)*: the update entity's Install and opt-in
-    auto-update now run `ks_update.async_self_update_entry` instead (Kiosk
-    Satellite's own `:2324` API), since ADB is refused after onboarding.
-    This function remains the ADB path used only by the Install/Reinstall
-    button and initial onboarding.
+    First attempts an API reinstall, including the installed build, then uses
+    the ADB recovery path if the API cannot be reached before login.
 
-    Refuses while this entry already has an install running -- two
-    concurrent ADB installs on one device is never intended.
+    Refuses while this entry already has an install running.
     """
     coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if coordinator is not None and coordinator.ksm_installing:
         raise HomeAssistantError(
             f"Kiosk Satellite install already in progress on {entry.title}"
         )
+    if entry.data.get(CONF_PASSWORD):
+        try:
+            await async_self_update_entry(hass, entry, reinstall=True)
+            return
+        except ApiInstallUnavailable:
+            _LOGGER.info("Kiosk Satellite API unavailable on %s; trying ADB install", entry.title)
     session = async_get_clientsession(hass)
     client = AdbClient(
         entry.data[CONF_HOST],

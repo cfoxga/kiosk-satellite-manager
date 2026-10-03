@@ -69,13 +69,15 @@ remotely. Do them once per device, in order:
   invitation after setting the local admin password and secure transport, before writing its HA
   settings. KS still keeps identity, remote access, HA credentials, and hardware preferences local;
   the selected Fleet syncs only the categories allowed by its Default profile after acceptance.
-- **Install** — connects over ADB, detects the device type (Meta Portal vs. Android TV stick, etc.),
-  fetches the matching Kiosk Satellite APK for the device's ABI from the project's GitHub releases,
-  and installs it. Each device gets an **Install Kiosk Satellite** button (install or reinstall) and
-  an **Uninstall Kiosk Satellite** button under Configuration. With the device's **Replace launcher**
-  option on (the default for Portal recipes, off for Android TV / onn devices), Install also makes
-  Kiosk Satellite the Android Home app and reads the resolver back; a miss raises a notification and
-  the install still completes. A device that already runs Kiosk Satellite can be added without ADB:
+- **Install** — on an already-running kiosk, uploads the selected Kiosk Satellite APK over its
+  `:2324` API and installs it, even when ADB is off. If the API is unreachable before login, or no
+  API password is stored, Install uses ADB for recovery. ADB also supports first-time onboarding,
+  device detection, permission grants, and launcher setup. Use **Fix permissions** for an installed
+  kiosk whose Android permissions need repair. Each device gets **Install Kiosk Satellite** and
+  **Uninstall Kiosk Satellite** buttons under Configuration. During onboarding or ADB recovery,
+  **Replace launcher** (on by default for Portal recipes) makes Kiosk Satellite the Android Home
+  app and reads the resolver back; an API reinstall leaves those Android settings alone. A device
+  that already runs Kiosk Satellite can be added without ADB:
   KSM reads it over its own API and asks only for its existing admin password.
 - **ESPHome** — the Add form's **Enable ESPHome** checkbox (defaulting to the manager option) turns
   on the kiosk's ESPHome server and its ESPHome entities, waits for Home Assistant to discover it, and

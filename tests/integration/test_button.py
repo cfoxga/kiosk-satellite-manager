@@ -40,12 +40,90 @@ from custom_components.kiosk_satellite_manager.device_catalog import NoApprovedR
 from custom_components.kiosk_satellite_manager import fleet
 from custom_components.kiosk_satellite_manager.button import async_install_entry
 from custom_components.kiosk_satellite_manager.ks_api import ReleaseInfo
+from custom_components.kiosk_satellite_manager.ks_update import ApiInstallUnavailable
 
 from .conftest import init_integration
 
 _LOGIN = "custom_components.kiosk_satellite_manager.ks_update.ks_api_client.login"
 _RUN_COMMAND = "custom_components.kiosk_satellite_manager.ks_update.ks_api_client.run_command"
 _POLL_HEALTH = "custom_components.kiosk_satellite_manager.ks_update.fetch_health"
+
+
+@pytest.fixture(autouse=True)
+def legacy_adb_install_tests(request):
+    """Existing ADB recovery tests exercise the fallback without a real socket."""
+    if (request.node.name.startswith("test_KSM_TEST_349")
+            or request.node.name == "test_update_all_updates_two_devices_over_the_ks_api"):
+        yield
+        return
+    with patch("custom_components.kiosk_satellite_manager.button.async_self_update_entry",
+               new=AsyncMock(side_effect=ApiInstallUnavailable("API offline"))):
+        yield
+
+
+@pytest.mark.parametrize("outcome", ["updated", "awaiting_confirmation"])
+async def test_KSM_TEST_349_install_uses_api_without_adb(hass, outcome):
+    entry = MockConfigEntry(domain=DOMAIN, title="Kitchen Portal", data={
+        CONF_HOST: "192.168.40.133", CONF_PASSWORD: "test-password",
+        "port": 5555, "key_path": "/tmp/test-key",
+    })
+    entry.add_to_hass(hass)
+    with patch("custom_components.kiosk_satellite_manager.button.async_self_update_entry",
+               new=AsyncMock(return_value=outcome)) as api, patch(
+        "custom_components.kiosk_satellite_manager.button.AdbClient"
+    ) as adb:
+        await async_install_entry(hass, entry)
+    api.assert_awaited_once_with(hass, entry, reinstall=True)
+    adb.assert_not_called()
+
+
+@pytest.mark.parametrize("error", [HomeAssistantError("bad password"),
+                                    HomeAssistantError("TLS pin changed")])
+async def test_KSM_TEST_349_api_rejection_never_falls_back_to_adb(hass, error):
+    entry = MockConfigEntry(domain=DOMAIN, title="Kitchen Portal", data={
+        CONF_HOST: "192.168.40.133", CONF_PASSWORD: "test-password",
+        "port": 5555, "key_path": "/tmp/test-key",
+    })
+    entry.add_to_hass(hass)
+    with patch("custom_components.kiosk_satellite_manager.button.async_self_update_entry",
+               new=AsyncMock(side_effect=error)), patch(
+        "custom_components.kiosk_satellite_manager.button.AdbClient"
+    ) as adb:
+        with pytest.raises(HomeAssistantError, match=str(error)):
+            await async_install_entry(hass, entry)
+    adb.assert_not_called()
+
+
+async def test_KSM_TEST_349_prelogin_api_unavailable_uses_adb(hass):
+    entry = MockConfigEntry(domain=DOMAIN, title="Kitchen Portal", data={
+        CONF_HOST: "192.168.40.133", CONF_PASSWORD: "test-password",
+        "port": 5555, "key_path": "/tmp/test-key",
+    })
+    entry.add_to_hass(hass)
+    with patch("custom_components.kiosk_satellite_manager.button.async_self_update_entry",
+               new=AsyncMock(side_effect=ApiInstallUnavailable("API offline"))), patch(
+        "custom_components.kiosk_satellite_manager.button.AdbClient"
+    ) as adb:
+        adb.return_value.connect = AsyncMock(side_effect=AdbConnectFailed("offline"))
+        with pytest.raises(HomeAssistantError, match="ADB is unreachable"):
+            await async_install_entry(hass, entry)
+    adb.assert_called_once()
+
+
+async def test_KSM_TEST_349_missing_password_uses_adb(hass):
+    entry = MockConfigEntry(domain=DOMAIN, title="Kitchen Portal", data={
+        CONF_HOST: "192.168.40.133", CONF_PASSWORD: None,
+        "port": 5555, "key_path": "/tmp/test-key",
+    })
+    entry.add_to_hass(hass)
+    with patch("custom_components.kiosk_satellite_manager.button.async_self_update_entry") as api, patch(
+        "custom_components.kiosk_satellite_manager.button.AdbClient"
+    ) as adb:
+        adb.return_value.connect = AsyncMock(side_effect=AdbConnectFailed("offline"))
+        with pytest.raises(HomeAssistantError, match="ADB is unreachable"):
+            await async_install_entry(hass, entry)
+    api.assert_not_called()
+    adb.assert_called_once()
 
 
 @pytest.mark.parametrize("native_subentry", [False, True])
