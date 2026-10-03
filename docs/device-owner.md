@@ -225,6 +225,37 @@ Running **Enable Device Owner** again on a Portal that is already Device Owner b
 login offers **Show Meta setup** instead. This restarts the same setup step without touching Device
 Owner.
 
+## Keeping ADB working after Device Owner
+
+ADB matters when you need it, for example to run Device Owner again, rerun an install recipe or
+investigate a problem. How you get it back doesn't matter, as long as you have a way that works.
+The following was verified on a factory-reset Portal+ (Gen 2, Android 10) enrolled through KSM.
+
+- **KSM does not reboot the Portal.** The Meta setup screen that comes back looks like a fresh
+  boot, but it isn't one. Wi-Fi stays configured, and ADB, including network ADB on port 5555,
+  keeps working while you sign in again.
+- **Network ADB does not survive a power cycle.** After a power off and on with no USB cable
+  connected, port 5555 refused connections, and a later reboot did not bring it back.
+  `adb tcpip 5555` sets a value that is cleared at boot (`persist.adb.tcp.port` stays empty).
+  Treat network ADB as gone after any restart unless something turns it back on.
+- **Ways to get it back.** Any of these works:
+  1. Connect a USB cable from a trusted computer and run `adb tcpip 5555`.
+  2. Leave a small USB host, such as a Raspberry Pi, attached permanently and have it run
+     `adb tcpip 5555` whenever the Portal appears. Network ADB is back within seconds of every boot.
+  3. Open Meta's **Settings → Debug** and switch **ADB Enabled** on. This needs the Meta sign-in.
+     If port 5555 still refuses afterwards, run `adb tcpip 5555` over USB.
+- **The Debug pane can be blank for a while after the Meta sign-in.** Meta's Settings app shows
+  **ADB Enabled** only after a request to Meta's servers returns the owners allowed to use ADB. We
+  have seen this take about 20 minutes, and we have seen it take under a second. Nothing on the
+  device needs to change: wait, then reopen **Settings → Debug**. The setting Meta's code logs as
+  `aloha_show_prod_adb_enabled_setting` is not what controls this.
+- **Avoid power cycles you don't need while network ADB is your only way in.** That includes a
+  reboot from Home Assistant or ESPHome. Set up one of the ways above first.
+- **Kiosk Satellite itself doesn't need ADB.** Updates, settings and backups go through Kiosk
+  Satellite's own API on port 2324 and keep working without ADB. KSM's ADB actions still need it:
+  **Enable Device Owner**, **Show Meta setup**, the Portal Gen 1 cleanup, install recipes and
+  uninstall.
+
 ## Portal Gen 1 (Android 9)
 
 Portal Gen 1 uses a different, separately confirmed flow. Its confirmation says plainly that the
@@ -257,8 +288,9 @@ KSM reports success only after fresh readbacks show:
 - every disabled package listed as disabled;
 - ADB on, port 5555, and a working ADB shell.
 
-If any check fails, KSM reports a partial cleanup. It has not yet been tested whether network ADB
-survives a reboot afterward.
+If any check fails, KSM reports a partial cleanup. Network ADB has not been tested across a reboot on
+Gen 1. Expect it to behave like Android 10 and be gone after a restart (see
+[Keeping ADB working after Device Owner](#keeping-adb-working-after-device-owner)).
 
 Portal+ Gen 1 shares the Android 9 install recipe, but it has not been qualified for this cleanup
 and is blocked.
@@ -313,3 +345,5 @@ Owner and everything else.
   give Device Owner back to Meta or hand it to another app.
 - If you skip the Meta sign-in, Kiosk Satellite keeps working, but the Portal's own "Enable ADB"
   setting can't be switched back on later from Meta's settings.
+- Network ADB is lost on every power cycle, and KSM can't turn it back on. See
+  [Keeping ADB working after Device Owner](#keeping-adb-working-after-device-owner).
