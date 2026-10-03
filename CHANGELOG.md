@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 - **Install Kiosk Satellite** no longer refuses to start when its Home Assistant device
   has no Area (#144). The Area picker remains part of adding a device.
