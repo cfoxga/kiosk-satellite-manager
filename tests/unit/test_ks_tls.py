@@ -20,6 +20,63 @@ from cryptography.x509.oid import NameOID
 
 from custom_components.kiosk_satellite_manager import install, ks_api_client, ks_tls, provisioning
 from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
+from custom_components.kiosk_satellite_manager.le_certificate import CertificateMaterial
+
+
+@pytest.mark.asyncio
+async def test_ha_certificate_import_uses_old_pin_and_checks_new_key(monkeypatch):
+    """[KSM-TEST-352] Private key travels only on pinned HTTPS; served key is checked."""
+    material = CertificateMaterial("certificate-pem", "private-key-pem", "bb" * 32, "cc" * 32)
+    login = AsyncMock(return_value="token")
+    command = AsyncMock(return_value={"ok": True})
+    probe = AsyncMock(return_value=(material.spki_sha256, material.fingerprint))
+    monkeypatch.setattr(ks_api_client, "login", login)
+    monkeypatch.setattr(ks_api_client, "run_command", command)
+    monkeypatch.setattr(ks_api_client, "probe_https_identity", probe, raising=False)
+    monkeypatch.setattr(ks_tls, "TLS_ENABLE_POLL_DELAY_S", 0)
+    result = await ks_tls.async_import_certificate(
+        MagicMock(), "192.0.2.61", "password", "aa" * 32, material
+    )
+    assert result == material.spki_sha256
+    assert login.await_args.kwargs == {"pin": "aa" * 32}
+    assert command.await_args.kwargs == {
+        "pin": "aa" * 32,
+        "params": {"certificate": "certificate-pem", "privateKey": "private-key-pem"},
+    }
+    assert command.await_args.args[3] == "importTlsCertificate"
+    probe.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ha_certificate_import_rejects_wrong_served_key(monkeypatch):
+    """[KSM-TEST-352] A successful command response alone is not proof of identity."""
+    material = CertificateMaterial("certificate-pem", "private-key-pem", "bb" * 32, "cc" * 32)
+    monkeypatch.setattr(ks_api_client, "login", AsyncMock(return_value="token"))
+    monkeypatch.setattr(ks_api_client, "run_command", AsyncMock(return_value={"ok": True}))
+    monkeypatch.setattr(ks_api_client, "probe_https_identity", AsyncMock(
+        return_value=("dd" * 32, material.fingerprint)
+    ), raising=False)
+    monkeypatch.setattr(ks_tls, "TLS_ENABLE_POLL_DELAY_S", 0)
+    with pytest.raises(KsApiError, match="did not serve the imported"):
+        await ks_tls.async_import_certificate(
+            MagicMock(), "192.0.2.61", "password", "aa" * 32, material
+        )
+
+
+@pytest.mark.asyncio
+async def test_ha_certificate_import_rejects_wrong_cert_on_same_key(monkeypatch):
+    """[KSM-TEST-352] A key match alone cannot prove the browser gets the HA cert."""
+    material = CertificateMaterial("certificate-pem", "private-key-pem", "bb" * 32, "cc" * 32)
+    monkeypatch.setattr(ks_api_client, "login", AsyncMock(return_value="token"))
+    monkeypatch.setattr(ks_api_client, "run_command", AsyncMock(return_value={"ok": True}))
+    monkeypatch.setattr(ks_api_client, "probe_https_identity", AsyncMock(
+        return_value=(material.spki_sha256, "dd" * 32)
+    ), raising=False)
+    monkeypatch.setattr(ks_tls, "TLS_ENABLE_POLL_DELAY_S", 0)
+    with pytest.raises(KsApiError, match="did not serve the imported"):
+        await ks_tls.async_import_certificate(
+            MagicMock(), "192.0.2.61", "password", "aa" * 32, material
+        )
 
 
 def _cert(key, serial: int) -> x509.Certificate:
@@ -178,6 +235,30 @@ async def test_probe_reports_the_served_key_and_none_for_plain_http(
             assert await ks_api_client.probe_https(session, "127.0.0.1") is None
     finally:
         await plain.stop()
+
+
+async def test_probe_identity_distinguishes_certificates_with_same_key(
+    tmp_path, monkeypatch, device_key
+):
+    """[KSM-TEST-352] Actual TLS captures the leaf cert, not only its public key."""
+    identities = []
+    for serial in (101, 102):
+        cert = _cert(device_key, serial)
+        listener = _Listener()
+        port = await listener.start(_server_context(tmp_path, device_key, cert, str(serial)))
+        monkeypatch.setattr(ks_api_client, "HEALTH_PORT", port)
+        try:
+            async with aiohttp.ClientSession() as session:
+                identity = await ks_api_client.probe_https_identity(session, "127.0.0.1")
+            assert identity == (
+                ks_api_client.spki_sha256_from_pem(_pem(cert)),
+                cert.fingerprint(hashes.SHA256()).hex(),
+            )
+            identities.append(identity)
+        finally:
+            await listener.stop()
+    assert identities[0][0] == identities[1][0]
+    assert identities[0][1] != identities[1][1]
 
 
 PIN = "ab" * 32

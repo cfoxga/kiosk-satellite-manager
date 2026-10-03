@@ -12,6 +12,7 @@ from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.kiosk_satellite_manager import fleet, ks_tls
+from custom_components.kiosk_satellite_manager import le_certificate
 from custom_components.kiosk_satellite_manager.const import (
     CONF_HOST, CONF_NAME, CONF_PASSWORD, CONF_TLS_SPKI, DOMAIN,
 )
@@ -170,3 +171,88 @@ async def test_use_https_without_a_stored_password_aborts(hass, pinned, tls_migr
     assert form["reason"] == "https_password_required"
     tls_migration.assert_not_awaited()
     assert (CONF_TLS_SPKI in read()) is pinned
+
+
+@pytest.mark.parametrize("surface", ["entry", "subentry"])
+async def test_letsencrypt_choice_imports_over_pinned_https(hass, surface, tls_migration):
+    """[KSM-TEST-352] The HA certificate is checked before enable and imported only over TLS."""
+    tls_migration.return_value = PIN
+    selected = le_certificate.CertificateMaterial("cert", "key", "cd" * 32, "ef" * 32)
+    checked = []
+
+    def load(hostname):
+        checked.append(hostname)
+        return selected
+
+    imported = AsyncMock(return_value=selected.spki_sha256)
+    manager, flow_id, read, form = await _open(hass, surface, pinned=False)
+    assert "certificate_source" in str(form["data_schema"])
+    assert "certificate_hostname" in str(form["data_schema"])
+    with patch.object(le_certificate, "load_for_hostname", side_effect=load), patch.object(
+        ks_tls, "async_import_certificate", new=imported
+    ):
+        result = await manager.async_configure(flow_id, {
+            "confirm": True, "certificate_source": "letsencrypt",
+            "certificate_hostname": "test-portal-mini.cfoxga.com",
+        })
+    assert result["reason"] == "https_enabled"
+    assert checked == ["test-portal-mini.cfoxga.com"]
+    tls_migration.assert_awaited_once()
+    assert imported.await_args.args[1:4] == (HOST, "secret", PIN)
+    assert imported.await_args.args[4] == selected
+    assert read()[CONF_TLS_SPKI] == selected.spki_sha256
+    assert read()["le_certificate_hostname"] == "test-portal-mini.cfoxga.com"
+    assert read()["le_certificate_fingerprint"] == selected.fingerprint
+
+
+async def test_letsencrypt_missing_host_coverage_never_enables_https(hass, tls_migration):
+    """[KSM-TEST-352] Preflight failure is before the first device mutation."""
+    manager, flow_id, read, _ = await _open(hass, "entry", pinned=False)
+    with patch.object(le_certificate, "load_for_hostname", side_effect=
+                      le_certificate.CertificateUnavailable("HA certificate does not cover this Portal hostname")):
+        result = await manager.async_configure(flow_id, {
+            "confirm": True, "certificate_source": "letsencrypt",
+            "certificate_hostname": "test-portal-mini.cfoxga.com",
+        })
+    assert result["reason"] == "https_certificate_unavailable"
+    tls_migration.assert_not_awaited()
+    assert CONF_TLS_SPKI not in read()
+
+
+async def test_letsencrypt_import_failure_preserves_established_pin(hass, tls_migration):
+    """[KSM-TEST-352] HTTPS is already enabled: retain its original key on import failure."""
+    tls_migration.return_value = PIN
+    selected = le_certificate.CertificateMaterial("cert", "key", "cd" * 32, "ef" * 32)
+    manager, flow_id, read, _ = await _open(hass, "entry", pinned=False)
+    with patch.object(le_certificate, "load_for_hostname", return_value=selected), patch.object(
+        ks_tls, "async_import_certificate", new=AsyncMock(side_effect=KsApiError("import rejected"))
+    ):
+        result = await manager.async_configure(flow_id, {
+            "confirm": True, "certificate_source": "letsencrypt",
+            "certificate_hostname": "test-portal-mini.cfoxga.com",
+        })
+    assert result["reason"] == "https_failed"
+    assert read()[CONF_TLS_SPKI] == PIN
+    assert "le_certificate_hostname" not in read()
+
+
+@pytest.mark.parametrize("surface", ["entry", "subentry"])
+async def test_pinned_device_can_adopt_ha_certificate_without_http(hass, surface, tls_migration):
+    """[KSM-TEST-352] An already-HTTPS device imports over its current pin."""
+    selected = le_certificate.CertificateMaterial("cert", "key", "cd" * 32, "ef" * 32)
+    imported = AsyncMock(return_value=selected.spki_sha256)
+    manager, flow_id, read, form = await _open(hass, surface, pinned=True)
+    assert form["step_id"] == "device_https_disable"
+    with patch.object(le_certificate, "load_for_hostname", return_value=selected), patch.object(
+        ks_tls, "async_import_certificate", new=imported
+    ):
+        result = await manager.async_configure(flow_id, {
+            "confirm": True, "https_action": "letsencrypt",
+            "certificate_hostname": "test-portal-mini.cfoxga.com",
+        })
+    assert result["reason"] == "https_enabled"
+    imported.assert_awaited_once()
+    assert imported.await_args.args[3] == PIN
+    assert read()[CONF_TLS_SPKI] == selected.spki_sha256
+    assert read()["le_certificate_hostname"] == "test-portal-mini.cfoxga.com"
+    tls_migration.assert_not_awaited()

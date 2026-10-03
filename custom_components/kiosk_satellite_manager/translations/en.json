@@ -200,16 +200,20 @@
       },
       "device_https_enable": {
         "title": "Use HTTPS for this device",
-        "description": "KSM will switch Kiosk Satellite's management port to HTTPS and pin the device's own self-signed key, so the device password and Home Assistant token never cross the network in plaintext.\n\nAfter the switch the device's web page answers only at https://{host}:2324; http:// stops working. Your browser warns about the self-signed certificate the first time you open it there — that warning is expected.\n\nNeeds Kiosk Satellite 2026.9.78 or later.",
+        "description": "Choose the device's self-signed certificate or the certificate from Home Assistant's Let's Encrypt add-on. The Let's Encrypt choice needs a Portal DNS name covered by HA's current certificate. HA's certificate and private key will be shared with this device; the add-on continues to renew them. KSM checks the certificate before changing the device and syncs later renewals.\n\nKSM switches the device to HTTPS on port 2324 and pins its key. HTTP stops working. A browser warns about the self-signed choice, while a valid Let's Encrypt certificate avoids that warning.\n\nNeeds Kiosk Satellite 2026.9.78 or later.",
         "data": {
-          "confirm": "Switch this device to HTTPS"
+          "confirm": "Switch this device to HTTPS",
+          "certificate_source": "Certificate source",
+          "certificate_hostname": "Portal DNS name for Let's Encrypt"
         }
       },
       "device_https_disable": {
         "title": "Switch this device back to HTTP",
-        "description": "This device is managed over pinned HTTPS. KSM will turn Use HTTPS off in Kiosk Satellite, wait for it to answer at http://{host}:2324, and then drop the pinned key.\n\nAfter that the device password and Home Assistant token travel in plaintext on your network.",
+        "description": "This device is managed over pinned HTTPS. Choose whether to switch back to HTTP or install HA's Let's Encrypt certificate without turning HTTPS off. For Let's Encrypt, enter a Portal DNS name covered by HA's certificate. HA's certificate and private key will be shared with this device and KSM will sync later renewals.\n\nSwitching to HTTP sends future device credentials in plaintext on your network.",
         "data": {
-          "confirm": "Switch this device back to HTTP"
+          "confirm": "Apply this HTTPS choice",
+          "https_action": "Action",
+          "certificate_hostname": "Portal DNS name for Let's Encrypt"
         }
       }
     },
@@ -246,11 +250,16 @@
       "https_enabled": "This device is now managed over pinned HTTPS. Open its web page at https:// on port 2324.",
       "https_disabled": "This device is back on plaintext HTTP. Its pinned HTTPS key was removed.",
       "https_unsupported": "This device's Kiosk Satellite is too old for HTTPS (needs 2026.9.78 or later). Nothing was changed.",
-      "https_failed": "The switch did not complete: {reason}. The device's saved transport was not changed.",
+      "https_failed": "The HTTPS operation did not complete: {reason}. Check the device's current certificate before retrying.",
+      "https_certificate_unavailable": "Cannot use HA's Let's Encrypt certificate: {reason}. No change was made to the device.",
       "https_password_required": "Set this device's Kiosk Satellite password first (Update Kiosk Satellite password)."
     }
   },
   "issues": {
+    "le_certificate_sync_failed": {
+      "title": "{name}: Portal HTTPS certificate could not be renewed",
+      "description": "KSM could not copy Home Assistant's current Let's Encrypt certificate to {name} ({host}). The device keeps its last trusted HTTPS certificate. Check the Let's Encrypt add-on, the Portal hostname in Use HTTPS, and device connectivity; KSM retries every six hours."
+    },
     "area_required": {
       "title": "{name} has no Area",
       "fix_flow": {
@@ -407,16 +416,20 @@
         },
         "device_https_enable": {
           "title": "Use HTTPS for this device",
-          "description": "KSM will switch Kiosk Satellite's management port to HTTPS and pin the device's own self-signed key, so the device password and Home Assistant token never cross the network in plaintext.\n\nAfter the switch the device's web page answers only at https://{host}:2324; http:// stops working. Your browser warns about the self-signed certificate the first time you open it there — that warning is expected.\n\nNeeds Kiosk Satellite 2026.9.78 or later.",
+          "description": "Choose the device's self-signed certificate or the certificate from Home Assistant's Let's Encrypt add-on. The Let's Encrypt choice needs a Portal DNS name covered by HA's current certificate. HA's certificate and private key will be shared with this device; the add-on continues to renew them. KSM checks the certificate before changing the device and syncs later renewals.\n\nKSM switches the device to HTTPS on port 2324 and pins its key. HTTP stops working. A browser warns about the self-signed choice, while a valid Let's Encrypt certificate avoids that warning.\n\nNeeds Kiosk Satellite 2026.9.78 or later.",
           "data": {
-            "confirm": "Switch this device to HTTPS"
+            "confirm": "Switch this device to HTTPS",
+            "certificate_source": "Certificate source",
+            "certificate_hostname": "Portal DNS name for Let's Encrypt"
           }
         },
         "device_https_disable": {
           "title": "Switch this device back to HTTP",
-          "description": "This device is managed over pinned HTTPS. KSM will turn Use HTTPS off in Kiosk Satellite, wait for it to answer at http://{host}:2324, and then drop the pinned key.\n\nAfter that the device password and Home Assistant token travel in plaintext on your network.",
+          "description": "This device is managed over pinned HTTPS. Choose whether to switch back to HTTP or install HA's Let's Encrypt certificate without turning HTTPS off. For Let's Encrypt, enter a Portal DNS name covered by HA's certificate. HA's certificate and private key will be shared with this device and KSM will sync later renewals.\n\nSwitching to HTTP sends future device credentials in plaintext on your network.",
           "data": {
-            "confirm": "Switch this device back to HTTP"
+            "confirm": "Apply this HTTPS choice",
+            "https_action": "Action",
+            "certificate_hostname": "Portal DNS name for Let's Encrypt"
           }
         }
       },
@@ -454,7 +467,8 @@
         "https_enabled": "This device is now managed over pinned HTTPS. Open its web page at https:// on port 2324.",
         "https_disabled": "This device is back on plaintext HTTP. Its pinned HTTPS key was removed.",
         "https_unsupported": "This device's Kiosk Satellite is too old for HTTPS (needs 2026.9.78 or later). Nothing was changed.",
-        "https_failed": "The switch did not complete: {reason}. The device's saved transport was not changed.",
+        "https_failed": "The HTTPS operation did not complete: {reason}. Check the device's current certificate before retrying.",
+        "https_certificate_unavailable": "Cannot use HA's Let's Encrypt certificate: {reason}. No change was made to the device.",
         "https_password_required": "Set this device's Kiosk Satellite password first (Update Kiosk Satellite password)."
       }
     }

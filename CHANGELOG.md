@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Use HTTPS** can install Home Assistant's existing Let's Encrypt add-on certificate on a
+  Kiosk Satellite device when that certificate covers the Portal's DNS name. KSM checks the
+  certificate and key before changing the device, imports them over pinned HTTPS, and syncs
+  later renewals, with a Home Assistant repair if a sync fails. An already-HTTPS device can
+  adopt the certificate without switching to HTTP. The device's self-signed certificate remains
+  an option. Devices selecting
+  the HA certificate share its private key; KSM does not issue certificates or change the
+  add-on's configuration (#167).
+
 - Choosing an Area while adding a device is optional again (#151). 0.5.0 made it required on every
   add path, so adding a device without one failed. An Area is still recommended: HAM and Bermuda
   need it to place the device.

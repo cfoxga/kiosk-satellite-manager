@@ -17,6 +17,7 @@ import aiohttp
 
 from . import ks_api_client
 from .ks_api_client import KsApiError
+from .le_certificate import CertificateMaterial
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -94,3 +95,32 @@ async def async_disable_tls(
             continue
         return
     raise KsApiError(f"{host} did not answer over HTTP after disabling remote.tls")
+
+
+async def async_import_certificate(
+    session: aiohttp.ClientSession, host: str, password: str, pin: str,
+    material: CertificateMaterial,
+) -> str:
+    """Import HA's certificate using only the currently pinned HTTPS channel.
+
+    KS restarts its listener after import. The unauthenticated probe then
+    confirms the exact public key we selected before trusting that new key.
+    """
+    token = await ks_api_client.login(session, host, password, pin=pin)
+    try:
+        result = await ks_api_client.run_command(
+            session, host, token, "importTlsCertificate", pin=pin,
+            params={"certificate": material.certificate, "privateKey": material.private_key},
+        )
+    except KsApiError:
+        raise KsApiError("Kiosk Satellite rejected the HA certificate") from None
+    if not result.get("ok"):
+        raise KsApiError("Kiosk Satellite rejected the HA certificate")
+    for _ in range(TLS_ENABLE_POLL_ATTEMPTS):
+        await asyncio.sleep(TLS_ENABLE_POLL_DELAY_S)
+        probed = await ks_api_client.probe_https_identity(session, host)
+        if probed is None:
+            continue
+        if probed == (material.spki_sha256, material.fingerprint):
+            return material.spki_sha256
+    raise KsApiError("Kiosk Satellite did not serve the imported certificate and key")

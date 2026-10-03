@@ -46,7 +46,7 @@ from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.helpers.network import get_url
 
 from . import (
-    apk_cache, device_owner, esphome_adopt, fleet, ks_api_client, ks_tls, meta_setup, support_log,
+    apk_cache, device_owner, esphome_adopt, fleet, ks_api_client, ks_tls, le_certificate, meta_setup, support_log,
     support_request,
 )
 from .helpers import recent_releases
@@ -62,6 +62,8 @@ from .const import (
     TARGET_VERSION_LATEST,
     CONF_PRIVATE_DNS_PRIOR,
     CONF_TLS_SPKI,
+    CONF_LE_CERTIFICATE_HOSTNAME,
+    CONF_LE_CERTIFICATE_FINGERPRINT,
     CONF_DEVICE_PROFILE,
     CONF_REPLACE_LAUNCHER,
     CONF_BACKUP_INTERVAL_HOURS,
@@ -102,7 +104,9 @@ from .const import (
 from .device_catalog import NoApprovedRecipe, require_recipe, resolve_catalog_entry
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .device_models import DeviceFacts, collect_identity_facts
-from .device_repairs import stash_dashboard_dns, tls_disabled_issue_id, tls_issue_id
+from .device_repairs import (
+    le_certificate_sync_issue_id, stash_dashboard_dns, tls_disabled_issue_id, tls_issue_id,
+)
 from .install import (
     DashboardDnsCheck,
     async_connect_ha,
@@ -370,6 +374,19 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
         if user_input is None or not user_input.get("confirm"):
             return self._https_form("device_https_enable", user_input)
         data = self._entry.data
+        certificate_source = user_input.get("certificate_source", "self_signed")
+        material = None
+        hostname = user_input.get("certificate_hostname", "").strip().lower()
+        if certificate_source == "letsencrypt":
+            try:
+                material = await self.hass.async_add_executor_job(
+                    le_certificate.load_for_hostname, hostname
+                )
+            except le_certificate.CertificateUnavailable as err:
+                return self.async_abort(
+                    reason="https_certificate_unavailable",
+                    description_placeholders={"reason": str(err)},
+                )
         try:
             pin = await ks_tls.async_establish_tls(
                 async_get_clientsession(self.hass), data[CONF_HOST], data[CONF_PASSWORD]
@@ -379,12 +396,53 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             return self._https_failed(err)
         if pin is None:
             return self.async_abort(reason="https_unsupported")
+        if material is not None:
+            # HTTPS is already on. Preserve its original trusted key even if
+            # certificate import fails after this point.
+            fleet.update_device(self.hass, self._entry, data={**data, CONF_TLS_SPKI: pin})
+            try:
+                new_pin = await ks_tls.async_import_certificate(
+                    async_get_clientsession(self.hass), data[CONF_HOST], data[CONF_PASSWORD],
+                    pin, material,
+                )
+            except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError) as err:
+                _LOGGER.warning("Could not install HA certificate on %s: %s", data[CONF_HOST], err)
+                return self._https_failed(err)
+            return await self._https_saved({
+                **data, CONF_TLS_SPKI: new_pin,
+                CONF_LE_CERTIFICATE_HOSTNAME: hostname,
+                CONF_LE_CERTIFICATE_FINGERPRINT: material.fingerprint,
+            }, "https_enabled")
         return await self._https_saved({**data, CONF_TLS_SPKI: pin}, "https_enabled")
 
     async def async_step_device_https_disable(self, user_input: dict | None = None) -> FlowResult:
         if user_input is None or not user_input.get("confirm"):
             return self._https_form("device_https_disable", user_input)
         data = self._entry.data
+        if user_input.get("https_action", "disable") == "letsencrypt":
+            hostname = user_input.get("certificate_hostname", "").strip().lower()
+            try:
+                material = await self.hass.async_add_executor_job(
+                    le_certificate.load_for_hostname, hostname
+                )
+            except le_certificate.CertificateUnavailable as err:
+                return self.async_abort(
+                    reason="https_certificate_unavailable",
+                    description_placeholders={"reason": str(err)},
+                )
+            try:
+                new_pin = await ks_tls.async_import_certificate(
+                    async_get_clientsession(self.hass), data[CONF_HOST], data[CONF_PASSWORD],
+                    data[CONF_TLS_SPKI], material,
+                )
+            except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError) as err:
+                _LOGGER.warning("Could not install HA certificate on %s: %s", data[CONF_HOST], err)
+                return self._https_failed(err)
+            return await self._https_saved({
+                **data, CONF_TLS_SPKI: new_pin,
+                CONF_LE_CERTIFICATE_HOSTNAME: hostname,
+                CONF_LE_CERTIFICATE_FINGERPRINT: material.fingerprint,
+            }, "https_enabled")
         try:
             await ks_tls.async_disable_tls(
                 async_get_clientsession(self.hass), data[CONF_HOST], data[CONF_PASSWORD],
@@ -394,13 +452,46 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             _LOGGER.warning("Could not switch %s back to HTTP: %s", data[CONF_HOST], err)
             return self._https_failed(err)
         return await self._https_saved(
-            {k: v for k, v in data.items() if k != CONF_TLS_SPKI}, "https_disabled"
+            {k: v for k, v in data.items() if k not in (
+                CONF_TLS_SPKI, CONF_LE_CERTIFICATE_HOSTNAME, CONF_LE_CERTIFICATE_FINGERPRINT,
+            )}, "https_disabled"
         )
 
     def _https_form(self, step_id: str, user_input: dict | None) -> FlowResult:
+        fields = {vol.Required("confirm", default=False): bool}
+        if step_id == "device_https_enable":
+            fields[vol.Optional("certificate_source", default="self_signed")] = (
+                selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=[
+                        {"value": "self_signed", "label": "Device self-signed"},
+                        {"value": "letsencrypt", "label": "HA Let's Encrypt add-on"},
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                ))
+            )
+            fields[vol.Optional("certificate_hostname", default=self._entry.data[CONF_HOST])] = (
+                selector.TextSelector(selector.TextSelectorConfig(
+                    type=selector.TextSelectorType.TEXT
+                ))
+            )
+        else:
+            fields[vol.Optional("https_action", default="disable")] = (
+                selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=[
+                        {"value": "disable", "label": "Switch back to HTTP"},
+                        {"value": "letsencrypt", "label": "Use HA Let's Encrypt certificate"},
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                ))
+            )
+            fields[vol.Optional("certificate_hostname", default=self._entry.data.get(
+                CONF_LE_CERTIFICATE_HOSTNAME, self._entry.data[CONF_HOST]
+            ))] = selector.TextSelector(selector.TextSelectorConfig(
+                type=selector.TextSelectorType.TEXT
+            ))
         return self.async_show_form(
             step_id=step_id,
-            data_schema=vol.Schema({vol.Required("confirm", default=False): bool}),
+            data_schema=vol.Schema(fields),
             description_placeholders={"host": self._entry.data[CONF_HOST]},
             errors={"confirm": "confirm_required"} if user_input is not None else {},
         )
@@ -416,7 +507,8 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
         re-poll on it (KSM-BEHAVE-169)."""
         fleet.update_device(self.hass, self._entry, data=data)
         for issue_id in (tls_issue_id(self._entry.entry_id),
-                         tls_disabled_issue_id(self._entry.entry_id)):
+                         tls_disabled_issue_id(self._entry.entry_id),
+                         le_certificate_sync_issue_id(self._entry.entry_id)):
             ir.async_delete_issue(self.hass, DOMAIN, issue_id)
         coordinator = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
         if coordinator is not None:

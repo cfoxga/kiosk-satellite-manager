@@ -85,9 +85,12 @@ class _SpkiCapture(aiohttp.Fingerprint):
     def __init__(self) -> None:
         super().__init__(bytes(32))
         self.spki: str | None = None
+        self.cert_sha256: str | None = None
 
     def check(self, transport: asyncio.Transport) -> None:
-        self.spki = spki_sha256_from_der(_peer_der(transport))
+        der = _peer_der(transport)
+        self.spki = spki_sha256_from_der(der)
+        self.cert_sha256 = hashlib.sha256(der).hexdigest()
 
 
 # One SpkiPin per pin: the connector pools connections by the ssl object.
@@ -134,6 +137,27 @@ async def probe_https(
 ) -> tuple[str, dict] | None:
     """Unauthenticated HTTPS GET that accepts any key and reports it:
     (served SPKI, JSON body), or None when nothing answers over TLS."""
+    captured = await _probe_https_capture(session, host, path)
+    if captured is None:
+        return None
+    capture, body = captured
+    return capture.spki, body
+
+
+async def probe_https_identity(
+    session: aiohttp.ClientSession, host: str,
+) -> tuple[str, str] | None:
+    """Read the key and leaf certificate fingerprint served on the TLS socket."""
+    captured = await _probe_https_capture(session, host, "/api/health")
+    if captured is None:
+        return None
+    capture, _body = captured
+    return capture.spki, capture.cert_sha256
+
+
+async def _probe_https_capture(
+    session: aiohttp.ClientSession, host: str, path: str,
+) -> tuple[_SpkiCapture, dict] | None:
     capture = _SpkiCapture()
     try:
         async with session.get(
@@ -146,9 +170,9 @@ async def probe_https(
             body = await resp.json(content_type=None)
     except (aiohttp.ClientError, TimeoutError, ValueError):
         return None
-    if capture.spki is None:
+    if capture.spki is None or capture.cert_sha256 is None:
         return None
-    return capture.spki, body
+    return capture, body
 
 
 async def get_health(session: aiohttp.ClientSession, host: str, *, pin: str | None) -> dict:
