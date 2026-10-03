@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Reporting a problem is now one file: **Download diagnostics** on any KSM entry (Settings →
+  Devices & services → Kiosk Satellite Manager → ⋮) includes a record of the last 20 installs,
+  Device Owner enrollments, Android 9 cleanups and Meta setup screens: each step KSM ran on the
+  device, its result and timing, and whether the device rebooted. The record holds no passwords,
+  tokens, addresses, device or account names, or command output (#133).
+- The Device Owner confirmation and the notification that follows it now say that the Portal did
+  not reboot or reset. Meta's setup screen appears because enrollment removes the Meta login, and
+  you sign in once (#133).
+- KSM's "Enable debug logging" no longer turns on the `adb_shell` library's transport log (#133).
+- Kiosk Satellite Manager now has its own icon in Home Assistant (Settings → Devices & services,
+  HACS, and the integration picker) instead of the blank placeholder (#134).
 - Adding a device that already runs Kiosk Satellite (no ADB) now points it at this Home
   Assistant: KSM writes the kiosk's Home Assistant URL, a new KSM-owned token and the start
   page, as Install does. Before this fix a kiosk moved from another Home Assistant stayed on

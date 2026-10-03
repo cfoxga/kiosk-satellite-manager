@@ -26,7 +26,7 @@ from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from . import device_owner, fleet, ks_api_client
+from . import device_owner, fleet, ks_api_client, support_log
 from .adb_client import AdbClient
 from .const import DOMAIN, CONF_HOST, CONF_PORT, CONF_KEY_PATH, CONF_PASSWORD, CONF_TLS_SPKI, CONF_DEVICE_PROFILE, CONF_NAME
 from .ks_api_client import KsApiError
@@ -199,8 +199,9 @@ async def async_start(
     notify(
         hass,
         target,
-        "The Portal is showing Meta's setup screen. Finish setup there and sign "
-        "in with Facebook or WhatsApp. "
+        "The Portal is showing Meta's setup screen. It did not reboot or reset: "
+        "Device Owner removed its Meta login, so finish setup there and sign "
+        "in with Facebook or WhatsApp once. "
         f"{lock_note} This notice updates when "
         f"the Meta login is back (checked for {int(WATCH_TIMEOUT_S // 60)} minutes).",
     )
@@ -211,6 +212,8 @@ async def async_start(
 
 
 async def _watch(hass: HomeAssistant, target: Target, turned_off: tuple[str, ...], started_at: float) -> None:
+    # Started inside a support run; this task's own steps are not that run's.
+    support_log.detach()
     deadline = started_at + WATCH_TIMEOUT_S
     client = AdbClient(target.host, target.port, target.key_path)
     connected = False
@@ -244,8 +247,13 @@ async def _watch(hass: HomeAssistant, target: Target, turned_off: tuple[str, ...
                     f"use Configure → Enable Device Owner to show the setup screen again.{lock}",
                 )
                 _save_pending(hass, target, None, started_at)
+                await support_log.async_event(hass, "meta_watch", model_key=target.model_key,
+                                              result="timeout")
                 return
             await asyncio.sleep(WATCH_INTERVAL_S)
+        uptime = await client.uptime_s() if hasattr(client, "uptime_s") else None
+        await support_log.async_event(hass, "meta_watch", model_key=target.model_key,
+                                      result="login_returned", uptime_s=uptime)
     finally:
         with contextlib.suppress(Exception):
             await client.close()

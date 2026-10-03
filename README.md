@@ -174,6 +174,11 @@ See [CHANGELOG.md](CHANGELOG.md).
 Report bugs and requests on [GitHub Issues](https://github.com/cfoxga/kiosk-satellite-manager/issues). See [CONTRIBUTING.md](CONTRIBUTING.md) for
 development setup.
 
+When an install or Device Owner enrollment goes wrong, attach the entry's **Download
+diagnostics** file (Settings → Devices & services → Kiosk Satellite Manager → ⋮). It lists what
+KSM ran on the device and whether the device rebooted, and holds no passwords, tokens,
+addresses or names.
+
 ## License
 
 [MIT](LICENSE)

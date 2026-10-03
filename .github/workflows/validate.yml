@@ -23,5 +23,6 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          # Remove once the integration's icon is accepted into home-assistant/brands.
+          # The icon ships in custom_components/kiosk_satellite_manager/brand/ (HA 2026.3+
+          # serves it locally); remove once hacs/action is confirmed to accept that.
           ignore: brands
