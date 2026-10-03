@@ -11,8 +11,10 @@ from typing import TYPE_CHECKING, Final
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 
-from .const import CONF_DEVICE_PROFILE, DOMAIN
-from .device_catalog import NoApprovedRecipe, require_recipe
+from .adb_client import AdbClient
+from .const import CONF_DEVICE_PROFILE, CONF_HOST, CONF_KEY_PATH, CONF_PORT, DOMAIN
+from .device_catalog import NoApprovedRecipe, require_recipe, resolve_catalog_entry
+from .device_models import collect_identity_facts
 from .device_owner import FACTORY_RESET_SCREENS
 
 if TYPE_CHECKING:
@@ -92,6 +94,34 @@ def sync_device_support(hass: HomeAssistant, entry: ConfigEntry | DeviceEntry) -
         translation_placeholders={"name": entry.title},
         data={"entry_id": entry.entry_id},
     )
+
+
+def needs_model_resolution(entry: ConfigEntry | DeviceEntry) -> bool:
+    """KSM-BEHAVE-173: saved with no model and no support request sent."""
+    return entry.data.get(CONF_DEVICE_PROFILE) is None and not entry.data.get(SUPPORT_REQUESTED)
+
+
+async def async_resolve_device_model(hass: HomeAssistant, entry: ConfigEntry | DeviceEntry) -> None:
+    """KSM-BEHAVE-173: read a no-model device's identity, store an executable
+    match, then judge support. A device that cannot be read is not judged."""
+    from .fleet import DeviceEntry, update_device  # fleet imports this module
+
+    client: AdbClient | None = None
+    try:
+        client = AdbClient(entry.data[CONF_HOST], entry.data[CONF_PORT], entry.data[CONF_KEY_PATH])
+        await client.connect()
+        resolution = resolve_catalog_entry(await collect_identity_facts(client))
+    except Exception as err:  # noqa: BLE001 -- an unread device is missing evidence
+        _LOGGER.debug("%s: model not resolved over ADB: %r", entry.title, err)
+        return
+    finally:
+        if client is not None:
+            await client.close()
+    if isinstance(entry, DeviceEntry) and not entry.present:
+        return
+    if resolution.executable:
+        update_device(hass, entry, data={**entry.data, CONF_DEVICE_PROFILE: resolution.model_key})
+    sync_device_support(hass, entry)
 
 
 def apply_dashboard_dns(

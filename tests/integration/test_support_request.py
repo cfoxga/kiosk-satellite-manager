@@ -1,15 +1,18 @@
 """KSM-TEST-330..332 (#135): the device-support repair, its fix flow, the
 support_request service and the request in Download diagnostics.
+KSM-TEST-345 (#141): setup resolves a device saved with no model first.
 
 Only the ADB transport is faked: the collector, catalog resolution, request
 builder, issue registry and repairs flow manager are the real ones.
 """
 from __future__ import annotations
 
+from types import MappingProxyType
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlsplit
 
 from homeassistant.components.repairs import repairs_flow_manager
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import SupportsResponse
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import ServiceValidationError
@@ -17,13 +20,16 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.setup import async_setup_component
 import pytest
 
-from custom_components.kiosk_satellite_manager import diagnostics
+from custom_components.kiosk_satellite_manager import diagnostics, fleet
+from custom_components.kiosk_satellite_manager.adb_client import AdbConnectFailed
 from custom_components.kiosk_satellite_manager.const import CONF_DEVICE_PROFILE, DOMAIN
 
 from .conftest import admin_context, init_integration
+from .test_global_settings import _manager
 
 _HEALTH = "custom_components.kiosk_satellite_manager.fetch_health"
 _ADB = "custom_components.kiosk_satellite_manager.support_request.AdbClient"
+_SETUP_ADB = "custom_components.kiosk_satellite_manager.device_repairs.AdbClient"
 _REVOKE_ENTRY = "custom_components.kiosk_satellite_manager.async_revoke_owned_credential"
 
 _ONN_BOX = {
@@ -45,23 +51,42 @@ def _issue(hass, entry):
     return ir.async_get(hass).async_get_issue(DOMAIN, _issue_id(entry))
 
 
-async def _setup(hass, **data):
-    with patch(_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.87"})):
-        return (await init_integration(hass, data=data)).entry
+async def _setup(hass, *, identity: dict[str, str] | None = _ONN_BOX, **data):
+    """Set up one device; setup's no-model read (KSM-BEHAVE-173) sees
+    `identity`, by default a TV that matches no library model. None keeps
+    the conftest default, an ADB connect failure."""
+    patcher = _adb(identity, target=_SETUP_ADB)[0] if identity is not None else None
+    try:
+        with patch(_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.87"})):
+            entry = (await init_integration(hass, data=data)).entry
+        await hass.async_block_till_done(wait_background_tasks=True)
+    finally:
+        if patcher is not None:
+            patcher.stop()
+    return entry
 
 
-def _adb(props: dict[str, str] | None = None, *, connect_error: Exception | None = None):
-    """Patch support_request's AdbClient with a shell answering `props`."""
+def _adb(
+    props: dict[str, str] | None = None,
+    *,
+    connect_error: Exception | None = None,
+    target: str = _ADB,
+):
+    """Patch `target`'s AdbClient with a shell answering `props`."""
     async def shell(command: str) -> str:
         if command.startswith("getprop "):
             return (props or {}).get(command.removeprefix("getprop "), "")
         return ""
 
-    patcher = patch(_ADB)
+    async def getprop(prop: str) -> str:
+        return (await shell(f"getprop {prop}")).strip()
+
+    patcher = patch(target)
     client_cls = patcher.start()
     client = client_cls.return_value
     client.connect = AsyncMock(side_effect=connect_error)
     client.shell = AsyncMock(side_effect=shell)
+    client.getprop = AsyncMock(side_effect=getprop)
     client.close = AsyncMock()
     return patcher, client
 
@@ -95,6 +120,88 @@ async def test_KSM_TEST_330_removing_the_device_clears_the_repair(hass):
         await hass.config_entries.async_remove(entry.entry_id)
         await hass.async_block_till_done()
     assert _issue(hass, entry) is None
+
+
+# --- KSM-TEST-345: setup resolves a device saved with no model ------------
+
+async def test_KSM_TEST_345_a_no_model_device_that_is_a_library_model_stores_it(hass):
+    entry = await _setup(hass, identity=_ONN_PRO)
+    assert entry.data[CONF_DEVICE_PROFILE] == "onn_4k_pro_android14"
+    assert _issue(hass, entry) is None
+    # Control: the same setup with an unmatched TV does raise.
+    other = await _setup(hass, host="192.168.99.95")
+    assert other.data.get(CONF_DEVICE_PROFILE) is None
+    assert _issue(hass, other) is not None
+
+    # The stored model is never re-read.
+    patcher, client = _adb(_ONN_BOX, target=_SETUP_ADB)
+    try:
+        with patch(_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.87"})):
+            assert await hass.config_entries.async_reload(entry.entry_id)
+            await hass.async_block_till_done(wait_background_tasks=True)
+        client.connect.assert_not_awaited()
+    finally:
+        patcher.stop()
+    assert entry.data[CONF_DEVICE_PROFILE] == "onn_4k_pro_android14"
+    assert _issue(hass, entry) is None
+
+
+async def test_KSM_TEST_345_a_fleet_subentry_with_no_model_stores_it(hass):
+    """The prod shape: a migrated fleet subentry that was saved with no model."""
+    await _manager(hass)
+    unmanaged = fleet.unmanaged_entry(hass)
+    hass.config_entries.async_add_subentry(unmanaged, ConfigSubentry(
+        data=MappingProxyType({"host": "192.168.99.72", "port": 5555,
+                               "key_path": "/tmp/adbkey", "password": "",
+                               "device_profile": None}),
+        subentry_id="gtv-ha", subentry_type="device", title="Great Room GTV",
+        unique_id="gtv-ha",
+    ))
+    patcher, client = _adb(_ONN_PRO, target=_SETUP_ADB)
+    try:
+        with patch(_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.87"})):
+            assert await hass.config_entries.async_reload(unmanaged.entry_id)
+            await hass.async_block_till_done(wait_background_tasks=True)
+    finally:
+        patcher.stop()
+    assert unmanaged.subentries["gtv-ha"].data[CONF_DEVICE_PROFILE] == "onn_4k_pro_android14"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, "device_support_gtv-ha") is None
+    client.close.assert_awaited()
+
+
+async def test_KSM_TEST_345_an_unreachable_device_raises_nothing_and_stores_nothing(hass):
+    entry = await _setup(hass, identity=None)  # the conftest default: connect fails
+    assert entry.data.get(CONF_DEVICE_PROFILE) is None
+    assert _issue(hass, entry) is None
+    patcher, client = _adb(connect_error=AdbConnectFailed("offline"), target=_SETUP_ADB)
+    try:
+        with patch(_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.87"})):
+            assert await hass.config_entries.async_reload(entry.entry_id)
+            await hass.async_block_till_done(wait_background_tasks=True)
+    finally:
+        patcher.stop()
+    # The next setup reads it again, and still neither raises nor stores.
+    client.connect.assert_awaited()
+    assert entry.data.get(CONF_DEVICE_PROFILE) is None
+    assert _issue(hass, entry) is None
+
+
+async def test_KSM_TEST_345_a_stored_or_requested_device_opens_no_adb(hass):
+    patcher, client = _adb(_ONN_PRO, target=_SETUP_ADB)
+    try:
+        with patch(_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.87"})):
+            unknown = (await init_integration(
+                hass, data={CONF_DEVICE_PROFILE: "not_a_model", "host": "192.168.99.94"})).entry
+            requested = (await init_integration(
+                hass, data={"support_requested": True, "host": "192.168.99.93"})).entry
+        await hass.async_block_till_done(wait_background_tasks=True)
+        client.connect.assert_not_awaited()
+    finally:
+        patcher.stop()
+    assert unknown.data[CONF_DEVICE_PROFILE] == "not_a_model"
+    assert _issue(hass, unknown) is not None
+    assert requested.data.get(CONF_DEVICE_PROFILE) is None
+    assert _issue(hass, requested) is None
 
 
 # --- KSM-TEST-331: the fix flow --------------------------------------------

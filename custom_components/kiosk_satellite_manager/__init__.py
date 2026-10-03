@@ -78,8 +78,8 @@ from .const import (
 from . import auto_update, config_backup, fleet, follower_updates, meta_setup, support_request
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .device_repairs import (
-    apply_dashboard_dns, clear_device_repairs, sync_device_support, take_dashboard_dns,
-    tls_disabled_issue_id, tls_issue_id,
+    apply_dashboard_dns, async_resolve_device_model, clear_device_repairs, needs_model_resolution,
+    sync_device_support, take_dashboard_dns, tls_disabled_issue_id, tls_issue_id,
 )
 from .ks_api import ReleaseInfo, latest_release_info
 from .ks_update import async_check_device_for_update, async_check_devices_for_update
@@ -461,7 +461,13 @@ async def _async_setup_device(hass: HomeAssistant, entry: ConfigEntry | fleet.De
     if (check := take_dashboard_dns(hass, host)) is not None:
         # KSM-BEHAVE-154: onboarding checked DNS before this entry existed.
         apply_dashboard_dns(hass, entry.entry_id, check, entry.title, host)
-    sync_device_support(hass, entry)
+    if needs_model_resolution(entry):
+        # KSM-BEHAVE-173: never judge support on a model nobody stored.
+        entry.async_create_background_task(
+            hass, async_resolve_device_model(hass, entry), f"{DOMAIN}_resolve_model_{host}"
+        )
+    else:
+        sync_device_support(hass, entry)
 
     async def _update():
         # Read at call time: Use HTTPS, the Install button and the repair

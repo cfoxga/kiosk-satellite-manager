@@ -44,6 +44,18 @@ def _permissions_adb_unreachable():
 
 
 @pytest.fixture(autouse=True)
+def _model_resolution_adb_unreachable():
+    """Setup's no-model identity read (KSM-BEHAVE-173) must never open a
+    real socket; a test that needs it answers patches it itself."""
+    from custom_components.kiosk_satellite_manager.adb_client import AdbConnectFailed
+
+    client = AsyncMock()
+    client.connect = AsyncMock(side_effect=AdbConnectFailed("test: no device"))
+    with patch("custom_components.kiosk_satellite_manager.device_repairs.AdbClient", return_value=client):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations):
     """Allow HA to load the custom kiosk_satellite_manager integration in
     every integration test."""

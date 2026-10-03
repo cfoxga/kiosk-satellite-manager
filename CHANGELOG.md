@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Supported devices added before their model was in the device library no longer show *Request
+  support for …?* (#141). These devices were saved with no model, and KSM treated "no model" as
+  "unsupported". Now, when such a device starts, KSM reads its identity over ADB in the background
+  (read-only) and saves the model it matches. The repair appears only if the device really matches
+  nothing in the library. A device KSM can't reach over ADB gets no repair and is checked again at
+  the next start. You no longer need to press **Install Kiosk Satellite** just to clear the repair.
+
 - **Uninstall Kiosk Satellite** on a device where Kiosk Satellite is the Device Owner now tells
   you why it can't, instead of failing with `DELETE_FAILED_DEVICE_POLICY_MANAGER` (#140). Android
   never uninstalls a Device Owner; only a factory reset removes it. KSM now checks first, changes
