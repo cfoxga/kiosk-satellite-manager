@@ -175,6 +175,21 @@ def tls_migration():
 
 
 @pytest.fixture(autouse=True)
+def ks_connect_ha():
+    """KSM-BEHAVE-163: the ADB-free add writes the kiosk's HA settings over
+    its API. Keep it off the network; `test_config_flow.py`'s KSM-TEST-326/327
+    put the real helper back and stub only the KS API calls under it."""
+    from custom_components.kiosk_satellite_manager.credentials import TokenCredential
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.async_connect_ha",
+        new=AsyncMock(return_value=TokenCredential("minted-token", "refresh-id", owned=True)),
+        create=True,
+    ) as mock:
+        yield mock
+
+
+@pytest.fixture(autouse=True)
 def esphome_identity():
     """KSM-BEHAVE-110: each device setup fills an empty ESPHome node name over
     the KS API in the background. Keep it off the network;

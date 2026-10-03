@@ -879,7 +879,9 @@ async def _start_ks_flow(hass, host="192.168.40.250"):
     )
 
 
-async def test_ks_running_device_is_added_without_adb(hass, ks_health_probe, tls_migration):
+async def test_ks_running_device_is_added_without_adb(
+    hass, ks_health_probe, tls_migration, ks_connect_ha
+):
     """[KSM-TEST-185] KSM-BEHAVE-096: a host whose Kiosk Satellite answers
     health is added from health + password alone -- no AdbClient at all."""
     ks_health_probe.return_value = (None, _PORTAL_MINI_HEALTH)
@@ -913,7 +915,10 @@ async def test_ks_running_device_is_added_without_adb(hass, ks_health_probe, tls
     assert data[CONF_PASSWORD] == "hunter222"
     assert data["tls_spki_sha256"] == _PIN
     assert data["port"] == 5555 and data["key_path"]
-    assert "home_launcher" not in data and CONF_HA_TOKEN not in data
+    assert "home_launcher" not in data
+    # KSM-BEHAVE-163: the HA credential written to the kiosk is the entry's.
+    assert data[CONF_HA_TOKEN] == "minted-token"
+    assert ks_connect_ha.await_args.kwargs["pin"] == _PIN
     mock_client_cls.assert_not_called()
     mock_install.assert_not_called()
     tls_migration.assert_awaited_once()
@@ -1098,3 +1103,102 @@ async def test_ks_device_with_a_password_is_never_first_run_setup(
         await hass.async_block_till_done()
 
     mock_setup.assert_not_awaited()
+
+
+_HA_B = "https://ha-b.example:8123"
+
+
+async def _ks_only_add(hass, health, host="192.168.40.250", *, patch_effect=None):
+    """Drive the ADB-free add with the real KSM-BEHAVE-163 helper; only the
+    Kiosk Satellite HTTP calls under it are stubbed."""
+    from custom_components.kiosk_satellite_manager import install
+
+    with patch(
+        "custom_components.kiosk_satellite_manager.config_flow.async_connect_ha",
+        new=install.async_connect_ha,
+    ), patch(
+        "custom_components.kiosk_satellite_manager.config_flow._manager_options",
+        return_value={"ha_url": _HA_B},
+    ), patch(
+        "custom_components.kiosk_satellite_manager.config_flow.login",
+        new=AsyncMock(return_value="ks-session"),
+    ), patch(
+        "custom_components.kiosk_satellite_manager.ks_api_client.patch_settings",
+        new=AsyncMock(side_effect=patch_effect),
+    ) as mock_patch, patch(
+        "custom_components.kiosk_satellite_manager.ks_api_client.check_ha_connection",
+        new=AsyncMock(return_value=(True, None)),
+    ), patch(
+        "custom_components.kiosk_satellite_manager.fetch_health",
+        new=AsyncMock(return_value={"appVersion": health["appVersion"]}),
+    ):
+        result = await _start_ks_flow(hass, host)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_PASSWORD: "hunter222", "enable_esphome": False}
+        )
+        await hass.async_block_till_done()
+    return result, mock_patch
+
+
+async def test_ks_only_add_points_the_kiosk_at_this_ha(hass, ks_health_probe, tls_migration):
+    """[KSM-TEST-326] KSM-BEHAVE-163: a kiosk still configured for another HA
+    is repointed at this one -- ha.url, ha.token and the recipe start page --
+    over the pinned channel, and the entry owns the minted credential."""
+    ks_health_probe.return_value = (None, _PORTAL_MINI_HEALTH)
+    tls_migration.return_value = _PIN
+    result, mock_patch = await _ks_only_add(hass, _PORTAL_MINI_HEALTH)
+
+    assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    mock_patch.assert_awaited_once()
+    args, kwargs = mock_patch.await_args
+    assert args[1:3] == ("192.168.40.250", "ks-session")
+    assert kwargs["pin"] == _PIN
+    settings = args[3]
+    assert settings["ha.url"] == _HA_B
+    assert settings["browser.start_url"] == f"{_HA_B}/portal"
+    assert settings["browser.ignore_ssl_errors"] is False
+    data = result["data"]
+    assert data[CONF_HA_TOKEN] == settings["ha.token"]
+    assert data["ha_token_owned"] is True
+    assert data[CONF_TOKEN_MODE] == TOKEN_MODE_AUTO
+    refresh = hass.auth.async_get_refresh_token(data["ha_refresh_token_id"])
+    assert refresh is not None and refresh.user.local_only
+
+
+async def test_ks_only_add_of_unmatched_model_sets_no_start_page(
+    hass, ks_health_probe, tls_migration
+):
+    """[KSM-TEST-326] negative: no approved recipe means no start path to
+    derive (KSM-BEHAVE-049), so only ha.url/ha.token are written."""
+    health = {"appVersion": "2026.9.50", "brand": "onn", "model": "Mystery Box", "name": "Box"}
+    ks_health_probe.return_value = (None, health)
+    result, mock_patch = await _ks_only_add(hass, health, "10.0.0.77")
+
+    assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    settings = mock_patch.await_args.args[3]
+    assert settings["ha.url"] == _HA_B and settings["ha.token"]
+    assert "browser.start_url" not in settings
+    assert mock_patch.await_args.kwargs["pin"] is None
+
+
+async def test_ks_only_add_settings_failure_revokes_token_and_creates_nothing(
+    hass, ks_health_probe, tls_migration
+):
+    """[KSM-TEST-327] KSM-BEHAVE-163 step 4: a rejected settings write is a
+    retryable cannot_connect_ks, no entry, and the minted token is gone."""
+    from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
+
+    ks_health_probe.return_value = (None, _PORTAL_MINI_HEALTH)
+    tls_migration.return_value = _PIN
+    before = {t.id for t in hass.auth._store.async_get_refresh_tokens()}  # noqa: SLF001
+    result, mock_patch = await _ks_only_add(
+        hass, _PORTAL_MINI_HEALTH, patch_effect=KsApiError("ha.token rejected")
+    )
+
+    assert result["type"] == data_entry_flow.FlowResultType.FORM
+    assert result["step_id"] == "ks_device_info"
+    assert result["errors"] == {"base": "cannot_connect_ks"}
+    mock_patch.assert_awaited_once()
+    assert not hass.config_entries.async_entries(DOMAIN)
+    after = {t.id for t in hass.auth._store.async_get_refresh_tokens()}  # noqa: SLF001
+    assert after == before

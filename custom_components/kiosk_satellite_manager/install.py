@@ -774,6 +774,43 @@ async def _sync_device_and_connect_ha(
     if before_ha_setup is not None:
         await before_ha_setup()
 
+    return await async_connect_ha(
+        hass,
+        session,
+        host,
+        token,
+        pin=pin,
+        recipe=recipe,
+        device_name=device_name,
+        password=password,
+        ha_token=ha_token,
+        token_credential=token_credential,
+        ha_url=ha_url,
+        replace_launcher=replace_launcher,
+    )
+
+
+async def async_connect_ha(
+    hass: HomeAssistant,
+    session: aiohttp.ClientSession,
+    host: str,
+    token: str,
+    *,
+    pin: str | None,
+    recipe: InstallRecipe | None,
+    device_name: str,
+    password: str,
+    ha_token: str | None = None,
+    token_credential: TokenCredential | None = None,
+    ha_url: str | None = None,
+    replace_launcher: bool = False,
+) -> TokenCredential:
+    """Point Kiosk Satellite at this HA: ha.url, ha.token and the start page.
+
+    Shared by the ADB install and the ADB-free add (KSM-BEHAVE-163), so both
+    write one payload. `token` is an authenticated KS session. A credential
+    minted here is revoked if the write fails.
+    """
     credential = token_credential
     created_credential = False
     if credential is None and ha_token:
@@ -788,17 +825,18 @@ async def _sync_device_and_connect_ha(
         created_credential = True
     try:
         ha_url = (ha_url or get_url(hass, prefer_external=False)).rstrip("/")
-        # KSM-BEHAVE-049: the start path is recipe data, with no "/portal if we
-        # can't tell" default -- an unidentified device never reaches this call.
-        start_path = recipe.start_url_path
-        start_url = f"{ha_url}{start_path}" if start_path else ha_url
         settings_payload: dict[str, Any] = {
             "ha.url": ha_url,
             "ha.token": credential.access_token,
-            "browser.start_url": start_url,
             # KSM-BEHAVE-061: clear KSM's legacy unsafe browser setting.
             "browser.ignore_ssl_errors": False,
         }
+        # KSM-BEHAVE-049: the start path is recipe data, with no "/portal if we
+        # can't tell" default. Only an ADB-free add of an unidentified device
+        # arrives without a recipe, and it keeps its start page (KSM-BEHAVE-163).
+        if recipe is not None:
+            start_path = recipe.start_url_path
+            settings_payload["browser.start_url"] = f"{ha_url}{start_path}" if start_path else ha_url
         if replace_launcher:
             settings_payload["home.enabled"] = True
 

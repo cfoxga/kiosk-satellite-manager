@@ -58,7 +58,7 @@
       },
       "ks_device_info": {
         "title": "Connect Kiosk Satellite Manager",
-        "description": "Kiosk Satellite is already running on this device, so it is added without ADB and its settings are left unchanged.\nDetected device type: {device_model}\nAndroid version: {android_version}\n\nEnter its existing Web UI password. Enable ADB later only if you need Install/Reinstall, Uninstall or Device Owner.",
+        "description": "Kiosk Satellite is already running on this device, so it is added without ADB. KSM points it at this Home Assistant with a new token; its other settings are left unchanged.\nDetected device type: {device_model}\nAndroid version: {android_version}\n\nEnter its existing Web UI password. Enable ADB later only if you need Install/Reinstall, Uninstall or Device Owner.",
         "data": {
           "password": "Existing Password",
           "enable_esphome": "Enable ESPHome"

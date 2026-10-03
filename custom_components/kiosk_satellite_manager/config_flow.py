@@ -101,7 +101,12 @@ from .device_catalog import NoApprovedRecipe, require_recipe, resolve_catalog_en
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .device_models import DeviceFacts, collect_identity_facts
 from .device_repairs import stash_dashboard_dns
-from .install import DashboardDnsCheck, install_and_launch, launcher_replacement_wanted
+from .install import (
+    DashboardDnsCheck,
+    async_connect_ha,
+    install_and_launch,
+    launcher_replacement_wanted,
+)
 from .ks_api_client import KsApiError, login
 from .provisioning import fetch_health
 from .rename import derive_rename_names
@@ -1203,6 +1208,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             password = user_input[CONF_PASSWORD]
             session = async_get_clientsession(self.hass)
             pin: str | None = None
+            ks_token: str | None = None
             try:
                 if self._ks_probe_pin is None:
                     # A freshly installed or reset KS answers health but has no
@@ -1217,7 +1223,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         )
                     # HTTP device: check the password before the TLS switch,
                     # which would otherwise report a bad one as a TLS failure.
-                    await login(session, self._host, password, pin=None)
+                    ks_token = await login(session, self._host, password, pin=None)
             except KsApiError:
                 errors["base"] = "invalid_auth"
             except (aiohttp.ClientError, TimeoutError, ValueError):
@@ -1228,19 +1234,44 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError) as err:
                     _LOGGER.warning("Could not switch %s to HTTPS: %s", self._host, err)
                     errors["base"] = "cannot_connect_ks"
-            if not errors and pin is not None:
+            if not errors and (pin is not None or ks_token is None):
                 try:
-                    await login(session, self._host, password, pin=pin)
+                    ks_token = await login(session, self._host, password, pin=pin)
                 except KsApiError:
                     errors["base"] = "invalid_auth"
                 except (aiohttp.ClientError, TimeoutError, ValueError):
                     errors["base"] = "cannot_connect_ks"
+            global_opts = self._global or {}
             if not errors:
                 self._password = password
                 self._tls_pin = pin
-                self._want_esphome = bool(user_input.get(CONF_ENABLE_ESPHOME, self._esphome_default()))
                 await self._async_maybe_invite()
-                global_opts = self._global or {}
+                # KSM-BEHAVE-163: point the kiosk at this HA, as the ADB
+                # install does; without ADB this is the only path that can.
+                try:
+                    recipe = require_recipe(self._profile_key)
+                except NoApprovedRecipe:
+                    recipe = None
+                try:
+                    self._credential = await async_connect_ha(
+                        self.hass,
+                        session,
+                        self._host,
+                        ks_token,
+                        pin=pin,
+                        recipe=recipe,
+                        device_name=self._discovered_name,
+                        password=password,
+                        ha_url=global_opts.get(CONF_HA_URL),
+                    )
+                except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError) as err:
+                    _LOGGER.warning(
+                        "Could not point %s at this Home Assistant: %s",
+                        self._host, type(err).__name__,
+                    )
+                    errors["base"] = "cannot_connect_ks"
+            if not errors:
+                self._want_esphome = bool(user_input.get(CONF_ENABLE_ESPHOME, self._esphome_default()))
                 data = {
                     CONF_HOST: self._host,
                     CONF_PORT: self._port,
@@ -1252,6 +1283,8 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_HA_URL: global_opts.get(CONF_HA_URL),
                     # KSM-BEHAVE-110: copied at creation like auto-update.
                     CONF_ESPHOME_ENABLE_PENDING: self._want_esphome,
+                    CONF_TOKEN_MODE: TOKEN_MODE_AUTO,
+                    **self._credential.as_entry_data(),
                 }
                 if pin:
                     data[CONF_TLS_SPKI] = pin

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Adding a device that already runs Kiosk Satellite (no ADB) now points it at this Home
+  Assistant: KSM writes the kiosk's Home Assistant URL, a new KSM-owned token and the start
+  page, as Install does. Before this fix a kiosk moved from another Home Assistant stayed on
+  that instance's pages, and only the ADB Install button could repoint it (#132).
+
 ## 0.4.2
 
 - Install no longer fails right after a Home Assistant restart when GitHub's API is
