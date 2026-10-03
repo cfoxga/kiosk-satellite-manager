@@ -8,10 +8,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant import config_entries, data_entry_flow
+from homeassistant.helpers import area_registry as ar
 
 from custom_components.kiosk_satellite_manager import device_owner
 from custom_components.kiosk_satellite_manager.adb_client import AdbConnectFailed
 from custom_components.kiosk_satellite_manager.const import (
+    CONF_AREA_ID,
     CONF_DEVICE_PROFILE,
     CONF_ENABLE_DEVICE_OWNER,
     CONF_HOST,
@@ -28,6 +30,11 @@ _MINI_PROPS = {
     "ro.build.version.sdk": "29",
 }
 _NOTIFY = "custom_components.kiosk_satellite_manager.config_flow.persistent_notification.async_create"
+
+
+@pytest.fixture(autouse=True)
+def _area_for_onboarding(hass):
+    ar.async_get(hass).async_create("KSM Test Area")
 
 
 @pytest.fixture(autouse=True)
@@ -105,7 +112,7 @@ async def _add(hass, fake, *, opt_in, owner_connect_error=None):
         ).default()
         assert default is False
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_PASSWORD: "pw", CONF_ENABLE_DEVICE_OWNER: opt_in}
+            result["flow_id"], {CONF_AREA_ID: "ksm_test_area", CONF_PASSWORD: "pw", CONF_ENABLE_DEVICE_OWNER: opt_in}
         )
         if result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS:
             await hass.async_block_till_done()
@@ -135,7 +142,7 @@ async def _add_and_confirm(hass, fake, confirm: bool):
             result["flow_id"], {CONF_HOST: HOST, "port": 5555}
         )
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_PASSWORD: "pw", CONF_ENABLE_DEVICE_OWNER: True}
+            result["flow_id"], {CONF_AREA_ID: "ksm_test_area", CONF_PASSWORD: "pw", CONF_ENABLE_DEVICE_OWNER: True}
         )
         if result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS:
             await hass.async_block_till_done()
@@ -277,7 +284,7 @@ async def test_opt_in_on_kept_install_reaches_confirmation(hass):
         )
         assert result["step_id"] == "existing_device_info"
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_PASSWORD: "pw", CONF_ENABLE_DEVICE_OWNER: True}
+            result["flow_id"], {CONF_AREA_ID: "ksm_test_area", CONF_PASSWORD: "pw", CONF_ENABLE_DEVICE_OWNER: True}
         )
         if result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS:
             await hass.async_block_till_done()

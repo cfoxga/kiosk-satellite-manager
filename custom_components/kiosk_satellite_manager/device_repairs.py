@@ -42,6 +42,21 @@ def dashboard_dns_issue_id(device_id: str) -> str:
     return f"dashboard_dns_{device_id}"
 
 
+def area_required_issue_id(device_id: str) -> str:
+    return f"area_required_{device_id}"
+
+
+def raise_area_required(hass: HomeAssistant, entry: ConfigEntry | DeviceEntry) -> None:
+    """Offer an Area picker when Install finds no assigned HA device Area."""
+    ir.async_create_issue(
+        hass, DOMAIN, area_required_issue_id(entry.entry_id),
+        is_fixable=True, severity=ir.IssueSeverity.WARNING,
+        translation_key="area_required",
+        translation_placeholders={"name": entry.title},
+        data={"entry_id": entry.entry_id},
+    )
+
+
 def device_support_issue_id(device_id: str) -> str:
     return f"device_support_{device_id}"
 
@@ -167,6 +182,6 @@ def clear_device_repairs(hass: HomeAssistant, device_id: str) -> None:
     for issue_id in (
         tls_issue_id(device_id), tls_disabled_issue_id(device_id),
         dashboard_dns_issue_id(device_id), device_support_issue_id(device_id),
-        factory_reset_issue_id(device_id),
+        factory_reset_issue_id(device_id), area_required_issue_id(device_id),
     ):
         ir.async_delete_issue(hass, DOMAIN, issue_id)

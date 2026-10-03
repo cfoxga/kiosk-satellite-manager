@@ -7,9 +7,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant import config_entries, data_entry_flow
+from homeassistant.helpers import area_registry as ar
 
 from custom_components.kiosk_satellite_manager import esphome_identity
 from custom_components.kiosk_satellite_manager.const import (
+    CONF_AREA_ID,
     CONF_ESPHOME_ENABLE_PENDING,
     CONF_ESPHOME_NEW_DEVICES,
     CONF_HOST,
@@ -20,6 +22,11 @@ from custom_components.kiosk_satellite_manager.const import (
 from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
 
 from .conftest import init_integration
+
+
+@pytest.fixture(autouse=True)
+def _area_for_onboarding(hass):
+    ar.async_get(hass).async_create("KSM Test Area")
 
 KS = "custom_components.kiosk_satellite_manager.ks_api_client"
 HEALTH = "custom_components.kiosk_satellite_manager.fetch_health"
@@ -156,7 +163,7 @@ async def test_adoption_copies_the_manager_option(hass, ks_health_probe, tls_mig
             result["flow_id"], {CONF_HOST: "192.168.40.45", "port": 5555}
         )
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_PASSWORD: "hunter222"}
+            result["flow_id"], {CONF_AREA_ID: "ksm_test_area", CONF_PASSWORD: "hunter222"}
         )
         await hass.async_block_till_done()
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY

@@ -13,10 +13,11 @@ import pytest
 
 from homeassistant import config_entries, data_entry_flow
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers import area_registry as ar, issue_registry as ir
 
 from custom_components.kiosk_satellite_manager.button import async_install_entry
 from custom_components.kiosk_satellite_manager.const import (
+    CONF_AREA_ID,
     CONF_DEVICE_PROFILE,
     CONF_HOST,
     CONF_PASSWORD,
@@ -178,6 +179,7 @@ async def test_KSM_TEST_305_uninstall_without_a_record_never_touches_private_dns
 
 
 async def test_KSM_TEST_305_onboarding_stores_the_prior_private_dns_mode_and_dns_repair(hass):
+    ar.async_get(hass).async_create("KSM Test Area")
     with patch(
         "custom_components.kiosk_satellite_manager.config_flow.AdbClient"
     ) as mock_client_cls, patch(
@@ -207,7 +209,7 @@ async def test_KSM_TEST_305_onboarding_stores_the_prior_private_dns_mode_and_dns
         )
         assert result["step_id"] == "device_info"
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_PASSWORD: "hunter222"}
+            result["flow_id"], {CONF_AREA_ID: "ksm_test_area", CONF_PASSWORD: "hunter222"}
         )
         if result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS:
             await hass.async_block_till_done()

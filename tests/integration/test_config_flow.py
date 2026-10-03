@@ -14,6 +14,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries, data_entry_flow
 from homeassistant.components import persistent_notification
+from homeassistant.helpers import area_registry as ar
 from homeassistant.setup import async_setup_component
 
 from custom_components.kiosk_satellite_manager.adb_client import (
@@ -37,6 +38,14 @@ from custom_components.kiosk_satellite_manager.const import (
 )
 from custom_components.kiosk_satellite_manager.config_flow import KioskSatelliteManagerConfigFlow
 from custom_components.kiosk_satellite_manager.credentials import TokenCredential
+
+
+TEST_AREA_ID = "ksm_test_area"
+
+
+@pytest.fixture(autouse=True)
+def _area_for_config_flow(hass):
+    ar.async_get(hass).async_create("KSM Test Area")
 
 
 def _getprop(**props: str) -> AsyncMock:
@@ -115,7 +124,7 @@ async def test_selected_leader_lost_before_target_setup_stops_onboarding(hass):
     flow._host = "192.168.99.50"
     with patch.object(flow, "async_abort", return_value={"type": "abort", "reason": "fleet_unavailable"}):
         assert (await flow.async_step_install())["reason"] == "fleet_unavailable"
-    rejected = await flow.async_step_ks_device_info({"password": "synthetic-password"})
+    rejected = await flow.async_step_ks_device_info({CONF_AREA_ID: TEST_AREA_ID, "password": "synthetic-password"})
     assert rejected["errors"]["base"] == "fleet_unavailable"
 
 
@@ -174,7 +183,7 @@ async def test_user_flow_shows_device_info_step_with_discovered_name_default(has
     # KSM-TEST-006: no hardcoded default password any more.
     assert schema_pass.default is vol.UNDEFINED
     assert CONF_NAME not in {field.schema for field in result["data_schema"].schema}
-    assert CONF_AREA_ID not in {field.schema for field in result["data_schema"].schema}
+    assert CONF_AREA_ID in {field.schema for field in result["data_schema"].schema}
     # KSM-BEHAVE-048 (issue #20): "onn" is a fallback *classification*, not an
     # exact catalog model -- the label says so, and the entry carries no model
     # key, so the Install button will refuse rather than run the Portal recipe
@@ -316,9 +325,16 @@ async def test_user_flow_creates_entry_after_device_info_step(hass):
         assert result["type"] == data_entry_flow.FlowResultType.FORM
         assert result["step_id"] == "device_info"
 
+        invalid = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_AREA_ID: "removed-area", CONF_PASSWORD: "hunter222"}
+        )
+        assert invalid["step_id"] == "device_info"
+        assert invalid["errors"][CONF_AREA_ID] == "area_not_found"
+        mock_install.assert_not_awaited()
+
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {CONF_PASSWORD: "hunter222"},
+            {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222"},
         )
         # No install progress step: this device matches no exact catalog
         # model, so the install task fails closed at require_recipe before it
@@ -341,7 +357,7 @@ async def test_user_flow_creates_entry_after_device_info_step(hass):
     # that, instead of silently applying the Meta Portal recipe.
     assert result["data"][CONF_DEVICE_PROFILE] is None
     assert result["data"][CONF_NAME] == "Living Room TV"
-    assert result["data"][CONF_AREA_ID] is None
+    assert result["data"][CONF_AREA_ID] == TEST_AREA_ID
     assert result["data"][CONF_PASSWORD] == "hunter222"
     # Everything the user typed is preserved on the entry, and nothing was
     # pushed to the device: install_and_launch was never reached for a model
@@ -389,7 +405,7 @@ async def test_user_flow_creates_entry_and_notifies_when_install_fails(hass):
         )
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {CONF_PASSWORD: "hunter222"},
+            {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222"},
         )
         assert result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS
 
@@ -556,7 +572,7 @@ async def test_user_flow_rejects_missing_or_non_long_lived_selected_token(
         )
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {CONF_PASSWORD: "admin", CONF_TOKEN_MODE: selected_token_id},
+            {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "admin", CONF_TOKEN_MODE: selected_token_id},
         )
         await hass.async_block_till_done()
 
@@ -615,6 +631,7 @@ async def test_user_flow_uses_selected_long_lived_token(hass):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
+                CONF_AREA_ID: TEST_AREA_ID,
                 CONF_PASSWORD: "admin",
                 CONF_TOKEN_MODE: "existing-token-id",
             },
@@ -671,11 +688,11 @@ async def test_user_flow_kept_install_collects_only_existing_connection_details(
         assert result["step_id"] == "existing_device_info"
         schema_fields = {field.schema for field in result["data_schema"].schema}
         # KSM-BEHAVE-098 (#62), KSM-BEHAVE-135: the Device Owner and ESPHome opt-ins.
-        assert schema_fields == {CONF_PASSWORD, CONF_ENABLE_DEVICE_OWNER, "enable_esphome"}
+        assert schema_fields == {CONF_AREA_ID, CONF_PASSWORD, CONF_ENABLE_DEVICE_OWNER, "enable_esphome"}
 
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {CONF_PASSWORD: "hunter222"},
+            {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222"},
         )
         assert result["type"] in (
             data_entry_flow.FlowResultType.CREATE_ENTRY,
@@ -689,6 +706,7 @@ async def test_user_flow_kept_install_collects_only_existing_connection_details(
 
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result["title"] == "Living Room TV"
+    assert result["data"][CONF_AREA_ID] == TEST_AREA_ID
     assert "home_launcher" not in result["data"]
     assert CONF_HA_TOKEN not in result["data"]
     mock_install.assert_not_awaited()
@@ -726,7 +744,7 @@ async def test_adb_flow_adds_esphome_after_install_when_ticked(hass):
             result["flow_id"], {CONF_EXISTING_INSTALL_ACTION: EXISTING_INSTALL_REUSE}
         )
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_PASSWORD: "hunter222", "enable_esphome": True}
+            result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222", "enable_esphome": True}
         )
         while result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS:
             await hass.async_block_till_done()
@@ -772,7 +790,7 @@ async def test_update_existing_settings_preserves_device_owner_and_calls_install
         )
         assert result["step_id"] == "existing_device_info"
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_PASSWORD: "existing-admin-password"}
+            result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "existing-admin-password"}
         )
         while result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS:
             await hass.async_block_till_done()
@@ -867,7 +885,7 @@ async def test_user_flow_reinstall_uninstalls_before_install(hass):
 
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {CONF_PASSWORD: "hunter222"},
+            {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222"},
         )
         if result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS:
             await hass.async_block_till_done()
@@ -919,7 +937,7 @@ async def test_user_flow_reinstall_never_uninstalls_a_device_with_no_approved_re
         )
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {CONF_PASSWORD: "hunter222"},
+            {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222"},
         )
         if result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS:
             await hass.async_block_till_done()
@@ -977,10 +995,10 @@ async def test_ks_running_device_is_added_without_adb(
         result = await _start_ks_flow(hass)
         assert result["type"] == data_entry_flow.FlowResultType.FORM
         assert result["step_id"] == "ks_device_info"
-        assert {field.schema for field in result["data_schema"].schema} == {CONF_PASSWORD, "enable_esphome"}
+        assert {field.schema for field in result["data_schema"].schema} == {CONF_AREA_ID, CONF_PASSWORD, "enable_esphome"}
 
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_PASSWORD: "hunter222"}
+            result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222"}
         )
         await hass.async_block_till_done()
 
@@ -990,6 +1008,7 @@ async def test_ks_running_device_is_added_without_adb(
     assert data[CONF_HOST] == "192.168.40.250"
     assert data[CONF_DEVICE_PROFILE] == "portal_mini"
     assert data[CONF_PASSWORD] == "hunter222"
+    assert data[CONF_AREA_ID] == TEST_AREA_ID
     assert data.get("tls_spki_sha256") == served_pin
     assert data["port"] == 5555 and data["key_path"]
     assert "home_launcher" not in data
@@ -1043,7 +1062,7 @@ async def test_ks_device_info_rejects_wrong_password_and_tls_failure(
     ):
         result = await _start_ks_flow(hass)
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_PASSWORD: "wrong"}
+            result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "wrong"}
         )
         assert result["type"] == data_entry_flow.FlowResultType.FORM
         assert result["step_id"] == "ks_device_info"
@@ -1054,7 +1073,7 @@ async def test_ks_device_info_rejects_wrong_password_and_tls_failure(
         new=AsyncMock(side_effect=aiohttp.ClientConnectionError("refused")),
     ):
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_PASSWORD: "hunter222"}
+            result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222"}
         )
         assert result["type"] == data_entry_flow.FlowResultType.FORM
         assert result["errors"] == {"base": "cannot_connect_ks"}
@@ -1095,7 +1114,7 @@ async def test_ks_device_info_http_device_error_paths(
     ):
         result = await _start_ks_flow(hass)
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_PASSWORD: "hunter222"}
+            result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222"}
         )
 
     assert result["errors"] == {"base": expected_error}
@@ -1124,7 +1143,7 @@ async def test_ks_device_on_pre_tls_release_is_added_unpinned(
         result = await _start_ks_flow(hass, "10.0.0.77")
         assert result["description_placeholders"]["android_version"] == "Unknown"
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_PASSWORD: "hunter222"}
+            result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222"}
         )
         await hass.async_block_till_done()
 
@@ -1157,7 +1176,7 @@ async def test_ks_device_awaiting_first_run_setup_gets_the_submitted_password(
     ):
         result = await _start_ks_flow(hass)
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_PASSWORD: "hunter222"}
+            result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222"}
         )
         await hass.async_block_till_done()
 
@@ -1182,7 +1201,7 @@ async def test_ks_device_with_a_password_is_never_first_run_setup(
         new=AsyncMock(return_value={"appVersion": "2026.9.50"}),
     ):
         result = await _start_ks_flow(hass)
-        await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "hunter222"})
+        await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222"})
         await hass.async_block_till_done()
 
     mock_setup.assert_not_awaited()
@@ -1217,7 +1236,7 @@ async def _ks_only_add(hass, health, host="192.168.40.250", *, patch_effect=None
     ):
         result = await _start_ks_flow(hass, host)
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_PASSWORD: "hunter222", "enable_esphome": False}
+            result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222", "enable_esphome": False}
         )
         await hass.async_block_till_done()
     return result, mock_patch

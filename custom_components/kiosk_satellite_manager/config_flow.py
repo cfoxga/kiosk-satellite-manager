@@ -4,11 +4,9 @@ Phase 1: host/port -> generate-or-reuse an ADB key -> bounded-retry connect
 (covers the on-device "Allow USB debugging?" tap -- Context's irreducible
 manual step 2) -> detect device type via getprop -> create the entry.
 
-KSM-BEHAVE-044: after detection, the KSM-specific step shows the detected
-device type and Android version, then collects only settings KSM itself needs.
-Home Assistant's post-entry "Name and assign" screen owns the entry name and
-area, so this flow uses the detected Android name only for initial Kiosk
-Satellite provisioning.
+KSM-BEHAVE-044/175: after detection, the KSM-specific step shows the detected
+device type and Android version and collects an Area with device settings.
+Home Assistant owns the entry name; KSM records the Area before installation.
 
 KSM-BEHAVE-012: rather than making the user press the Install button after
 adding the integration, the flow now runs install.install_and_launch itself
@@ -42,7 +40,7 @@ from homeassistant import config_entries
 from homeassistant.components import persistent_notification
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import issue_registry as ir, selector
+from homeassistant.helpers import area_registry as ar, issue_registry as ir, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.helpers.network import get_url
@@ -1152,11 +1150,13 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
         errors = {}
         if user_input is not None:
+            if ar.async_get(self.hass).async_get_area(user_input.get(CONF_AREA_ID)) is None:
+                errors[CONF_AREA_ID] = "area_not_found"
             if not self._global.get(CONF_PASSWORD):
                 errors["base"] = "password_required"
             token_mode = self._global.get(CONF_TOKEN_MODE, TOKEN_MODE_AUTO)
             credential = None
-            if token_mode != TOKEN_MODE_AUTO:
+            if not errors and token_mode != TOKEN_MODE_AUTO:
                 token = self.hass.auth.async_get_refresh_token(token_mode)
                 if token is None or token.token_type != TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN:
                     errors["base"] = "token_not_found"
@@ -1173,6 +1173,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_ha_url"
             if not errors:
                 self._name = self._discovered_name
+                self._area_id = user_input[CONF_AREA_ID]
                 self._password = self._global[CONF_PASSWORD]
                 self._existing_install_action = action if self._ks_installed else None
                 self._token_mode = token_mode
@@ -1181,7 +1182,9 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._auto_update = self._global.get(CONF_AUTO_UPDATE, False)
                 return await self.async_step_install()
         return self.async_show_form(
-            step_id="confirm", data_schema=vol.Schema({}), errors=errors,
+            step_id="confirm",
+            data_schema=vol.Schema({vol.Required(CONF_AREA_ID): selector.AreaSelector()}),
+            errors=errors,
             description_placeholders={
                 "device": self._discovered_name, "action": action,
                 "ha_url": self._global.get(CONF_HA_URL, "Home Assistant default"),
@@ -1190,11 +1193,13 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_device_info(self, user_input: dict | None = None) -> FlowResult:
-        """Collect KSM settings after detection, excluding HA-owned naming."""
+        """Collect KSM settings and an Area before installation."""
         errors: dict[str, str] = {}
         token_mode_options = _token_options(self.hass)
 
         if user_input is not None:
+            if ar.async_get(self.hass).async_get_area(user_input.get(CONF_AREA_ID)) is None:
+                errors[CONF_AREA_ID] = "area_not_found"
             password = user_input.get(CONF_PASSWORD) or self._global.get(CONF_PASSWORD, "")
             token_mode = user_input.get(
                 CONF_TOKEN_MODE, self._global.get(CONF_TOKEN_MODE, TOKEN_MODE_AUTO)
@@ -1204,7 +1209,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_HA_URL] = "invalid_ha_url"
             credential = None
 
-            if token_mode != TOKEN_MODE_AUTO:
+            if not errors and token_mode != TOKEN_MODE_AUTO:
                 token = self.hass.auth.async_get_refresh_token(token_mode)
                 if token is None or token.token_type != TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN:
                     errors[CONF_TOKEN_MODE] = "token_not_found"
@@ -1215,6 +1220,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if not errors:
                 self._name = self._discovered_name
+                self._area_id = user_input[CONF_AREA_ID]
                 self._password = password
                 self._token_mode = token_mode
                 self._credential = credential
@@ -1227,6 +1233,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_install()
 
         fields: dict[vol.Marker, Any] = {
+            vol.Required(CONF_AREA_ID): selector.AreaSelector(),
             vol.Required(CONF_PASSWORD, default=self._global.get(CONF_PASSWORD, vol.UNDEFINED)): selector.TextSelector(
                 selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
             ),
@@ -1292,8 +1299,11 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         the device's own API (pinned HTTPS when it can), then create the entry."""
         errors: dict[str, str] = {}
         if user_input is not None:
+            if ar.async_get(self.hass).async_get_area(user_input.get(CONF_AREA_ID)) is None:
+                errors[CONF_AREA_ID] = "area_not_found"
             if self._selected_fleet_id and _invitation_leader(self.hass, self._selected_fleet_id) is None:
                 errors["base"] = "fleet_unavailable"
+            if errors:
                 user_input = None
         if user_input is not None:
             password = user_input[CONF_PASSWORD]
@@ -1358,13 +1368,14 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "cannot_connect_ks"
             if not errors:
                 self._want_esphome = bool(user_input.get(CONF_ENABLE_ESPHOME, self._esphome_default()))
+                self._area_id = user_input[CONF_AREA_ID]
                 data = {
                     CONF_HOST: self._host,
                     CONF_PORT: self._port,
                     CONF_KEY_PATH: self._key_path,
                     CONF_DEVICE_PROFILE: self._profile_key,
                     CONF_NAME: self._discovered_name,
-                    CONF_AREA_ID: None,
+                    CONF_AREA_ID: self._area_id,
                     CONF_PASSWORD: password,
                     CONF_HA_URL: global_opts.get(CONF_HA_URL),
                     # KSM-BEHAVE-110: copied at creation like auto-update.
@@ -1382,6 +1393,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="ks_device_info",
             data_schema=vol.Schema({
+                vol.Required(CONF_AREA_ID): selector.AreaSelector(),
                 vol.Required(CONF_PASSWORD): selector.TextSelector(
                     selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
                 ),
@@ -1446,11 +1458,13 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         user keeps the installed application's own settings intact."""
         errors = {}
         if user_input is not None:
+            if ar.async_get(self.hass).async_get_area(user_input.get(CONF_AREA_ID)) is None:
+                errors[CONF_AREA_ID] = "area_not_found"
             token_mode = user_input.get(
                 CONF_TOKEN_MODE, self._global.get(CONF_TOKEN_MODE, TOKEN_MODE_AUTO)
             )
             credential = None
-            if token_mode != TOKEN_MODE_AUTO:
+            if not errors and token_mode != TOKEN_MODE_AUTO:
                 token = self.hass.auth.async_get_refresh_token(token_mode)
                 if token is None or token.token_type != TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN:
                     errors[CONF_TOKEN_MODE] = "token_not_found"
@@ -1462,7 +1476,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_HA_URL] = "invalid_ha_url"
         if user_input is not None and not errors:
             self._name = self._discovered_name
-            self._area_id = None
+            self._area_id = user_input[CONF_AREA_ID]
             self._password = user_input.get(CONF_PASSWORD) or self._global.get(CONF_PASSWORD, "")
             self._ha_url = user_input.get(CONF_HA_URL) or self._global.get(CONF_HA_URL)
             self._auto_update = user_input.get(
@@ -1475,6 +1489,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_install()
 
         fields = {
+            vol.Required(CONF_AREA_ID): selector.AreaSelector(),
             vol.Required(CONF_PASSWORD, default=self._global.get(CONF_PASSWORD, vol.UNDEFINED)):
                 selector.TextSelector(
                     selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)

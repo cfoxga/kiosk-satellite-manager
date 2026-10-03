@@ -15,11 +15,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from homeassistant.const import EntityCategory
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_registry as er, issue_registry as ir
+from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.kiosk_satellite_manager.adb_client import AdbConnectFailed
 from custom_components.kiosk_satellite_manager.const import (
+    CONF_AREA_ID,
     CONF_DEVICE_PROFILE,
     CONF_ENTRY_TYPE,
     CONF_HA_TOKEN,
@@ -38,15 +39,97 @@ from custom_components.kiosk_satellite_manager.const import (
 from custom_components.kiosk_satellite_manager.credentials import TokenCredential
 from custom_components.kiosk_satellite_manager.device_catalog import NoApprovedRecipe
 from custom_components.kiosk_satellite_manager import fleet
-from custom_components.kiosk_satellite_manager.button import async_install_entry
+from custom_components.kiosk_satellite_manager.button import KioskSatelliteInstallButton, async_install_entry
+from custom_components.kiosk_satellite_manager.repairs import async_create_fix_flow
 from custom_components.kiosk_satellite_manager.ks_api import ReleaseInfo
 
-from .conftest import init_integration
+from .conftest import init_integration as _init_integration
 
 _LOGIN = "custom_components.kiosk_satellite_manager.ks_update.ks_api_client.login"
 _RUN_COMMAND = "custom_components.kiosk_satellite_manager.ks_update.ks_api_client.run_command"
 _POLL_HEALTH = "custom_components.kiosk_satellite_manager.ks_update.fetch_health"
 
+
+async def init_integration(hass, *, data=None, options=None):
+    """Existing install tests use a device that already has an assigned Area."""
+    area = ar.async_get(hass).async_get_area("ksm_test_area")
+    if area is None:
+        area = ar.async_get(hass).async_create("KSM Test Area")
+    return await _init_integration(
+        hass, data={CONF_AREA_ID: area.id, **(data or {})}, options=options
+    )
+
+
+@pytest.mark.parametrize("native_subentry", [False, True])
+async def test_KSM_TEST_348_install_prompts_for_missing_area_before_adb(hass, native_subentry):
+    area = ar.async_get(hass).async_create("Kitchen")
+    data = {
+        "host": "192.168.99.99", "port": 5555, "key_path": "/tmp/test-key",
+        "area_id": None,
+    }
+    if native_subentry:
+        parent = MockConfigEntry(domain=DOMAIN, data={CONF_ENTRY_TYPE: "fleet"})
+        parent.add_to_hass(hass)
+        hass.config_entries.async_add_subentry(parent, ConfigSubentry(
+            data=MappingProxyType(data), subentry_id="kitchen-portal",
+            subentry_type="device", title="Kitchen Portal", unique_id="kitchen-portal",
+        ))
+        entry = fleet.DeviceEntry(hass, parent, parent.subentries["kitchen-portal"])
+        registry_owner = parent.entry_id
+    else:
+        entry = MockConfigEntry(domain=DOMAIN, title="Kitchen Portal", data=data)
+        entry.add_to_hass(hass)
+        registry_owner = entry.entry_id
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=registry_owner,
+        **({"config_subentry_id": entry.subentry_id} if native_subentry else {}),
+        identifiers={(DOMAIN, entry.entry_id)}, name=entry.title,
+    )
+    button = KioskSatelliteInstallButton(hass, entry)
+    issue_id = f"area_required_{entry.entry_id}"
+    with patch("custom_components.kiosk_satellite_manager.button.async_install_entry", new=AsyncMock()) as install:
+        with pytest.raises(HomeAssistantError, match="Area"):
+            await button.async_press()
+        install.assert_not_awaited()
+        issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+        assert issue is not None and issue.is_fixable
+
+        flow = await async_create_fix_flow(hass, issue_id, {"entry_id": entry.entry_id})
+        flow.hass = hass
+        form = await flow.async_step_init()
+        assert "area_id" in {field.schema for field in form["data_schema"].schema}
+        invalid = await flow.async_step_area({"area_id": "missing-area"})
+        assert invalid["errors"]["area_id"] == "area_not_found"
+        assert dr.async_get(hass).async_get(device.id).area_id is None
+        result = await flow.async_step_area({"area_id": area.id})
+        assert result["type"] == "create_entry"
+        assert dr.async_get(hass).async_get(device.id).area_id == area.id
+        assert entry.data["area_id"] == area.id
+        assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+        await button.async_press()
+        install.assert_awaited_once()
+
+        dr.async_get(hass).async_update_device(device.id, area_id=None)
+        with pytest.raises(HomeAssistantError, match="Area"):
+            await button.async_press()
+        install.assert_awaited_once()
+
+
+async def test_KSM_TEST_348_registry_area_allows_legacy_entry_to_install(hass):
+    area = ar.async_get(hass).async_create("Kitchen")
+    entry = MockConfigEntry(domain=DOMAIN, title="Kitchen Portal", data={
+        "host": "192.168.99.99", "port": 5555, "key_path": "/tmp/test-key",
+        CONF_AREA_ID: None,
+    })
+    entry.add_to_hass(hass)
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, entry.entry_id)}, name=entry.title, suggested_area=area.name,
+    )
+    with patch("custom_components.kiosk_satellite_manager.button.async_install_entry", new=AsyncMock()) as install:
+        await KioskSatelliteInstallButton(hass, entry).async_press()
+    install.assert_awaited_once()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, f"area_required_{entry.entry_id}") is None
 
 @pytest.mark.parametrize("native_subentry", [False, True])
 async def test_KSM_TEST_271_install_recovers_missing_profile_from_live_exact_facts(hass, native_subentry):
@@ -242,6 +325,10 @@ async def test_press_installs_launches_grants_and_refreshes_version(hass, tmp_pa
         ctx = await init_integration(
             hass, data={CONF_DEVICE_PROFILE: "portal_mini", CONF_PASSWORD: None, "replace_launcher": False}
         )
+        registered = dr.async_get(hass).async_get_device_by_identifier(
+            (DOMAIN, ctx.entry.entry_id), ctx.entry.entry_id,
+        )
+        assert registered is not None and registered.area_id == "ksm_test_area"
 
         ent_reg = er.async_get(hass)
         entries = er.async_entries_for_config_entry(ent_reg, ctx.entry.entry_id)

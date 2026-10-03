@@ -20,7 +20,8 @@ _REVOKE_ENTRY = "custom_components.kiosk_satellite_manager.async_revoke_owned_cr
 
 
 def _raise_repairs(hass, device_id: str) -> None:
-    for issue_id in (f"tls_certificate_changed_{device_id}", f"dashboard_dns_{device_id}"):
+    for issue_id in (f"tls_certificate_changed_{device_id}", f"dashboard_dns_{device_id}",
+                     f"area_required_{device_id}"):
         ir.async_create_issue(
             hass, DOMAIN, issue_id, is_fixable=False,
             severity=ir.IssueSeverity.WARNING, translation_key="dashboard_dns_mismatch",
@@ -31,7 +32,8 @@ def _repairs(hass, device_id: str) -> set[str]:
     registry = ir.async_get(hass)
     return {
         issue_id
-        for issue_id in (f"tls_certificate_changed_{device_id}", f"dashboard_dns_{device_id}")
+        for issue_id in (f"tls_certificate_changed_{device_id}", f"dashboard_dns_{device_id}",
+                         f"area_required_{device_id}")
         if registry.async_get_issue(DOMAIN, issue_id) is not None
     }
 
@@ -66,7 +68,7 @@ async def test_KSM_TEST_310_removing_a_device_entry_clears_its_repairs(hass):
         await hass.async_block_till_done()
 
     assert _repairs(hass, ctx.entry.entry_id) == set()
-    assert len(_repairs(hass, "another-device")) == 2
+    assert len(_repairs(hass, "another-device")) == 3
 
 
 async def test_KSM_TEST_310_deleting_a_device_subentry_clears_its_repairs(hass):
@@ -81,7 +83,7 @@ async def test_KSM_TEST_310_deleting_a_device_subentry_clears_its_repairs(hass):
         await hass.async_block_till_done()
 
     assert _repairs(hass, "dev-a") == set()
-    assert len(_repairs(hass, "dev-b")) == 2
+    assert len(_repairs(hass, "dev-b")) == 3
 
 
 async def test_KSM_TEST_310_a_fleet_move_keeps_the_device_repairs(hass):
@@ -104,7 +106,7 @@ async def test_KSM_TEST_310_a_fleet_move_keeps_the_device_repairs(hass):
 
     assert "dev-a" in target.subentries and "dev-a" not in unmanaged.subentries
     revoke.assert_not_awaited()
-    assert len(_repairs(hass, "dev-a")) == 2
+    assert len(_repairs(hass, "dev-a")) == 3
 
 
 async def test_KSM_TEST_310_a_legacy_migration_keeps_the_device_repairs(hass):
@@ -135,7 +137,7 @@ async def test_KSM_TEST_310_a_legacy_migration_keeps_the_device_repairs(hass):
     assert hass.config_entries.async_get_entry(old.entry_id) is None
     assert old.entry_id in unmanaged.subentries
     revoke.assert_not_awaited()
-    assert len(_repairs(hass, old.entry_id)) == 2
+    assert len(_repairs(hass, old.entry_id)) == 3
 
 
 async def test_KSM_TEST_310_removing_a_grouping_entry_clears_and_revokes_its_devices(hass):
@@ -153,7 +155,7 @@ async def test_KSM_TEST_310_removing_a_grouping_entry_clears_and_revokes_its_dev
         await hass.async_block_till_done()
 
     assert _repairs(hass, "dev-a") == set() and _repairs(hass, "dev-b") == set()
-    assert len(_repairs(hass, "another-device")) == 2
+    assert len(_repairs(hass, "another-device")) == 3
     revoked = {call.args[1].refresh_token_id for call in revoke.await_args_list
                if call.args[1] is not None}
     assert revoked == {"rt-a", "rt-b"}

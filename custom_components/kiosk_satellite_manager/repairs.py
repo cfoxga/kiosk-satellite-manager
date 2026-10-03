@@ -22,15 +22,55 @@ import voluptuous as vol
 from homeassistant.components.repairs import RepairsFlow
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers import area_registry as ar, device_registry as dr, issue_registry as ir, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from . import follower_offers, ks_api_client, fleet, support_request
 from .adb_client import AdbAuthPending, AdbConnectFailed, AdbKeySecurityError
-from .const import CONF_HOST, CONF_TLS_SPKI, DOMAIN
-from .device_repairs import SUPPORT_REQUESTED, device_support_issue_id, tls_disabled_issue_id
+from .const import CONF_AREA_ID, CONF_HOST, CONF_TLS_SPKI, DOMAIN
+from .device_repairs import SUPPORT_REQUESTED, area_required_issue_id, device_support_issue_id, tls_disabled_issue_id
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class AreaRequiredFlow(RepairsFlow):
+    """Assign the Area on both the HA device and KSM's stored device entry."""
+
+    def __init__(self, entry_id: str) -> None:
+        self._entry_id = entry_id
+
+    async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
+        return await self.async_step_area(user_input)
+
+    async def async_step_area(self, user_input: dict | None = None) -> FlowResult:
+        entry = fleet.resolve_device(self.hass, self._entry_id)
+        if entry is None:
+            return self.async_abort(reason="entry_not_found")
+        device = dr.async_get(self.hass).async_get_device_by_identifier(
+            (DOMAIN, self._entry_id), getattr(entry, "parent", entry).entry_id,
+        )
+        if device is None:
+            return self.async_abort(reason="device_not_found")
+        errors = {}
+        if user_input is not None:
+            area_id = user_input[CONF_AREA_ID]
+            if ar.async_get(self.hass).async_get_area(area_id) is None:
+                errors[CONF_AREA_ID] = "area_not_found"
+            else:
+                dr.async_get(self.hass).async_update_device(device.id, area_id=area_id)
+                fleet.update_device(
+                    self.hass, entry, data={**entry.data, CONF_AREA_ID: area_id}
+                )
+                ir.async_delete_issue(
+                    self.hass, DOMAIN, area_required_issue_id(self._entry_id)
+                )
+                return self.async_create_entry(data={})
+        return self.async_show_form(
+            step_id="area",
+            data_schema=vol.Schema({vol.Required(CONF_AREA_ID): selector.AreaSelector()}),
+            errors=errors,
+            description_placeholders={"name": entry.title},
+        )
 
 
 class TlsCertificateChangedFlow(RepairsFlow):
@@ -175,6 +215,8 @@ class DeviceSupportFlow(RepairsFlow):
 async def async_create_fix_flow(
     hass: HomeAssistant, issue_id: str, data: dict | None
 ) -> RepairsFlow:
+    if issue_id == area_required_issue_id((data or {}).get("entry_id", "")):
+        return AreaRequiredFlow((data or {})["entry_id"])
     if issue_id.startswith(follower_offers.ISSUE_PREFIX):
         return NewFollowerFlow(dict(data or {}))
     if issue_id == device_support_issue_id((data or {}).get("entry_id", "")):

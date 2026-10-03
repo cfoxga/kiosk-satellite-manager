@@ -13,8 +13,9 @@
       },
       "device_info": {
         "title": "Configure Kiosk Satellite device",
-        "description": "Detected device type: {device_model}\nAndroid version: {android_version}\n\nHome Assistant will collect this device's Name and Area on its next screen. The password is set as Kiosk Satellite's own admin password once it is installed, and used to connect it to this Home Assistant instance automatically.",
+        "description": "Detected device type: {device_model}\nAndroid version: {android_version}\n\nChoose this device's Area here. The password is set as Kiosk Satellite's own admin password once it is installed, and used to connect it to this Home Assistant instance automatically.",
         "data": {
+          "area_id": "Area",
           "password": "Admin password",
           "token_mode": "Home Assistant access token",
           "ha_url": "Home Assistant URL",
@@ -37,8 +38,9 @@
       },
       "existing_device_info": {
         "title": "Connect Kiosk Satellite Manager",
-        "description": "Enter Kiosk Satellite's existing Web UI password. If you chose Keep, its Home Assistant settings stay unchanged. If you chose Update settings, KSM replaces its Home Assistant connection and start page without uninstalling the app. Home Assistant will collect this device's Name and Area on its next screen.",
+        "description": "Choose this device's Area and enter Kiosk Satellite's existing Web UI password. If you chose Keep, its Home Assistant settings stay unchanged. If you chose Update settings, KSM replaces its Home Assistant connection and start page without uninstalling the app.",
         "data": {
+          "area_id": "Area",
           "password": "Existing Password",
           "ha_url": "Home Assistant URL",
           "auto_update": "Auto-update on this device",
@@ -58,8 +60,9 @@
       },
       "ks_device_info": {
         "title": "Connect Kiosk Satellite Manager",
-        "description": "Kiosk Satellite is already running on this device, so it is added without ADB. KSM points it at this Home Assistant with a new token; its other settings are left unchanged.\nDetected device type: {device_model}\nAndroid version: {android_version}\n\nEnter its existing Web UI password. Enable ADB later only if you need Install/Reinstall, Uninstall or Device Owner.",
+        "description": "Kiosk Satellite is already running on this device, so it is added without ADB. KSM points it at this Home Assistant with a new token; its other settings are left unchanged.\nDetected device type: {device_model}\nAndroid version: {android_version}\n\nChoose its Area and enter its existing Web UI password. Enable ADB later only if you need Install/Reinstall, Uninstall or Device Owner.",
         "data": {
+          "area_id": "Area",
           "password": "Existing Password",
           "enable_esphome": "Enable ESPHome"
         },
@@ -70,8 +73,8 @@
       },
       "confirm": {
         "title": "Confirm device onboarding",
-        "description": "Device: {device}\nInstall action: {action}\nHome Assistant URL: {ha_url}\n\nConfirm to apply these settings.",
-        "data": {}
+        "description": "Device: {device}\nInstall action: {action}\nHome Assistant URL: {ha_url}\n\nChoose this device's Area and confirm to apply these settings.",
+        "data": {"area_id": "Area"}
       },
       "onboard_device_owner": {
         "title": "Enable Device Owner for Kiosk Satellite",
@@ -96,6 +99,7 @@
       "cannot_connect": "Failed to connect to the device",
       "auth_pending": "Device did not confirm the ADB connection in time — please check the device screen for the \"Allow USB debugging?\" prompt, check \"Always allow from this computer\", tap Allow, and try again.",
       "token_not_found": "The selected long-lived access token is no longer available",
+      "area_not_found": "This Area no longer exists. Choose another Area.",
       "host_required": "Enter an ADB address to add a device",
       "password_required": "Set a Kiosk Satellite password in Configure KSM first",
       "unsupported_device": "This device is not in Kiosk Satellite Manager's device library yet, so it has no approved install recipe. [Request support for it]({support_url}): the link opens a GitHub issue pre-filled with the device's identity (not its address, name or credentials).",
@@ -247,6 +251,23 @@
     }
   },
   "issues": {
+    "area_required": {
+      "title": "{name}: assign an Area before installing",
+      "fix_flow": {
+        "step": {
+          "area": {
+            "title": "Assign an Area to {name}",
+            "description": "Choose the Home Assistant Area for this device. After saving, press Install Kiosk Satellite again.",
+            "data": {"area_id": "Area"}
+          }
+        },
+        "error": {"area_not_found": "This Area no longer exists. Choose another Area."},
+        "abort": {
+          "entry_not_found": "This device is no longer configured in Kiosk Satellite Manager.",
+          "device_not_found": "Home Assistant has not created this device yet. Reload the integration and try again."
+        }
+      }
+    },
     "tls_certificate_changed": {
       "title": "{name}: device HTTPS key changed",
       "fix_flow": {

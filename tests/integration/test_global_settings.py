@@ -8,14 +8,15 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
 import voluptuous as vol
+import pytest
 
 from homeassistant import config_entries, data_entry_flow
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import area_registry as ar, entity_registry as er
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.kiosk_satellite_manager.const import (
-    CONF_AUTO_UPDATE, CONF_AUTO_UPDATE_ALL, CONF_ENTRY_TYPE, CONF_HA_URL, CONF_HOST,
+    CONF_AREA_ID, CONF_AUTO_UPDATE, CONF_AUTO_UPDATE_ALL, CONF_ENTRY_TYPE, CONF_HA_URL, CONF_HOST,
     CONF_ONBOARDING_MODE, CONF_PASSWORD, CONF_TOKEN_MODE, DOMAIN,
     MANAGER_UPDATE_RUNNING_KEY, ONBOARDING_AUTOMATIC, RELEASE_COORDINATOR_KEY,
     TOKEN_MODE_AUTO,
@@ -27,6 +28,13 @@ from custom_components.kiosk_satellite_manager.ks_api import ReleaseInfo
 from .conftest import init_integration
 from .test_config_flow import _getprop, _PORTAL_GO_PROPS
 from .test_config_flow import _GTV_PROPS
+
+TEST_AREA_ID = "ksm_test_area"
+
+
+@pytest.fixture(autouse=True)
+def _area_for_onboarding(hass):
+    ar.async_get(hass).async_create("KSM Test Area")
 
 
 async def _manager(hass, *, options=None):
@@ -379,7 +387,7 @@ async def test_review_flow_snapshots_defaults_and_allows_override(hass):
         cls.return_value.connect = AsyncMock()
         cls.return_value.close = AsyncMock()
         result = await hass.config_entries.flow.async_configure(result["flow_id"], {
-            CONF_PASSWORD: "override", CONF_TOKEN_MODE: TOKEN_MODE_AUTO,
+            CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "override", CONF_TOKEN_MODE: TOKEN_MODE_AUTO,
             CONF_HA_URL: "https://other.example.test", CONF_AUTO_UPDATE: False,
         })
         if result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS:
@@ -401,7 +409,7 @@ async def test_review_rejects_invalid_ha_url_before_install(hass):
     result = await _device_flow(hass)
     with patch("custom_components.kiosk_satellite_manager.config_flow.install_and_launch") as install:
         result = await hass.config_entries.flow.async_configure(result["flow_id"], {
-            CONF_PASSWORD: "global-secret", CONF_TOKEN_MODE: TOKEN_MODE_AUTO,
+            CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "global-secret", CONF_TOKEN_MODE: TOKEN_MODE_AUTO,
             CONF_HA_URL: "ftp://invalid.example",
         })
     assert result["errors"][CONF_HA_URL] == "invalid_ha_url"
@@ -419,7 +427,7 @@ async def test_automatic_requires_confirmation_and_password_before_install(hass)
     assert result["step_id"] == "confirm"
     assert result["description_placeholders"]["action"] == "reinstall"
     with patch("custom_components.kiosk_satellite_manager.config_flow.install_and_launch") as install:
-        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID})
     assert result["step_id"] == "confirm"
     assert result["errors"]["base"] == "password_required"
     install.assert_not_called()
@@ -448,7 +456,7 @@ async def test_automatic_reinstall_waits_for_confirmation_and_copies_settings(ha
         client.close = AsyncMock()
         client.uninstall_ks = AsyncMock()
         client.uninstall_ks.assert_not_awaited()
-        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID})
         if result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS:
             await hass.async_block_till_done()
             result = await hass.config_entries.flow.async_configure(result["flow_id"])
@@ -458,6 +466,7 @@ async def test_automatic_reinstall_waits_for_confirmation_and_copies_settings(ha
         client.uninstall_ks.assert_awaited_once()
         install.assert_awaited_once()
     assert result["data"][CONF_HA_URL] == "https://ha.example.test"
+    assert result["data"][CONF_AREA_ID] == TEST_AREA_ID
     assert result["data"][CONF_TOKEN_MODE] == TOKEN_MODE_AUTO
     assert result["options"][CONF_AUTO_UPDATE] is True
 
@@ -471,7 +480,7 @@ async def test_automatic_revoked_token_stops_before_install(hass):
     manager.add_to_hass(hass)
     result = await _device_flow(hass)
     with patch("custom_components.kiosk_satellite_manager.config_flow.install_and_launch") as install:
-        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID})
     assert result["step_id"] == "confirm"
     assert result["errors"]["base"] == "token_not_found"
     install.assert_not_called()
@@ -485,7 +494,7 @@ async def test_automatic_unknown_device_stops_before_install(hass):
     manager.add_to_hass(hass)
     result = await _device_flow(hass, props=_GTV_PROPS)
     with patch("custom_components.kiosk_satellite_manager.config_flow.install_and_launch") as install:
-        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID})
     assert result["step_id"] == "confirm"
     assert result["errors"]["base"] == "unsupported_device"
     install.assert_not_called()
@@ -519,7 +528,7 @@ async def test_KSM_TEST_333_the_unsupported_refusal_links_a_prefilled_support_re
         )
     assert result["step_id"] == "confirm"
     with patch("custom_components.kiosk_satellite_manager.config_flow.install_and_launch") as install:
-        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID})
     assert result["errors"]["base"] == "unsupported_device"
     install.assert_not_called()
     url = urlsplit(result["description_placeholders"]["support_url"])
@@ -558,7 +567,7 @@ async def test_automatic_invalid_global_url_stops_before_install(hass):
     manager.add_to_hass(hass)
     result = await _device_flow(hass)
     with patch("custom_components.kiosk_satellite_manager.config_flow.install_and_launch") as install:
-        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID})
     assert result["errors"]["base"] == "invalid_ha_url"
     install.assert_not_called()
 

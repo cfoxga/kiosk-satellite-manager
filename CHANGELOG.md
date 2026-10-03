@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- KSM now asks for a Home Assistant Area while adding a device, including automatic setup
+  and adoption without ADB (#144). If **Install Kiosk Satellite** is pressed on a device
+  with no Area, it stops before installing and raises a repair with an Area picker.
+  Save the Area there, then press Install again. This also helps devices added before
+  KSM asked for an Area.
+
 - When adding a device that already has Kiosk Satellite, **Update settings without uninstalling**
   now refreshes its Home Assistant connection and start page using the existing Web UI password
   (#143). This also works when Kiosk Satellite is Device Owner: the app, its data and Device Owner

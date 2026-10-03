@@ -8,10 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 from homeassistant import config_entries, data_entry_flow
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import area_registry as ar
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.kiosk_satellite_manager import esphome_adopt
 from custom_components.kiosk_satellite_manager.const import (
+    CONF_AREA_ID,
     CONF_ENABLE_ESPHOME,
     CONF_ESPHOME_ENABLE_PENDING,
     CONF_ESPHOME_NEW_DEVICES,
@@ -26,6 +28,12 @@ FLOW = "custom_components.kiosk_satellite_manager.config_flow"
 HOST = "192.0.2.77"
 NODE = "great-room-kiosk"
 KEY = "SYNTHETIC+KEY+FOR+TESTS+0123456789ABCDEF="
+TEST_AREA_ID = "ksm_test_area"
+
+
+@pytest.fixture(autouse=True)
+def _area_for_onboarding(hass):
+    ar.async_get(hass).async_create("KSM Test Area")
 
 
 @pytest.fixture(autouse=True)
@@ -324,7 +332,7 @@ async def _wizard(hass, *, option, box=None, adopt=esphome_adopt.ADDED, notify=N
         )
         assert result["step_id"] == "ks_device_info"
         default = _field(result, CONF_ENABLE_ESPHOME).default()
-        answer = {CONF_PASSWORD: "hunter222"}
+        answer = {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222"}
         if box is not None:
             answer[CONF_ENABLE_ESPHOME] = box
         result = await hass.config_entries.flow.async_configure(result["flow_id"], answer)
