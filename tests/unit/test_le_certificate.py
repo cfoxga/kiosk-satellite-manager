@@ -80,3 +80,30 @@ def test_missing_mismatched_or_expired_material_rejected(tmp_path):
     (tmp_path / "fullchain.pem").write_bytes(certificate)
     with pytest.raises(module.CertificateUnavailable):
         module.load_for_hostname("test-portal-mini.cfoxga.com", tmp_path)
+
+
+def _write(tmp_path, certificate: bytes, key: bytes) -> None:
+    (tmp_path / "fullchain.pem").write_bytes(certificate)
+    (tmp_path / "privkey.pem").write_bytes(key)
+
+
+def test_oversized_and_garbage_files_rejected(tmp_path):
+    _write(tmp_path, b"x" * (1024 * 1024 + 1), b"k")
+    with pytest.raises(module.CertificateUnavailable, match="exceed the expected size"):
+        module.load_for_hostname("test-portal-mini.cfoxga.com", tmp_path)
+    _write(tmp_path, b"not a certificate", b"not a key")
+    with pytest.raises(module.CertificateUnavailable, match="invalid"):
+        module.load_for_hostname("test-portal-mini.cfoxga.com", tmp_path)
+
+
+def test_key_type_ks_cannot_import_is_rejected(tmp_path):
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    certificate, _ = material()
+    key = ed25519.Ed25519PrivateKey.generate().private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    _write(tmp_path, certificate, key)
+    with pytest.raises(module.CertificateUnavailable, match="key type KS cannot import"):
+        module.load_for_hostname("test-portal-mini.cfoxga.com", tmp_path)

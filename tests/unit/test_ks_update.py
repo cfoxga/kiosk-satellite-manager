@@ -400,3 +400,36 @@ async def test_self_update_asks_the_device_for_its_abis(cached_apk, device_info,
     ) as release_apk:
         assert await ks_update.async_self_update_entry(hass, _entry()) == ks_update.OUTCOME_UPDATED
     assert release_apk.await_args.args[2] == abis
+
+
+def test_unknown_profile_never_allows_verifier_remediation():
+    """[KSM-TEST-229] A profile with no approved recipe opts out of ADB remediation."""
+    assert ks_update._verifier_retry_allowed(_entry(**{CONF_DEVICE_PROFILE: "no_such_model"})) is False
+    assert ks_update._verifier_retry_allowed(_entry()) is False
+
+
+async def test_portal_verifier_not_enabled_is_not_remediated():
+    """[KSM-TEST-229] Only a device whose verifier reads back enabled is changed."""
+    entry = _entry(**{CONF_PORT: 5555, CONF_KEY_PATH: "/tmp/test-adb-key"})
+    client = SimpleNamespace(connect=AsyncMock(), close=AsyncMock(),
+                             shell=AsyncMock(side_effect=["0"]))
+    with patch("custom_components.kiosk_satellite_manager.ks_update.AdbClient",
+               return_value=client):
+        with pytest.raises(HomeAssistantError, match="cannot remediate"):
+            await ks_update._remediate_verifier(entry)
+    assert client.shell.await_count == 1
+    client.close.assert_awaited_once()
+
+
+async def test_failed_verifier_remediation_is_reported_with_the_install_error(cached_apk):
+    """[KSM-TEST-229] A remediation that fails keeps the original install error visible."""
+    entry = _entry(**{CONF_DEVICE_PROFILE: "portal_gen2"})
+    with patch(_SESSION), patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(
+        _RUN_COMMAND, new=_commands(installUploadedApk={"ok": True},
+                                    getUpdateStatus={"lastError": "INSTALL_FAILED_VERIFICATION_FAILURE"})
+    ), patch(_POLL_HEALTH, new=AsyncMock(return_value={"appVersion": "old"})), patch(
+        "custom_components.kiosk_satellite_manager.ks_update._remediate_verifier",
+        new=AsyncMock(side_effect=OSError("adb offline")),
+    ):
+        with pytest.raises(HomeAssistantError, match="VERIFICATION_FAILURE.*remediation failed: adb offline"):
+            await ks_update.async_self_update_entry(_hass(), entry)

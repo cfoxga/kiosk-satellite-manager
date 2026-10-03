@@ -159,3 +159,19 @@ async def test_KSM_TEST_310_removing_a_grouping_entry_clears_and_revokes_its_dev
     revoked = {call.args[1].refresh_token_id for call in revoke.await_args_list
                if call.args[1] is not None}
     assert revoked == {"rt-a", "rt-b"}
+
+
+async def test_fix_flows_abort_when_the_device_is_gone(hass):
+    """KSM-BEHAVE-154: every per-device fix flow aborts once its device is removed."""
+    from custom_components.kiosk_satellite_manager import repairs
+
+    for flow in (
+        repairs.AreaRequiredFlow("gone"),
+        repairs.TlsCertificateChangedFlow("gone"),
+        repairs.TlsDisabledFlow("gone"),
+        repairs.DeviceSupportFlow("gone"),
+    ):
+        flow.hass = hass
+        result = await flow.async_step_init()
+        assert result["type"] == "abort", type(flow).__name__
+        assert result["reason"] == "entry_not_found", type(flow).__name__

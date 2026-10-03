@@ -1117,3 +1117,16 @@ async def test_KSM_TEST_357_update_all_reports_a_device_removed_mid_run(hass):
 
     message = notify.call_args.kwargs["message"]
     assert "Failed: Kitchen Portal: upload refused" in message
+
+
+async def test_check_for_updates_press_without_release_check_raises(hass):
+    """[KSM-TEST-357] The check button reports a stopped release check instead of doing nothing."""
+    from custom_components.kiosk_satellite_manager.button import KioskSatelliteCheckForUpdatesButton
+    from custom_components.kiosk_satellite_manager.const import RELEASE_COORDINATOR_KEY
+
+    entry = _kitchen_entry(hass)
+    button = KioskSatelliteCheckForUpdatesButton(hass, entry)
+    with patch.dict(hass.data, {}, clear=False):
+        hass.data.pop(RELEASE_COORDINATOR_KEY, None)
+        with pytest.raises(HomeAssistantError, match="release check is not running"):
+            await button.async_press()

@@ -555,3 +555,14 @@ async def test_KSM_TEST_358_auto_update_awaiting_confirmation_is_reported(hass, 
 
     notify.async_create.assert_called_once()
     assert notify.async_create.call_args.kwargs["notification_id"].endswith(ctx.entry.entry_id)
+
+
+def test_is_older_ignores_unknown_and_unparseable_versions():
+    """[KSM-TEST-358] An unknown or unparseable version never triggers an auto-update."""
+    from custom_components.kiosk_satellite_manager.auto_update import is_older
+
+    assert is_older("2026.10.4", "2026.10.5") is True
+    assert is_older("2026.10.5", "2026.10.5") is False
+    assert is_older(None, "2026.10.5") is False
+    assert is_older("2026.10.4", "") is False
+    assert is_older("not a version", "2026.10.5") is False
