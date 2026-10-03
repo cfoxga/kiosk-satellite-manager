@@ -27,6 +27,7 @@ import re
 import shlex
 import stat
 import tempfile
+import time
 from dataclasses import dataclass
 
 from adb_shell.adb_device_async import AdbDeviceTcpAsync
@@ -40,6 +41,7 @@ from adb_shell.exceptions import (
 )
 
 from .const import ADB_PROBE_TIMEOUT_S, KS_HOME_ACTIVITY, KS_PACKAGE
+from . import support_log
 
 _VERSION_NAME_RE = re.compile(r"\bversionName=([^\s]+)")
 _RUNTIME_PERMISSION_RE = re.compile(r"^\s*(android\.permission\.\S+): granted=(true|false)", re.MULTILINE)
@@ -307,6 +309,10 @@ async def async_probe_adb_port(host: str, port: int, timeout: float = ADB_PROBE_
     return True
 
 
+def _ms(started: float) -> int:
+    return int((time.monotonic() - started) * 1000)
+
+
 class AdbClient:
     """One ADB connection to one Kiosk Satellite device."""
 
@@ -330,18 +336,45 @@ class AdbClient:
             # handlers call connect() on Home Assistant's event loop, so keep
             # that filesystem read in a worker thread.
             self._signer = await asyncio.to_thread(CryptographySigner, self._key_path)
+        started = time.monotonic()
         try:
             await self._device.connect(rsa_keys=[self._signer], auth_timeout_s=auth_timeout_s)
         except (DeviceAuthError, AdbTimeoutError, TcpTimeoutException) as err:
+            support_log.record_connect("AdbAuthPending", _ms(started))
             raise AdbAuthPending(str(err)) from err
         except (AdbConnectionError, OSError) as err:
+            support_log.record_connect("AdbConnectFailed", _ms(started))
             raise AdbConnectFailed(str(err)) from err
+        support_log.record_connect(None, _ms(started))
+        # KSM-BEHAVE-159: the run's start uptime, to tell a real reboot from
+        # Meta's setup screen appearing.
+        if support_log.needs_uptime():
+            support_log.record_uptime(await self.uptime_s())
 
     async def close(self) -> None:
         await self._device.close()
 
     async def shell(self, command: str) -> str:
-        return await self._device.shell(command)
+        if not support_log.active():
+            return await self._device.shell(command)
+        started = time.monotonic()
+        try:
+            output = await self._device.shell(command)
+        except BaseException as err:
+            support_log.record_command(command, "", _ms(started), raised=type(err).__name__)
+            raise
+        support_log.record_command(command, support_log.outcome_class(output), _ms(started))
+        return output
+
+    async def uptime_s(self) -> int | None:
+        """Seconds since the device booted, or None when unreadable. Not a
+        recorded step (KSM-BEHAVE-159)."""
+        try:
+            return support_log.parse_uptime(
+                await self._device.shell(support_log.UPTIME_COMMAND)
+            )
+        except Exception:  # noqa: BLE001 -- unknown, never an error
+            return None
 
     async def select_ks_home(self) -> None:
         """Ask Android to select KS's fixed HOME alias (KSM-BEHAVE-143).

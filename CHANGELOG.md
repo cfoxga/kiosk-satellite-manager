@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Reporting a problem is now one file: **Download diagnostics** on any KSM entry (Settings →
+  Devices & services → Kiosk Satellite Manager → ⋮) includes a record of the last 20 installs,
+  Device Owner enrollments, Android 9 cleanups and Meta setup screens: each step KSM ran on the
+  device, its result and timing, and whether the device rebooted. The record holds no passwords,
+  tokens, addresses, device or account names, or command output (#133).
+- The Device Owner confirmation and the notification that follows it now say that the Portal did
+  not reboot or reset. Meta's setup screen appears because enrollment removes the Meta login, and
+  you sign in once (#133).
+- KSM's "Enable debug logging" no longer turns on the `adb_shell` library's transport log (#133).
+
 ## 0.4.2
 
 - Install no longer fails right after a Home Assistant restart when GitHub's API is

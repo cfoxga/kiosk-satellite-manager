@@ -47,7 +47,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.helpers.network import get_url
 
-from . import apk_cache, device_owner, esphome_adopt, fleet, ks_api_client, ks_tls, meta_setup
+from . import apk_cache, device_owner, esphome_adopt, fleet, ks_api_client, ks_tls, meta_setup, support_log
 from .helpers import recent_releases
 from .adb_client import AdbAuthPending, AdbClient, AdbConnectFailed, ensure_adb_key
 from .const import (
@@ -514,10 +514,12 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
                 coordinator.async_update_listeners()
             meta_error: str | None = None
             try:
-                await client.connect()
-                result = await device_owner.enable_device_owner(client, model_key)
-                if result.meta_setup_needed:
-                    meta_error = await _start_meta_setup(self.hass, self._meta_target(), client)
+                async with support_log.async_run(self.hass, "device_owner", source="configure",
+                                                 model_key=model_key, client=client):
+                    await client.connect()
+                    result = await device_owner.enable_device_owner(client, model_key)
+                    if result.meta_setup_needed:
+                        meta_error = await _start_meta_setup(self.hass, self._meta_target(), client)
             except (AdbAuthPending, AdbConnectFailed):
                 return self.async_abort(
                     reason="adb_unavailable", description_placeholders={"address": address}
@@ -596,11 +598,13 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
                 coordinator.ksm_installing = True
                 coordinator.async_update_listeners()
             try:
-                await client.connect()
-                await device_owner.repurpose_android9_portal(
-                    client, "portal_gen1", require_recipe("portal_gen1"),
-                    confirmed=True, ks_home_enabled=home,
-                )
+                async with support_log.async_run(self.hass, "android9_cleanup", source="configure",
+                                                 model_key="portal_gen1", client=client):
+                    await client.connect()
+                    await device_owner.repurpose_android9_portal(
+                        client, "portal_gen1", require_recipe("portal_gen1"),
+                        confirmed=True, ks_home_enabled=home,
+                    )
             except (AdbAuthPending, AdbConnectFailed, OSError):
                 return self.async_abort(
                     reason="adb_unavailable",
@@ -669,8 +673,12 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
                 coordinator.ksm_installing = True
                 coordinator.async_update_listeners()
             try:
-                await client.connect()
-                error = await _start_meta_setup(self.hass, self._meta_target(), client)
+                async with support_log.async_run(
+                    self.hass, "meta_setup", source="configure",
+                    model_key=self._entry.data.get(CONF_DEVICE_PROFILE), client=client,
+                ):
+                    await client.connect()
+                    error = await _start_meta_setup(self.hass, self._meta_target(), client)
             except (AdbAuthPending, AdbConnectFailed, OSError):
                 return self.async_abort(
                     reason="adb_unavailable", description_placeholders={"address": address}
@@ -765,10 +773,13 @@ async def _start_meta_setup(
         await meta_setup.async_start(hass, target, client)
     except device_owner.DeviceOwnerError as err:
         _LOGGER.warning("Meta setup could not be shown on %s: %s", target.host, err)
+        support_log.note(f"meta_setup:{support_log.error_code(err)}")
         return _owner_failure_text(err)
     except Exception as err:  # noqa: BLE001 -- ADB transport drop mid-run
         _LOGGER.warning("Meta setup error on %s: %s", target.host, err)
+        support_log.note(f"meta_setup:{support_log.error_code(err)}")
         return "The ADB connection failed while showing the setup screen."
+    support_log.note("meta_setup:shown")
     return None
 
 
@@ -1402,37 +1413,39 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         session = async_get_clientsession(self.hass)
         client = AdbClient(self._host, self._port, self._key_path)
         try:
-            await client.connect()
             try:
-                # KSM-BEHAVE-048: resolve the recipe before *any* device
-                # mutation, not just before install_and_launch's own. The
-                # reinstall path uninstalls first, so a model that fails closed
-                # one line later would leave the device with its working app
-                # removed and no approved recipe able to put it back.
-                # Connecting is a pairing handshake, not a mutation, so it may
-                # precede the gate; `uninstall_ks` may not.
-                require_recipe(self._profile_key)
-                if self._existing_install_action == EXISTING_INSTALL_REINSTALL:
-                    await client.uninstall_ks()
-                used_token = await install_and_launch(
-                    self.hass,
-                    client,
-                    session,
-                    host=self._host,
-                    device_name=self._name,
-                    password=self._password,
-                    ha_token=self._credential.access_token if self._credential else None,
-                    token_credential=self._credential,
-                    device_model=self._profile_key,
-                    ha_url=self._ha_url,
-                    on_tls_pinned=self._set_tls_pin,
-                    on_private_dns_disabled=self._set_private_dns_prior,
-                    on_dashboard_dns=self._set_dashboard_dns,
-                    before_ha_setup=self._async_maybe_invite,
-                    replace_launcher=launcher_replacement_wanted({}, require_recipe(self._profile_key)),
-                )
-                if used_token:
-                    self._credential = used_token
+                async with support_log.async_run(self.hass, "onboarding_install",
+                                                 model_key=self._profile_key, client=client):
+                    await client.connect()
+                    # KSM-BEHAVE-048: resolve the recipe before *any* device
+                    # mutation, not just before install_and_launch's own. The
+                    # reinstall path uninstalls first, so a model that fails closed
+                    # one line later would leave the device with its working app
+                    # removed and no approved recipe able to put it back.
+                    # Connecting is a pairing handshake, not a mutation, so it may
+                    # precede the gate; `uninstall_ks` may not.
+                    require_recipe(self._profile_key)
+                    if self._existing_install_action == EXISTING_INSTALL_REINSTALL:
+                        await client.uninstall_ks()
+                    used_token = await install_and_launch(
+                        self.hass,
+                        client,
+                        session,
+                        host=self._host,
+                        device_name=self._name,
+                        password=self._password,
+                        ha_token=self._credential.access_token if self._credential else None,
+                        token_credential=self._credential,
+                        device_model=self._profile_key,
+                        ha_url=self._ha_url,
+                        on_tls_pinned=self._set_tls_pin,
+                        on_private_dns_disabled=self._set_private_dns_prior,
+                        on_dashboard_dns=self._set_dashboard_dns,
+                        before_ha_setup=self._async_maybe_invite,
+                        replace_launcher=launcher_replacement_wanted({}, require_recipe(self._profile_key)),
+                    )
+                    if used_token:
+                        self._credential = used_token
             finally:
                 await client.close()
 
@@ -1580,13 +1593,15 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not user_input.get("confirm"):
                 return self._async_create_device_entry()
             try:
-                await client.connect()
-                result = await device_owner.enable_device_owner(client, self._profile_key)
-                meta_error = (
-                    await _start_meta_setup(self.hass, self._meta_target(), client)
-                    if result.meta_setup_needed
-                    else None
-                )
+                async with support_log.async_run(self.hass, "device_owner", source="onboarding",
+                                                 model_key=self._profile_key, client=client):
+                    await client.connect()
+                    result = await device_owner.enable_device_owner(client, self._profile_key)
+                    meta_error = (
+                        await _start_meta_setup(self.hass, self._meta_target(), client)
+                        if result.meta_setup_needed
+                        else None
+                    )
             except (AdbAuthPending, AdbConnectFailed, OSError):
                 self._owner_notice(unreachable)
             except device_owner.DeviceOwnerError as err:
@@ -1651,11 +1666,13 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not user_input.get("confirm"):
                 return self._async_create_device_entry()
             try:
-                await client.connect()
-                await device_owner.repurpose_android9_portal(
-                    client, "portal_gen1", require_recipe("portal_gen1"),
-                    confirmed=True, ks_home_enabled=home,
-                )
+                async with support_log.async_run(self.hass, "android9_cleanup", source="onboarding",
+                                                 model_key="portal_gen1", client=client):
+                    await client.connect()
+                    await device_owner.repurpose_android9_portal(
+                        client, "portal_gen1", require_recipe("portal_gen1"),
+                        confirmed=True, ks_home_enabled=home,
+                    )
             except (AdbAuthPending, AdbConnectFailed, OSError):
                 self._owner_notice("Android 9 cleanup failed: network ADB is unavailable.")
             except device_owner.DeviceOwnerError as err:
