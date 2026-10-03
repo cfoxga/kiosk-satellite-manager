@@ -9,6 +9,14 @@
   nothing in the library. A device KSM can't reach over ADB gets no repair and is checked again at
   the next start. You no longer need to press **Install Kiosk Satellite** just to clear the repair.
 
+- **Device Owner guide: keeping ADB working** (#142). New section in `docs/device-owner.md`:
+  - Network ADB on port 5555 is lost on every power cycle.
+  - It comes back with USB `adb tcpip 5555`, with an always-attached USB helper, or with Meta
+    **Settings → Debug → ADB Enabled**.
+  - A blank Debug pane after the Meta sign-in is a delay on Meta's servers, not a block.
+  - KSM's Device Owner flow never reboots the Portal.
+  - Kiosk Satellite updates, settings and backups don't need ADB.
+
 - **Uninstall Kiosk Satellite** on a device where Kiosk Satellite is the Device Owner now tells
   you why it can't, instead of failing with `DELETE_FAILED_DEVICE_POLICY_MANAGER` (#140). Android
   never uninstalls a Device Owner; only a factory reset removes it. KSM now checks first, changes
