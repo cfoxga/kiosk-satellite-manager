@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A Let's Encrypt renewal that a slow Portal applied late no longer leaves it locked out (#175).
+  KSM used to wait only 10 seconds for the device to serve the new certificate. If the device
+  took longer, KSM kept the old key, reported the renewal as failed, and then raised *Trust the
+  new HTTPS key?* KSM now waits about 30 seconds. On the next sync, it also accepts a device that
+  already serves Home Assistant's exact current certificate and clears that repair.
+
 - **Use HTTPS** can install Home Assistant's existing Let's Encrypt add-on certificate on a
   Kiosk Satellite device when that certificate covers the Portal's DNS name. KSM checks the
   certificate and key before changing the device, imports them over pinned HTTPS, and syncs

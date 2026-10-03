@@ -19,6 +19,16 @@ from homeassistant.helpers import issue_registry as ir
 from .conftest import init_integration
 
 
+@pytest.fixture(autouse=True)
+def probe():
+    """The device is not yet serving HA's new certificate unless a test says so."""
+    with patch(
+        "custom_components.kiosk_satellite_manager.ks_api_client.probe_https_identity",
+        new=AsyncMock(return_value=None),
+    ) as probed:
+        yield probed
+
+
 @pytest.fixture
 def device(hass):
     entry = MockConfigEntry(domain=DOMAIN, title="Mini", unique_id="mini", data={
@@ -110,3 +120,60 @@ async def test_setup_and_timer_sync_only_until_unload(hass):
         await hass.config_entries.async_unload(ctx.entry.entry_id)
         cancel.assert_called_once()
         assert sync.await_count == 3
+
+
+def _raise_pin_repair(hass, device):
+    ir.async_create_issue(
+        hass, DOMAIN, f"tls_certificate_changed_{device.entry_id}",
+        is_fixable=True, severity=ir.IssueSeverity.ERROR,
+        translation_key="tls_certificate_changed",
+        translation_placeholders={"name": "Mini", "host": "192.0.2.61"},
+        data={"entry_id": device.entry_id},
+    )
+
+
+async def test_device_already_serving_ha_certificate_is_adopted(hass, device, probe):
+    """[KSM-TEST-354] An import that landed after its check gave up is adopted, not redone."""
+    selected = le_certificate.CertificateMaterial("cert", "key", "bb" * 32, "new")
+    probe.return_value = (selected.spki_sha256, selected.fingerprint)
+    _raise_pin_repair(hass, device)
+    coordinator = MagicMock(async_request_refresh=AsyncMock())
+    hass.data.setdefault(DOMAIN, {})[device.entry_id] = coordinator
+    imported = AsyncMock()
+    with patch.object(le_certificate, "load_for_hostname", return_value=selected), patch(
+        "custom_components.kiosk_satellite_manager.ks_tls.async_import_certificate", new=imported
+    ), patch(
+        "custom_components.kiosk_satellite_manager.ks_api_client.login", new=AsyncMock()
+    ) as login:
+        assert await le_certificate_sync.async_sync_device(hass, device) is True
+    imported.assert_not_awaited()
+    login.assert_not_awaited()
+    assert probe.await_args.args[1] == "192.0.2.61"
+    assert device.data[CONF_TLS_SPKI] == "bb" * 32
+    assert device.data[CONF_LE_CERTIFICATE_FINGERPRINT] == "new"
+    issue_id = f"tls_certificate_changed_{device.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+    coordinator.async_request_refresh.assert_awaited_once()
+
+
+@pytest.mark.parametrize("served", [
+    ("aa" * 32, "old"),   # still the previous certificate
+    ("bb" * 32, "other"),  # HA's key, but not HA's current certificate
+    ("cc" * 32, "new"),   # HA's certificate fingerprint on another key
+    None,                  # no HTTPS answer
+])
+async def test_device_not_serving_ha_certificate_imports_over_old_pin(
+    hass, device, probe, served
+):
+    """[KSM-TEST-354] Negative: anything short of an exact match imports as before."""
+    selected = le_certificate.CertificateMaterial("cert", "key", "bb" * 32, "new")
+    probe.return_value = served
+    _raise_pin_repair(hass, device)
+    imported = AsyncMock(return_value=selected.spki_sha256)
+    with patch.object(le_certificate, "load_for_hostname", return_value=selected), patch(
+        "custom_components.kiosk_satellite_manager.ks_tls.async_import_certificate", new=imported
+    ):
+        assert await le_certificate_sync.async_sync_device(hass, device) is True
+    assert imported.await_args.args[1:4] == ("192.0.2.61", "secret", "aa" * 32)
+    issue_id = f"tls_certificate_changed_{device.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None

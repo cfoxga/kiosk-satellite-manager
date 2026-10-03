@@ -48,6 +48,38 @@ async def test_ha_certificate_import_uses_old_pin_and_checks_new_key(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_ha_certificate_import_waits_for_a_slow_listener_restart(monkeypatch):
+    """[KSM-TEST-355] A Portal that first serves the new key on the 16th probe is still verified."""
+    material = CertificateMaterial("certificate-pem", "private-key-pem", "bb" * 32, "cc" * 32)
+    monkeypatch.setattr(ks_api_client, "login", AsyncMock(return_value="token"))
+    monkeypatch.setattr(ks_api_client, "run_command", AsyncMock(return_value={"ok": True}))
+    probe = AsyncMock(side_effect=[None] * 15 + [(material.spki_sha256, material.fingerprint)])
+    monkeypatch.setattr(ks_api_client, "probe_https_identity", probe)
+    monkeypatch.setattr(ks_tls, "TLS_ENABLE_POLL_DELAY_S", 0)
+    result = await ks_tls.async_import_certificate(
+        MagicMock(), "192.0.2.61", "password", "aa" * 32, material
+    )
+    assert result == material.spki_sha256
+    assert probe.await_count == 16
+
+
+@pytest.mark.asyncio
+async def test_ha_certificate_import_still_gives_up_after_30_probes(monkeypatch):
+    """[KSM-TEST-355] Negative: no matching answer in 30 probes raises and pins nothing."""
+    material = CertificateMaterial("certificate-pem", "private-key-pem", "bb" * 32, "cc" * 32)
+    monkeypatch.setattr(ks_api_client, "login", AsyncMock(return_value="token"))
+    monkeypatch.setattr(ks_api_client, "run_command", AsyncMock(return_value={"ok": True}))
+    probe = AsyncMock(return_value=None)
+    monkeypatch.setattr(ks_api_client, "probe_https_identity", probe)
+    monkeypatch.setattr(ks_tls, "TLS_ENABLE_POLL_DELAY_S", 0)
+    with pytest.raises(KsApiError, match="did not serve the imported"):
+        await ks_tls.async_import_certificate(
+            MagicMock(), "192.0.2.61", "password", "aa" * 32, material
+        )
+    assert probe.await_count == 30
+
+
+@pytest.mark.asyncio
 async def test_ha_certificate_import_rejects_wrong_served_key(monkeypatch):
     """[KSM-TEST-352] A successful command response alone is not proof of identity."""
     material = CertificateMaterial("certificate-pem", "private-key-pem", "bb" * 32, "cc" * 32)

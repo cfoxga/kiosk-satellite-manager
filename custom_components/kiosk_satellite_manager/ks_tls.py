@@ -25,6 +25,9 @@ MIN_TLS_VERSION = (2026, 9, 78)
 # KS restarts its listener ~750 ms after the setting changes (debounced).
 TLS_ENABLE_POLL_ATTEMPTS = 10
 TLS_ENABLE_POLL_DELAY_S = 1.0
+# An import restarts the listener with a new key; a Portal can take well past
+# the setting debounce to come back (KSM-BEHAVE-180, #175).
+CERT_IMPORT_POLL_ATTEMPTS = 30
 
 _VERSION_RE = re.compile(r"^\s*v?(\d+)\.(\d+)\.(\d+)")
 
@@ -116,7 +119,7 @@ async def async_import_certificate(
         raise KsApiError("Kiosk Satellite rejected the HA certificate") from None
     if not result.get("ok"):
         raise KsApiError("Kiosk Satellite rejected the HA certificate")
-    for _ in range(TLS_ENABLE_POLL_ATTEMPTS):
+    for _ in range(CERT_IMPORT_POLL_ATTEMPTS):
         await asyncio.sleep(TLS_ENABLE_POLL_DELAY_S)
         probed = await ks_api_client.probe_https_identity(session, host)
         if probed is None:
