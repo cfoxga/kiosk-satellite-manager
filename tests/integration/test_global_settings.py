@@ -433,7 +433,9 @@ async def test_automatic_requires_confirmation_and_password_before_install(hass)
     install.assert_not_called()
 
 
-async def test_automatic_reinstall_waits_for_confirmation_and_copies_settings(hass):
+@pytest.mark.parametrize("area", [TEST_AREA_ID, None], ids=["area", "no_area"])
+async def test_automatic_reinstall_waits_for_confirmation_and_copies_settings(hass, area):
+    """[KSM-TEST-350] KSM-BEHAVE-177: the confirmation's Area is optional."""
     """[KSM-TEST-140/142] Confirmation precedes uninstall and copies defaults."""
     manager = MockConfigEntry(domain=DOMAIN, data={CONF_ENTRY_TYPE: "manager"}, options={
         CONF_ONBOARDING_MODE: ONBOARDING_AUTOMATIC,
@@ -456,7 +458,11 @@ async def test_automatic_reinstall_waits_for_confirmation_and_copies_settings(ha
         client.close = AsyncMock()
         client.uninstall_ks = AsyncMock()
         client.uninstall_ks.assert_not_awaited()
-        result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID})
+        marker = next(k for k in result["data_schema"].schema if k == CONF_AREA_ID)
+        assert isinstance(marker, vol.Optional)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_AREA_ID: area} if area else {}
+        )
         if result["type"] == data_entry_flow.FlowResultType.SHOW_PROGRESS:
             await hass.async_block_till_done()
             result = await hass.config_entries.flow.async_configure(result["flow_id"])
@@ -466,7 +472,7 @@ async def test_automatic_reinstall_waits_for_confirmation_and_copies_settings(ha
         client.uninstall_ks.assert_awaited_once()
         install.assert_awaited_once()
     assert result["data"][CONF_HA_URL] == "https://ha.example.test"
-    assert result["data"][CONF_AREA_ID] == TEST_AREA_ID
+    assert result["data"][CONF_AREA_ID] == area
     assert result["data"][CONF_TOKEN_MODE] == TOKEN_MODE_AUTO
     assert result["options"][CONF_AUTO_UPDATE] is True
 

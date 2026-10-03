@@ -78,7 +78,8 @@ from .const import (
 from . import auto_update, config_backup, fleet, follower_updates, meta_setup, support_request
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .device_repairs import (
-    apply_dashboard_dns, async_resolve_device_model, clear_device_repairs, needs_model_resolution,
+    apply_dashboard_dns, async_resolve_device_model, async_track_area_repairs, clear_device_repairs,
+    needs_model_resolution,
     sync_device_support, take_dashboard_dns, tls_disabled_issue_id, tls_issue_id,
 )
 from .ks_api import ReleaseInfo, latest_release_info
@@ -577,6 +578,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await _async_ensure_release_coordinator(hass)
         entry.async_on_unload(entry.add_update_listener(_async_manager_options_updated))
         entry.async_on_unload(follower_updates.async_setup(hass))
+        # KSM-BEHAVE-178: one registry listener for every device's Area repair.
+        entry.async_on_unload(async_track_area_repairs(hass))
         await hass.config_entries.async_forward_entry_setups(entry, MANAGER_PLATFORMS)
         device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, entry.entry_id), entry.entry_id)
         if device is not None and device.name != "KSM Settings":

@@ -61,7 +61,7 @@ async def init_integration(hass, *, data=None, options=None):
 
 
 @pytest.mark.parametrize("native_subentry", [False, True])
-async def test_KSM_TEST_348_install_without_area_still_starts(hass, native_subentry):
+async def test_KSM_TEST_350_install_without_area_still_starts(hass, native_subentry):
     data = {
         "host": "192.168.99.99", "port": 5555, "key_path": "/tmp/test-key",
         "area_id": None,
@@ -95,7 +95,7 @@ async def test_KSM_TEST_348_install_without_area_still_starts(hass, native_suben
         assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 
-async def test_KSM_TEST_348_registry_area_allows_legacy_entry_to_install(hass):
+async def test_KSM_TEST_350_registry_area_allows_legacy_entry_to_install(hass):
     area = ar.async_get(hass).async_create("Kitchen")
     entry = MockConfigEntry(domain=DOMAIN, title="Kitchen Portal", data={
         "host": "192.168.99.99", "port": 5555, "key_path": "/tmp/test-key",

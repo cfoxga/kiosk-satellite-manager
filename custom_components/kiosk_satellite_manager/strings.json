@@ -15,7 +15,7 @@
         "title": "Configure Kiosk Satellite device",
         "description": "Detected device type: {device_model}\nAndroid version: {android_version}\n\nChoose this device's Area here. The password is set as Kiosk Satellite's own admin password once it is installed, and used to connect it to this Home Assistant instance automatically.",
         "data": {
-          "area_id": "Area",
+          "area_id": "Area (recommended: HAM and Bermuda need it)",
           "password": "Admin password",
           "token_mode": "Home Assistant access token",
           "ha_url": "Home Assistant URL",
@@ -40,7 +40,7 @@
         "title": "Connect Kiosk Satellite Manager",
         "description": "Choose this device's Area and enter Kiosk Satellite's existing Web UI password. If you chose Keep, its Home Assistant settings stay unchanged. If you chose Update settings, KSM replaces its Home Assistant connection and start page without uninstalling the app.",
         "data": {
-          "area_id": "Area",
+          "area_id": "Area (recommended: HAM and Bermuda need it)",
           "password": "Existing Password",
           "ha_url": "Home Assistant URL",
           "auto_update": "Auto-update on this device",
@@ -62,7 +62,7 @@
         "title": "Connect Kiosk Satellite Manager",
         "description": "Kiosk Satellite is already running on this device, so it is added without ADB. KSM points it at this Home Assistant with a new token; its other settings are left unchanged.\nDetected device type: {device_model}\nAndroid version: {android_version}\n\nChoose its Area and enter its existing Web UI password. Enable ADB later only if you need Install/Reinstall, Uninstall or Device Owner.",
         "data": {
-          "area_id": "Area",
+          "area_id": "Area (recommended: HAM and Bermuda need it)",
           "password": "Existing Password",
           "enable_esphome": "Enable ESPHome"
         },
@@ -74,7 +74,7 @@
       "confirm": {
         "title": "Confirm device onboarding",
         "description": "Device: {device}\nInstall action: {action}\nHome Assistant URL: {ha_url}\n\nChoose this device's Area and confirm to apply these settings.",
-        "data": {"area_id": "Area"}
+        "data": {"area_id": "Area (recommended: HAM and Bermuda need it)"}
       },
       "onboard_device_owner": {
         "title": "Enable Device Owner for Kiosk Satellite",
@@ -252,12 +252,12 @@
   },
   "issues": {
     "area_required": {
-      "title": "{name}: assign an Area before installing",
+      "title": "{name} has no Area",
       "fix_flow": {
         "step": {
           "area": {
             "title": "Assign an Area to {name}",
-            "description": "Choose the Home Assistant Area for this device. After saving, press Install Kiosk Satellite again.",
+            "description": "This device has no Home Assistant Area. KSM works without one, but HAM and Bermuda need it to place the device. Choose its Area here, or set it on the device page.",
             "data": {"area_id": "Area"}
           }
         },

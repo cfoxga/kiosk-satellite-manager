@@ -912,6 +912,11 @@ def _owner_failure_text(err: "device_owner.DeviceOwnerError") -> str:
     return _OWNER_FAILURES.get(err.code, err.code).format(detail=err.detail)
 
 
+def _area_exists(hass, area_id: str | None) -> bool:
+    """KSM-BEHAVE-177: Area is optional, but a chosen one must still exist."""
+    return not area_id or ar.async_get(hass).async_get_area(area_id) is not None
+
+
 class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Kiosk Satellite Manager."""
 
@@ -1150,7 +1155,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
         errors = {}
         if user_input is not None:
-            if ar.async_get(self.hass).async_get_area(user_input.get(CONF_AREA_ID)) is None:
+            if not _area_exists(self.hass, user_input.get(CONF_AREA_ID)):
                 errors[CONF_AREA_ID] = "area_not_found"
             if not self._global.get(CONF_PASSWORD):
                 errors["base"] = "password_required"
@@ -1173,7 +1178,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_ha_url"
             if not errors:
                 self._name = self._discovered_name
-                self._area_id = user_input[CONF_AREA_ID]
+                self._area_id = user_input.get(CONF_AREA_ID) or None
                 self._password = self._global[CONF_PASSWORD]
                 self._existing_install_action = action if self._ks_installed else None
                 self._token_mode = token_mode
@@ -1183,7 +1188,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_install()
         return self.async_show_form(
             step_id="confirm",
-            data_schema=vol.Schema({vol.Required(CONF_AREA_ID): selector.AreaSelector()}),
+            data_schema=vol.Schema({vol.Optional(CONF_AREA_ID): selector.AreaSelector()}),
             errors=errors,
             description_placeholders={
                 "device": self._discovered_name, "action": action,
@@ -1193,12 +1198,12 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_device_info(self, user_input: dict | None = None) -> FlowResult:
-        """Collect KSM settings and an Area before installation."""
+        """Collect KSM settings and an optional Area before installation."""
         errors: dict[str, str] = {}
         token_mode_options = _token_options(self.hass)
 
         if user_input is not None:
-            if ar.async_get(self.hass).async_get_area(user_input.get(CONF_AREA_ID)) is None:
+            if not _area_exists(self.hass, user_input.get(CONF_AREA_ID)):
                 errors[CONF_AREA_ID] = "area_not_found"
             password = user_input.get(CONF_PASSWORD) or self._global.get(CONF_PASSWORD, "")
             token_mode = user_input.get(
@@ -1220,7 +1225,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if not errors:
                 self._name = self._discovered_name
-                self._area_id = user_input[CONF_AREA_ID]
+                self._area_id = user_input.get(CONF_AREA_ID) or None
                 self._password = password
                 self._token_mode = token_mode
                 self._credential = credential
@@ -1233,7 +1238,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_install()
 
         fields: dict[vol.Marker, Any] = {
-            vol.Required(CONF_AREA_ID): selector.AreaSelector(),
+            vol.Optional(CONF_AREA_ID): selector.AreaSelector(),
             vol.Required(CONF_PASSWORD, default=self._global.get(CONF_PASSWORD, vol.UNDEFINED)): selector.TextSelector(
                 selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
             ),
@@ -1299,7 +1304,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         the device's own API (pinned HTTPS when it can), then create the entry."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            if ar.async_get(self.hass).async_get_area(user_input.get(CONF_AREA_ID)) is None:
+            if not _area_exists(self.hass, user_input.get(CONF_AREA_ID)):
                 errors[CONF_AREA_ID] = "area_not_found"
             if self._selected_fleet_id and _invitation_leader(self.hass, self._selected_fleet_id) is None:
                 errors["base"] = "fleet_unavailable"
@@ -1368,7 +1373,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "cannot_connect_ks"
             if not errors:
                 self._want_esphome = bool(user_input.get(CONF_ENABLE_ESPHOME, self._esphome_default()))
-                self._area_id = user_input[CONF_AREA_ID]
+                self._area_id = user_input.get(CONF_AREA_ID) or None
                 data = {
                     CONF_HOST: self._host,
                     CONF_PORT: self._port,
@@ -1393,7 +1398,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="ks_device_info",
             data_schema=vol.Schema({
-                vol.Required(CONF_AREA_ID): selector.AreaSelector(),
+                vol.Optional(CONF_AREA_ID): selector.AreaSelector(),
                 vol.Required(CONF_PASSWORD): selector.TextSelector(
                     selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
                 ),
@@ -1458,7 +1463,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         user keeps the installed application's own settings intact."""
         errors = {}
         if user_input is not None:
-            if ar.async_get(self.hass).async_get_area(user_input.get(CONF_AREA_ID)) is None:
+            if not _area_exists(self.hass, user_input.get(CONF_AREA_ID)):
                 errors[CONF_AREA_ID] = "area_not_found"
             token_mode = user_input.get(
                 CONF_TOKEN_MODE, self._global.get(CONF_TOKEN_MODE, TOKEN_MODE_AUTO)
@@ -1476,7 +1481,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_HA_URL] = "invalid_ha_url"
         if user_input is not None and not errors:
             self._name = self._discovered_name
-            self._area_id = user_input[CONF_AREA_ID]
+            self._area_id = user_input.get(CONF_AREA_ID) or None
             self._password = user_input.get(CONF_PASSWORD) or self._global.get(CONF_PASSWORD, "")
             self._ha_url = user_input.get(CONF_HA_URL) or self._global.get(CONF_HA_URL)
             self._auto_update = user_input.get(
@@ -1489,7 +1494,7 @@ class KioskSatelliteManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_install()
 
         fields = {
-            vol.Required(CONF_AREA_ID): selector.AreaSelector(),
+            vol.Optional(CONF_AREA_ID): selector.AreaSelector(),
             vol.Required(CONF_PASSWORD, default=self._global.get(CONF_PASSWORD, vol.UNDEFINED)):
                 selector.TextSelector(
                     selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)

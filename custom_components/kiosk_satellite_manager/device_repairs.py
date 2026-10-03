@@ -6,10 +6,11 @@ address change or a fleet move and end when the device leaves KSM.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Final
 
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers import issue_registry as ir
+from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr, issue_registry as ir
 
 from .adb_client import AdbClient
 from .const import CONF_DEVICE_PROFILE, CONF_HOST, CONF_KEY_PATH, CONF_PORT, DOMAIN
@@ -47,7 +48,7 @@ def area_required_issue_id(device_id: str) -> str:
 
 
 def raise_area_required(hass: HomeAssistant, entry: ConfigEntry | DeviceEntry) -> None:
-    """Offer an Area picker when Install finds no assigned HA device Area."""
+    """KSM-BEHAVE-178: offer an Area picker for a device with no HA Area."""
     ir.async_create_issue(
         hass, DOMAIN, area_required_issue_id(entry.entry_id),
         is_fixable=True, severity=ir.IssueSeverity.WARNING,
@@ -55,6 +56,46 @@ def raise_area_required(hass: HomeAssistant, entry: ConfigEntry | DeviceEntry) -
         translation_placeholders={"name": entry.title},
         data={"entry_id": entry.entry_id},
     )
+
+
+def sync_area_repair(hass: HomeAssistant, device: dr.DeviceEntry) -> None:
+    """KSM-BEHAVE-178: a KSM physical device's HA device without an Area keeps
+    the Area repair; one with an Area has none. Manager and grouping entries
+    resolve to no physical device, so they never get one."""
+    from .fleet import resolve_device  # fleet imports this module
+
+    for domain, ident in device.identifiers:
+        if domain != DOMAIN or (entry := resolve_device(hass, ident)) is None:
+            continue
+        if device.area_id:
+            ir.async_delete_issue(hass, DOMAIN, area_required_issue_id(ident))
+        else:
+            raise_area_required(hass, entry)
+
+
+def async_track_area_repairs(hass: HomeAssistant) -> Callable[[], None]:
+    """KSM-BEHAVE-178: judge every existing device now, then each device the
+    registry creates or whose Area changes, so an Area set by hand clears it."""
+    registry = dr.async_get(hass)
+    devices = {
+        device.id: device
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        for device in dr.async_entries_for_config_entry(registry, entry.entry_id)
+    }
+    for device in devices.values():
+        sync_area_repair(hass, device)
+
+    @callback
+    def _updated(event: Event[dr.EventDeviceRegistryUpdatedData]) -> None:
+        data = event.data
+        if data["action"] == "update" and "area_id" not in data["changes"]:
+            return
+        if data["action"] in ("create", "update") and (
+            device := registry.async_get(data["device_id"])
+        ) is not None:
+            sync_area_repair(hass, device)
+
+    return hass.bus.async_listen(dr.EVENT_DEVICE_REGISTRY_UPDATED, _updated)
 
 
 def device_support_issue_id(device_id: str) -> str:

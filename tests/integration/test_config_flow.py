@@ -42,6 +42,18 @@ from custom_components.kiosk_satellite_manager.credentials import TokenCredentia
 
 TEST_AREA_ID = "ksm_test_area"
 
+_AREA_CASES = pytest.mark.parametrize("area", [TEST_AREA_ID, None], ids=["area", "no_area"])
+
+
+def _with_area(area, values: dict) -> dict:
+    """[KSM-TEST-350] KSM-BEHAVE-177: Area is optional on every add-device form."""
+    return {CONF_AREA_ID: area, **values} if area else dict(values)
+
+
+def _area_is_optional(result) -> bool:
+    marker = next(k for k in result["data_schema"].schema if k == CONF_AREA_ID)
+    return isinstance(marker, vol.Optional)
+
 
 @pytest.fixture(autouse=True)
 def _area_for_config_flow(hass):
@@ -284,7 +296,8 @@ async def test_user_flow_uses_and_normalizes_portal_bluetooth_name(hass):
 
 
 
-async def test_user_flow_creates_entry_after_device_info_step(hass):
+@_AREA_CASES
+async def test_user_flow_creates_entry_after_device_info_step(hass, area):
     # Successful CREATE_ENTRY triggers the real async_setup_entry, whose
     # coordinator does a first refresh -- fetch_health must be mocked for
     # that too, or phacc's pytest-socket blocks the real network call.
@@ -331,10 +344,11 @@ async def test_user_flow_creates_entry_after_device_info_step(hass):
         assert invalid["step_id"] == "device_info"
         assert invalid["errors"][CONF_AREA_ID] == "area_not_found"
         mock_install.assert_not_awaited()
+        assert _area_is_optional(invalid)
 
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222"},
+            _with_area(area, {CONF_PASSWORD: "hunter222"}),
         )
         # No install progress step: this device matches no exact catalog
         # model, so the install task fails closed at require_recipe before it
@@ -357,7 +371,7 @@ async def test_user_flow_creates_entry_after_device_info_step(hass):
     # that, instead of silently applying the Meta Portal recipe.
     assert result["data"][CONF_DEVICE_PROFILE] is None
     assert result["data"][CONF_NAME] == "Living Room TV"
-    assert result["data"][CONF_AREA_ID] == TEST_AREA_ID
+    assert result["data"][CONF_AREA_ID] == area
     assert result["data"][CONF_PASSWORD] == "hunter222"
     # Everything the user typed is preserved on the entry, and nothing was
     # pushed to the device: install_and_launch was never reached for a model
@@ -648,7 +662,8 @@ async def test_user_flow_uses_selected_long_lived_token(hass):
     assert not persistent_notification._async_get_or_create_notifications(hass)  # noqa: SLF001
 
 
-async def test_user_flow_kept_install_collects_only_existing_connection_details(hass):
+@_AREA_CASES
+async def test_user_flow_kept_install_collects_only_existing_connection_details(hass, area):
     """[KSM-TEST-021] A kept install needs only KSM entry details and the
     existing remote-UI password; it must not overwrite device settings."""
     with patch(
@@ -689,10 +704,11 @@ async def test_user_flow_kept_install_collects_only_existing_connection_details(
         schema_fields = {field.schema for field in result["data_schema"].schema}
         # KSM-BEHAVE-098 (#62), KSM-BEHAVE-135: the Device Owner and ESPHome opt-ins.
         assert schema_fields == {CONF_AREA_ID, CONF_PASSWORD, CONF_ENABLE_DEVICE_OWNER, "enable_esphome"}
+        assert _area_is_optional(result)
 
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222"},
+            _with_area(area, {CONF_PASSWORD: "hunter222"}),
         )
         assert result["type"] in (
             data_entry_flow.FlowResultType.CREATE_ENTRY,
@@ -706,7 +722,7 @@ async def test_user_flow_kept_install_collects_only_existing_connection_details(
 
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result["title"] == "Living Room TV"
-    assert result["data"][CONF_AREA_ID] == TEST_AREA_ID
+    assert result["data"][CONF_AREA_ID] == area
     assert "home_launcher" not in result["data"]
     assert CONF_HA_TOKEN not in result["data"]
     mock_install.assert_not_awaited()
@@ -970,9 +986,10 @@ async def _start_ks_flow(hass, host="192.168.40.250"):
     )
 
 
+@_AREA_CASES
 @pytest.mark.parametrize("served_pin", [None, _PIN])
 async def test_ks_running_device_is_added_without_adb(
-    hass, ks_health_probe, tls_migration, ks_connect_ha, served_pin
+    hass, ks_health_probe, tls_migration, ks_connect_ha, served_pin, area
 ):
     """[KSM-TEST-185] KSM-BEHAVE-096: a host whose Kiosk Satellite answers
     health is added from health + password alone -- no AdbClient at all.
@@ -996,9 +1013,10 @@ async def test_ks_running_device_is_added_without_adb(
         assert result["type"] == data_entry_flow.FlowResultType.FORM
         assert result["step_id"] == "ks_device_info"
         assert {field.schema for field in result["data_schema"].schema} == {CONF_AREA_ID, CONF_PASSWORD, "enable_esphome"}
+        assert _area_is_optional(result)
 
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_AREA_ID: TEST_AREA_ID, CONF_PASSWORD: "hunter222"}
+            result["flow_id"], _with_area(area, {CONF_PASSWORD: "hunter222"})
         )
         await hass.async_block_till_done()
 
@@ -1008,7 +1026,7 @@ async def test_ks_running_device_is_added_without_adb(
     assert data[CONF_HOST] == "192.168.40.250"
     assert data[CONF_DEVICE_PROFILE] == "portal_mini"
     assert data[CONF_PASSWORD] == "hunter222"
-    assert data[CONF_AREA_ID] == TEST_AREA_ID
+    assert data[CONF_AREA_ID] == area
     assert data.get("tls_spki_sha256") == served_pin
     assert data["port"] == 5555 and data["key_path"]
     assert "home_launcher" not in data

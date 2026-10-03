@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Choosing an Area while adding a device is optional again (#151). 0.5.0 made it required on every
+  add path, so adding a device without one failed. An Area is still recommended: HAM and Bermuda
+  need it to place the device.
+
+- Every KSM device without a Home Assistant Area now shows a *{name} has no Area* repair (#151,
+  #144). Fix it from Repairs or by setting the Area on the device page; either one clears it, and
+  removing the Area brings it back. Devices added before this release get the repair the next time
+  KSM starts. It never blocks **Install Kiosk Satellite**.
+
 ## 0.5.0
 
 - **Install Kiosk Satellite** no longer refuses to start when its Home Assistant device
