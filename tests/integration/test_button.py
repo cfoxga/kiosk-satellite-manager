@@ -1024,3 +1024,96 @@ async def test_install_re_establishes_https_only_on_an_opted_in_entry(hass, pinn
     kwargs["on_tls_pinned"]("cd" * 32)
     assert ctx.entry.data[CONF_TLS_SPKI] == "cd" * 32
     assert all(ir.async_get(hass).async_get_issue(DOMAIN, i) is None for i in issue_ids)
+
+
+_KS_UPDATE_NOTIFY = "custom_components.kiosk_satellite_manager.ks_update.persistent_notification"
+
+
+def _kitchen_entry(hass):
+    entry = MockConfigEntry(domain=DOMAIN, title="Kitchen Portal", data={
+        CONF_HOST: "192.168.40.133", CONF_PASSWORD: "test-password",
+        "port": 5555, "key_path": "/tmp/test-key",
+    })
+    entry.add_to_hass(hass)
+    return entry
+
+
+async def test_KSM_TEST_356_install_reports_an_update_awaiting_confirmation(hass):
+    """[KSM-TEST-356] awaiting confirmation returns normally but tells the
+    operator; updated clears any earlier notice; a failure raises, no notice."""
+    entry = _kitchen_entry(hass)
+    notice_id = f"{DOMAIN}_confirm_{entry.entry_id}"
+    update = "custom_components.kiosk_satellite_manager.button.async_self_update_entry"
+
+    with patch(update, new=AsyncMock(return_value="awaiting_confirmation")), patch(
+        _KS_UPDATE_NOTIFY
+    ) as notify:
+        await async_install_entry(hass, entry)
+    notify.async_create.assert_called_once()
+    kwargs = notify.async_create.call_args.kwargs
+    assert kwargs["notification_id"] == notice_id
+    assert "Kitchen Portal" in kwargs["title"]
+    assert "confirm" in kwargs["message"].lower()
+    notify.async_dismiss.assert_not_called()
+
+    with patch(update, new=AsyncMock(return_value="updated")), patch(_KS_UPDATE_NOTIFY) as notify:
+        await async_install_entry(hass, entry)
+    notify.async_create.assert_not_called()
+    notify.async_dismiss.assert_called_once_with(hass, notice_id)
+
+    with patch(update, new=AsyncMock(side_effect=HomeAssistantError("upload refused"))), patch(
+        _KS_UPDATE_NOTIFY
+    ) as notify:
+        with pytest.raises(HomeAssistantError, match="upload refused"):
+            await async_install_entry(hass, entry)
+    notify.async_create.assert_not_called()
+
+
+class _VanishingEntry:
+    """A device whose subentry is removed mid-run: `title` then raises, as
+    fleet.DeviceEntry does once HA drops the subentry (#176)."""
+
+    entry_id = "vanishing-device"
+    data: dict = {}
+
+    def __init__(self):
+        self.gone = False
+
+    @property
+    def title(self):
+        if self.gone:
+            raise KeyError(self.entry_id)
+        return "Kitchen Portal"
+
+
+async def test_KSM_TEST_357_update_all_reports_a_device_removed_mid_run(hass):
+    """[KSM-TEST-357] the summary is still sent, naming the device and its
+    real failure, when the device's entry vanishes during its update."""
+    from custom_components.kiosk_satellite_manager.button import KioskSatelliteUpdateAllButton
+
+    manager = MockConfigEntry(domain=DOMAIN, data={CONF_ENTRY_TYPE: ENTRY_TYPE_MANAGER})
+    manager.add_to_hass(hass)
+    device = _VanishingEntry()
+    hass.data.setdefault(DOMAIN, {})[device.entry_id] = SimpleNamespace(
+        last_update_success=True, ksm_installing=False, data={"appVersion": "2026.9.76"},
+    )
+
+    async def vanish_then_fail(_hass, entry):
+        entry.gone = True
+        raise HomeAssistantError("upload refused")
+
+    button = KioskSatelliteUpdateAllButton(hass, manager)
+    with patch("custom_components.kiosk_satellite_manager.button.target_release",
+               return_value=_release("2026.9.77")), patch(
+        "custom_components.kiosk_satellite_manager.button.fleet.device_entries",
+        return_value=[device],
+    ), patch(
+        "custom_components.kiosk_satellite_manager.button.async_self_update_entry",
+        new=vanish_then_fail,
+    ), patch(
+        "custom_components.kiosk_satellite_manager.button.persistent_notification.async_create"
+    ) as notify:
+        await button.async_press()
+
+    message = notify.call_args.kwargs["message"]
+    assert "Failed: Kitchen Portal: upload refused" in message

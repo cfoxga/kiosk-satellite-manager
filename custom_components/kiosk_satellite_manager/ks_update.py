@@ -17,6 +17,7 @@ import logging
 from pathlib import Path
 
 import aiohttp
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -44,6 +45,28 @@ _LOGGER = logging.getLogger(__name__)
 
 OUTCOME_UPDATED = "updated"
 OUTCOME_AWAITING_CONFIRMATION = "awaiting_confirmation"
+
+
+def notify_awaiting_confirmation(hass: HomeAssistant, entry: ConfigEntry, outcome: str) -> None:
+    """KSM-BEHAVE-181: an install waiting on the device is reported, never silent.
+
+    Awaiting confirmation raises a per-device persistent notification; an
+    updated outcome dismisses an earlier one. Any other outcome leaves it.
+    """
+    notice_id = f"{DOMAIN}_confirm_{entry.entry_id}"
+    if outcome == OUTCOME_AWAITING_CONFIRMATION:
+        persistent_notification.async_create(
+            hass,
+            message=(
+                f"The Kiosk Satellite update was uploaded to {entry.title} but "
+                "Android needs it confirmed: tap the install prompt on the "
+                "device screen to finish."
+            ),
+            title=f"Kiosk Satellite update needs confirmation: {entry.title}",
+            notification_id=notice_id,
+        )
+    elif outcome == OUTCOME_UPDATED:
+        persistent_notification.async_dismiss(hass, notice_id)
 
 
 class ApiInstallUnavailable(HomeAssistantError):
