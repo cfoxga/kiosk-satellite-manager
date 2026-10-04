@@ -144,10 +144,6 @@ def test_KSM_TEST_328_every_candidate_names_a_real_recipe():
 
 async def test_KSM_TEST_328_a_supported_build_needs_nothing_and_a_new_build_is_named():
     report = await _portal("PortalGo", "29", fingerprint=_PORTAL_GO_FINGERPRINT)
-    # KSM-BEHAVE-184: the renamed Portal recipe has no evidence yet, so even
-    # the build the #121 matrix ran on is a new build until it is re-run.
-    assert sr.build_support_request(report, ksm_version="0.4.2")["kind"] == sr.KIND_NEW_BUILD
-    report["catalog"]["support_state"] = "supported"
     supported = sr.build_support_request(report, ksm_version="0.4.2")
     assert supported["kind"] == sr.KIND_SUPPORTED
     assert supported["device_model"] is None

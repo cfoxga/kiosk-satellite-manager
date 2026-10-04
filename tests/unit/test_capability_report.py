@@ -237,8 +237,8 @@ async def test_report_is_sanitized_and_marks_unsupported_probes():
         "classification": None,
         "recipe_key": "meta_portal_android10_verifier_off",
         "assignment_state": "approved",
-        # KSM-BEHAVE-184: no evidence on the renamed recipe yet.
-        "support_state": "recipe_assigned",
+        # The fixture's synthetic fingerprint is outside the qualified build scope.
+        "support_state": "revalidation_required",
         "reason": report["catalog"]["reason"],
         "executable_recipe": True,
     }

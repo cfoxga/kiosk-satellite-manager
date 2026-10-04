@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fixed test suite socket isolation and qualification expectations (#138). Stubs
+  background update status polling in integration tests to prevent unmocked socket
+  calls, aligns Portal Go catalog sensor and support request expectations with the
+  verified verifier_off recipe, and ensures pre-existing HA device entries are deleted
+  during e2e recovery restore.
+
 - Portal Go and Portal+ Gen 2 are supported again (#182). Both passed every install test on the
   new Portal recipe, including turning the package verifier off and back on.
 

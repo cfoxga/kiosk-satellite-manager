@@ -111,8 +111,8 @@ async def test_manager_catalog_entities_show_models_recipes_and_assignment_bound
     assert recipes.state == str(len(INSTALL_RECIPES))
     go = next(row for row in models.attributes["models"] if row["model_key"] == "portal_go")
     assert go["recipe_key"] == "meta_portal_android10_verifier_off"
-    # KSM-BEHAVE-184: the renamed recipe inherited none of the #121 evidence.
-    assert go["qualification_records"] == 0
+    # Re-qualified on meta_portal_android10_verifier_off (commit 5bbc221).
+    assert go["qualification_records"] == 9
     assert "supported" not in go
     android_tv = next(row for row in recipes.attributes["recipes"] if row["recipe_key"] == "android_tv")
     assert android_tv["assigned_models"] == []

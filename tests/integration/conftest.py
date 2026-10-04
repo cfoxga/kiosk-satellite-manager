@@ -213,6 +213,22 @@ def esphome_identity():
         yield mock
 
 
+@pytest.fixture(autouse=True)
+def update_failure_status():
+    """KSM-BEHAVE-185: health refreshes poll getUpdateStatus over the network.
+    Keep it off the network by default (returning a clean status without errors)."""
+    prefix = "custom_components.kiosk_satellite_manager.update_failure."
+    with patch(
+        prefix + "ks_api_client.login",
+        new=AsyncMock(return_value="synthetic-token"),
+    ) as mock_login, patch(
+        prefix + "ks_api_client.run_command",
+        new=AsyncMock(return_value={"ok": True, "data": {"lastOutcome": "success", "lastError": None}}),
+    ) as mock_run:
+        yield SimpleNamespace(login=mock_login, run_command=mock_run)
+
+
+
 @dataclass
 class KSMContext:
     entry: MockConfigEntry
