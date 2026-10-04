@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Portal Go is supported again (#182). It passed every install test on the new Portal recipe,
+  including turning the package verifier off and back on. Portal+ Gen 2 still shows as recipe
+  assigned until it is re-tested.
+
 - Meta Portal Kiosk Satellite updates no longer fail after the Portal reboots (#179). Installing
   KSM on a Portal now turns off Android's package verifier, which was rejecting KS's own
   self-updates once ADB was gone. **Uninstall Kiosk Satellite** turns it back on. Other devices

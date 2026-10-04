@@ -284,9 +284,107 @@ RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
 # KSM-BEHAVE-184 (#179): the Portal recipes now turn the package verifier
 # off, so they got new keys and inherit none of the #121 matrices recorded
 # under `_local_dns` (Portal Go and Portal+ Gen 2, 2026-10-02; see git history).
-# No Portal build is `supported` until the matrix, including the
-# `package_verifier` scenario, is re-run on the new key.
-QUALIFICATIONS: tuple[QualificationRecord, ...] = ()
+# These are the full physical matrix runs on the new key, against dev HA (#182).
+# Only Portal Go is re-qualified: the Portal+ Gen 2 test unit (Kitchen Portal)
+# runs KS as Device Owner, so Uninstall and package_verifier cannot pass there.
+_MATRIX_SCENARIOS: tuple[tuple[str, str, str, str], ...] = (
+    (
+        SCENARIO_CLEAN_INSTALL,
+        "after a wipe that removed the package, onboarding installed it through a new KSM entry.",
+        "The package read back absent before the flow and present after it.",
+        "The scenario fails when the wipe leaves the package or the flow ends without it.",
+    ),
+    (
+        SCENARIO_EXISTING_REUSE,
+        "setup reused the installed app without reinstalling.",
+        "Existing package kept and entry created.",
+        "The scenario fails when reuse does not complete setup.",
+    ),
+    (
+        SCENARIO_UPDATE,
+        "the Install button reinstalled the target release.",
+        "Install button press completed with the app running.",
+        "The scenario fails when the button is unavailable, the install errors, or it waits on device confirmation.",
+    ),
+    (
+        SCENARIO_REINSTALL,
+        "with the app disabled, onboarding offered the existing-install choice and reinstall completed.",
+        "The app's API stopped answering before the flow, so onboarding took the ADB path.",
+        "The scenario fails when onboarding skips the existing-install step.",
+    ),
+    (
+        SCENARIO_PERMISSION_CONVERGENCE,
+        "after onboarding's reinstall ran the recipe, every runtime permission it requires read back "
+        "granted=true, with the overlay AppOp allowed and the battery exemption listed.",
+        "READ_LOGS readback shows granted=true in the same package dump.",
+        "BLUETOOTH_SCAN, outside the SDK-29 set, is not granted; a missing grant fails.",
+    ),
+    (
+        SCENARIO_HEALTH_VERSION_READBACK,
+        "Android package versionName matched KS /api/health appVersion.",
+        "Non-empty versions agreed.",
+        "The scenario fails on any mismatch between the two readbacks.",
+    ),
+    (
+        SCENARIO_PRIVATE_DNS,
+        "with private_dns_mode unset, onboarding's install recipe set it to off, and the "
+        "Uninstall button removed the package and unset it again.",
+        "private_dns_mode read back unset before the install, so the off readback is KSM's.",
+        "The scenario fails unless the readback is off after install and unset after uninstall.",
+    ),
+    (
+        SCENARIO_PACKAGE_VERIFIER,
+        "with package_verifier_enable set to 1, onboarding's install recipe set it to 0, and the "
+        "Uninstall button removed the package and put 1 back.",
+        "package_verifier_enable read back 1 before the install, so the 0 readback is KSM's.",
+        "The scenario fails unless the readback is 0 after install and 1 after uninstall.",
+    ),
+    (
+        SCENARIO_UNINSTALL,
+        "the KSM Uninstall button removed me.jxl.kiosk_satellite.",
+        "Package installed and the button available before the press.",
+        "The scenario fails when the package is still installed after the press.",
+    ),
+)
+
+
+def _matrix_records(
+    model_key: str, device: str, fingerprint: str, ks_version: str, verified_on: str
+) -> tuple[QualificationRecord, ...]:
+    return tuple(
+        QualificationRecord(
+            model_key=model_key,
+            recipe_key="meta_portal_android10_verifier_off",
+            scenario=scenario,
+            result=RESULT_PASS,
+            verified_on=verified_on,
+            min_sdk=29,
+            max_sdk=29,
+            fingerprint_prefixes=(fingerprint,),
+            evidence=(
+                f"KS {ks_version} on {device}, SDK 29: {evidence} "
+                "Physical matrix via kiosk-satellite-manager/scripts/test-device-matrix.py "
+                "against dev HA, KSM issue #182."
+            ),
+            positive_control=positive,
+            negative_control=negative,
+            limitations=(
+                "Evidence applies to the observed KS app build; revalidate after an app update.",
+                "Other Portal SKUs, Device Owner and Test Harness are not covered.",
+            ),
+            rollback_notes="Teardown wiped the device; KSM restored its exported config and HA entry.",
+        )
+        for scenario, evidence, positive, negative in _MATRIX_SCENARIOS
+    )
+
+
+QUALIFICATIONS: tuple[QualificationRecord, ...] = _matrix_records(
+    "portal_go",
+    "Test Portal Go / terry_prod",
+    "facebook/terry_prod/terry:10/qkq1.210213.001/5051355900018050:user/prod-keys",
+    "2026.10.5 (versionCode 303)",
+    "2026-10-04",
+)
 
 _RECOVERY_QUALIFIED_MODEL_KEYS: tuple[str, ...] = (
     "portal_go",

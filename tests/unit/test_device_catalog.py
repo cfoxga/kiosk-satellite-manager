@@ -426,17 +426,24 @@ _RETIRED_PORTAL_KEYS = {
 }
 
 
-def test_KSM_TEST_304_portal_go_needs_a_new_matrix_on_the_renamed_recipe():
+def test_KSM_TEST_304_portal_go_is_requalified_on_the_renamed_recipe():
     """[KSM-TEST-304] KSM-BEHAVE-184 renamed the Portal recipes, so the #121
     Go matrix recorded on `_local_dns` qualifies nothing on `_verifier_off`.
-    A full matrix on the new key, scoped to the exact build, makes only that
-    build supported."""
+    The #182 re-run on the new key, scoped to the exact build, makes only
+    that build supported."""
     observed = dataclasses.replace(_PORTAL_GO, fingerprint=_PORTAL_GO_40_FINGERPRINT)
     entry = resolve_catalog_entry(observed)
     assert entry.recipe.recipe_key == "meta_portal_android10_verifier_off"
     assert "android.permission.WRITE_SECURE_SETTINGS" not in entry.recipe.permissions_for_sdk(29)
-    assert not [q for q in CATALOG.qualifications if q.model_key == "portal_go"]
-    assert entry.support_state == SUPPORT_RECIPE_ASSIGNED
+    shipped = [q for q in CATALOG.qualifications if q.model_key == "portal_go"]
+    assert {q.scenario for q in shipped} == required_scenarios(entry.recipe)
+    assert {q.recipe_key for q in shipped} == {"meta_portal_android10_verifier_off"}
+    assert {q.fingerprint_prefixes for q in shipped} == {(_PORTAL_GO_40_FINGERPRINT.lower(),)}
+    assert entry.support_state == SUPPORT_SUPPORTED
+    # The shipped evidence covers no other build of the Go.
+    assert resolve_catalog_entry(dataclasses.replace(observed, fingerprint="another/build")).support_state == (
+        SUPPORT_REVALIDATION_REQUIRED
+    )
     # No record anywhere still names a retired recipe key.
     assert not {q.recipe_key for q in CATALOG.qualifications} & _RETIRED_PORTAL_KEYS
     # Positive control: a full matrix on the new key, scoped to this build.
