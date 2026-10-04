@@ -2,9 +2,8 @@
 
 ## Unreleased
 
-- Portal Go is supported again (#182). It passed every install test on the new Portal recipe,
-  including turning the package verifier off and back on. Portal+ Gen 2 still shows as recipe
-  assigned until it is re-tested.
+- Portal Go and Portal+ Gen 2 are supported again (#182). Both passed every install test on the
+  new Portal recipe, including turning the package verifier off and back on.
 
 - A Kiosk Satellite update that fails on the device now shows up in Home Assistant (#183),
   including on a fleet follower whose update prompt is hidden. KSM checks each device's last

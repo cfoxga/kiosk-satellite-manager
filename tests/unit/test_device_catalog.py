@@ -500,19 +500,25 @@ def test_KSM_TEST_367_verifier_recipes_need_the_package_verifier_scenario():
 _PLUS_FIXTURE = Path(__file__).parents[1] / "fixtures/profile-portal-plus-gen2-2026-10-02.json"
 
 
-def test_KSM_TEST_297_portal_plus_gen2_resolves_its_exact_model_without_inherited_evidence():
+def test_KSM_TEST_297_portal_plus_gen2_is_requalified_on_its_exact_build():
     """[KSM-TEST-297] The live Portal+ Gen 2 profile resolves to its exact
-    model (#115). Its #121 matrix was recorded on `_local_dns`, so on the
-    `_verifier_off` recipe (KSM-BEHAVE-184) it has no evidence until re-run,
-    and neither the Gen 1 Portal+ nor the Go inherits any."""
+    model (#115). Its #121 matrix was recorded on `_local_dns`; the #182
+    re-run on the `_verifier_off` recipe (KSM-BEHAVE-184), scoped to the
+    exact build, makes only that build supported, and neither the Gen 1
+    Portal+ nor the Go inherits any of it."""
     fixture = json.loads(_PLUS_FIXTURE.read_text())
     platform = fixture["facts"]["platform"]
     observed = DeviceFacts.from_platform(platform)
     entry = resolve_catalog_entry(observed)
     assert entry.model_key == fixture["expected_model_key"] == "portal_plus_gen2"
     assert entry.recipe.recipe_key == "meta_portal_android10_verifier_off"
-    assert not [q for q in CATALOG.qualifications if q.model_key == "portal_plus_gen2"]
-    assert entry.support_state == SUPPORT_RECIPE_ASSIGNED
+    shipped = [q for q in CATALOG.qualifications if q.model_key == "portal_plus_gen2"]
+    assert {q.scenario for q in shipped} == required_scenarios(entry.recipe)
+    assert {q.fingerprint_prefixes for q in shipped} == {(platform["fingerprint"].lower(),)}
+    assert entry.support_state == SUPPORT_SUPPORTED
+    assert resolve_catalog_entry(dataclasses.replace(observed, fingerprint="another/build")).support_state == (
+        SUPPORT_REVALIDATION_REQUIRED
+    )
 
     plus = tuple(
         dataclasses.replace(q, fingerprint_prefixes=(platform["fingerprint"].lower(),))

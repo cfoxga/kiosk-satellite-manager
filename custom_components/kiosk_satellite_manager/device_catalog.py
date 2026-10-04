@@ -285,8 +285,6 @@ RECIPE_ASSIGNMENTS: tuple[RecipeAssignment, ...] = (
 # off, so they got new keys and inherit none of the #121 matrices recorded
 # under `_local_dns` (Portal Go and Portal+ Gen 2, 2026-10-02; see git history).
 # These are the full physical matrix runs on the new key, against dev HA (#182).
-# Only Portal Go is re-qualified: the Portal+ Gen 2 test unit (Kitchen Portal)
-# runs KS as Device Owner, so Uninstall and package_verifier cannot pass there.
 _MATRIX_SCENARIOS: tuple[tuple[str, str, str, str], ...] = (
     (
         SCENARIO_CLEAN_INSTALL,
@@ -383,6 +381,12 @@ QUALIFICATIONS: tuple[QualificationRecord, ...] = _matrix_records(
     "Test Portal Go / terry_prod",
     "facebook/terry_prod/terry:10/qkq1.210213.001/5051355900018050:user/prod-keys",
     "2026.10.5 (versionCode 303)",
+    "2026-10-04",
+) + _matrix_records(
+    "portal_plus_gen2",
+    "Kitchen Portal / cipher_prod (factory reset, no Device Owner)",
+    "facebook/cipher_prod/cipher:10/qkq1.210213.001/4051355900018050:user/prod-keys",
+    "2026.10.6 (versionCode 304)",
     "2026-10-04",
 )
 
