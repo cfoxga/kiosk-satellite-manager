@@ -157,9 +157,11 @@ async def test_portal_verifier_failure_remediates_and_retries_once(cached_apk):
             return {"ok": True, "data": {"abis": ["arm64-v8a"]}}
         if name == "installUploadedApk":
             return {"ok": True}
+        # Call 1 is KSM-BEHAVE-186's clean pre-upload read; call 2 is the
+        # in-window rejection this test is about.
         return {"ok": True, "data": {
             "lastError": "INSTALL_FAILED_VERIFICATION_FAILURE"
-            if commands.count("getUpdateStatus") == 1 else None}}
+            if commands.count("getUpdateStatus") == 2 else None}}
 
     with patch(_SESSION), patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(
         _RUN_COMMAND, new=command
@@ -354,6 +356,8 @@ async def test_apk_unavailable_fails_before_any_upload(cached_apk):
         sent.append(command)
         if command == "getDeviceInfo":
             return {"ok": True, "data": {"abis": ["arm64-v8a"]}}
+        if command == "getUpdateStatus":  # KSM-BEHAVE-186 pre-upload read
+            return {"ok": True, "data": {"lastOutcome": "silent", "lastError": None}}
         raise AssertionError(f"unexpected command: {command}")
 
     prefix = "custom_components.kiosk_satellite_manager.ks_update."
@@ -366,7 +370,7 @@ async def test_apk_unavailable_fails_before_any_upload(cached_apk):
         with pytest.raises(HomeAssistantError, match="APK unavailable for Test Device"):
             await ks_update.async_self_update_entry(hass, _entry())
     upload.assert_not_awaited()
-    assert sent == ["getDeviceInfo"]
+    assert sent == ["getUpdateStatus", "getDeviceInfo"]
 
 
 @pytest.mark.parametrize(
@@ -404,8 +408,8 @@ async def test_self_update_asks_the_device_for_its_abis(cached_apk, device_info,
 
 def test_unknown_profile_never_allows_verifier_remediation():
     """[KSM-TEST-229] A profile with no approved recipe opts out of ADB remediation."""
-    assert ks_update._verifier_retry_allowed(_entry(**{CONF_DEVICE_PROFILE: "no_such_model"})) is False
-    assert ks_update._verifier_retry_allowed(_entry()) is False
+    assert ks_update.verifier_retry_allowed(_entry(**{CONF_DEVICE_PROFILE: "no_such_model"})) is False
+    assert ks_update.verifier_retry_allowed(_entry()) is False
 
 
 async def test_portal_verifier_not_enabled_is_not_remediated():
@@ -424,12 +428,121 @@ async def test_portal_verifier_not_enabled_is_not_remediated():
 async def test_failed_verifier_remediation_is_reported_with_the_install_error(cached_apk):
     """[KSM-TEST-229] A remediation that fails keeps the original install error visible."""
     entry = _entry(**{CONF_DEVICE_PROFILE: "portal_gen2"})
+    statuses = iter([{"lastError": None}])  # KSM-BEHAVE-186's pre-upload read is clean
+
+    async def command(session, host, token, name, *, pin=None):
+        if name == "getUpdateStatus":
+            return {"ok": True, "data": next(
+                statuses, {"lastError": "INSTALL_FAILED_VERIFICATION_FAILURE"})}
+        return {"ok": True}
+
     with patch(_SESSION), patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(
-        _RUN_COMMAND, new=_commands(installUploadedApk={"ok": True},
-                                    getUpdateStatus={"lastError": "INSTALL_FAILED_VERIFICATION_FAILURE"})
+        _RUN_COMMAND, new=command
     ), patch(_POLL_HEALTH, new=AsyncMock(return_value={"appVersion": "old"})), patch(
         "custom_components.kiosk_satellite_manager.ks_update._remediate_verifier",
         new=AsyncMock(side_effect=OSError("adb offline")),
     ):
         with pytest.raises(HomeAssistantError, match="VERIFICATION_FAILURE.*remediation failed: adb offline"):
             await ks_update.async_self_update_entry(_hass(), entry)
+
+
+_PROBE = "custom_components.kiosk_satellite_manager.ks_update.async_probe_adb_port"
+_UPLOAD = "custom_components.kiosk_satellite_manager.ks_update.ks_api_client.upload_update"
+_ADB = "custom_components.kiosk_satellite_manager.ks_update.AdbClient"
+
+
+def _precheck_commands(first_status, events):
+    """getUpdateStatus answers `first_status` once (the pre-upload read),
+    then a clean status; every command is recorded in `events`."""
+    async def command(session, host, token, name, *, pin=None):
+        events.append(name)
+        if name == "getDeviceInfo":
+            return {"ok": True, "data": {"abis": ["arm64-v8a"]}}
+        if name == "installUploadedApk":
+            return {"ok": True}
+        if isinstance(first_status, Exception) and events.count("getUpdateStatus") == 1:
+            raise first_status
+        return {"ok": True, "data": first_status if events.count("getUpdateStatus") == 1
+                else {"lastError": None}}
+    return command
+
+
+def _recording_upload(events):
+    async def upload(session, host, token, body, size, *, pin=None):
+        events.append("upload")
+        async for _ in body:
+            pass
+        return {"ok": True, "data": {"buildNumber": 2, "currentBuild": 1}}
+    return upload
+
+
+async def test_KSM_TEST_373_verifier_rejected_portal_with_adb_off_refuses_before_upload(cached_apk):
+    """[KSM-TEST-373] the device's last update was a verifier rejection and
+    ADB is closed: fail with the ADB-on action, upload nothing, open no ADB."""
+    entry = _entry(**{CONF_DEVICE_PROFILE: "portal_plus_gen2"})
+    events: list[str] = []
+    with patch(_SESSION), patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(
+        _RUN_COMMAND, new=_precheck_commands(
+            {"lastOutcome": "failed", "lastError": "INSTALL_FAILED_VERIFICATION_FAILURE"}, events)
+    ), patch(_UPLOAD, new=_recording_upload(events)), patch(
+        _PROBE, new=AsyncMock(return_value=False)
+    ) as probe, patch(_ADB, side_effect=AssertionError("ADB must not be opened")):
+        with pytest.raises(HomeAssistantError, match="Turn ADB on.*Install Kiosk Satellite"):
+            await ks_update.async_self_update_entry(_hass(), entry)
+    probe.assert_awaited_once_with("192.168.1.50", 5555)
+    assert "upload" not in events
+    assert "installUploadedApk" not in events
+
+
+@pytest.mark.parametrize(("shell", "writes"), [(["1", "", "0"], True), (["0"], False)])
+async def test_KSM_TEST_373_verifier_rejected_portal_with_adb_on_remediates_first(
+    cached_apk, shell, writes
+):
+    """[KSM-TEST-373] ADB open: the verifier is turned off before the first
+    upload; a verifier already off (prior 0) still installs."""
+    entry = _entry(**{CONF_DEVICE_PROFILE: "portal_gen2", CONF_PORT: 5555,
+                      CONF_KEY_PATH: "/tmp/test-adb-key"})
+    events: list[str] = []
+
+    async def shell_cmd(cmd):
+        events.append(cmd)
+        return shell[sum(1 for e in events if e.startswith("settings"))-1]
+
+    client = SimpleNamespace(connect=AsyncMock(), close=AsyncMock(), shell=shell_cmd)
+    with patch(_SESSION), patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(
+        _RUN_COMMAND, new=_precheck_commands(
+            {"lastError": "INSTALL_FAILED_VERIFICATION_FAILURE"}, events)
+    ), patch(_UPLOAD, new=_recording_upload(events)), patch(
+        _PROBE, new=AsyncMock(return_value=True)
+    ), patch(_POLL_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.77"})), patch(
+        _ADB, return_value=client
+    ):
+        assert await ks_update.async_self_update_entry(_hass(), entry) == ks_update.OUTCOME_UPDATED
+    settings = [e for e in events if e.startswith("settings")]
+    assert settings[0] == "settings get global package_verifier_enable"
+    assert ("settings put global package_verifier_enable 0" in settings) is writes
+    assert events.index(settings[-1]) < events.index("upload")
+    assert events.count("installUploadedApk") == 1
+    client.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("profile", "first_status"),
+    [("portal_gen2", {"lastError": "disk full"}),
+     (None, {"lastError": "INSTALL_FAILED_VERIFICATION_FAILURE"}),
+     ("portal_gen2", KsApiError("status unavailable"))],
+)
+async def test_KSM_TEST_374_other_statuses_never_probe_adb(cached_apk, profile, first_status):
+    """[KSM-TEST-374] another lastError, no approved recipe, or a failed
+    status read neither probes ADB nor blocks the upload."""
+    entry = _entry(**({CONF_DEVICE_PROFILE: profile} if profile else {}))
+    events: list[str] = []
+    with patch(_SESSION), patch(_LOGIN, new=AsyncMock(return_value="device-token")), patch(
+        _RUN_COMMAND, new=_precheck_commands(first_status, events)
+    ), patch(_UPLOAD, new=_recording_upload(events)), patch(
+        _PROBE, new=AsyncMock(side_effect=AssertionError("ADB must not be probed"))
+    ), patch(_POLL_HEALTH, new=AsyncMock(return_value={"appVersion": "2026.9.77"})), patch(
+        _ADB, side_effect=AssertionError("ADB must not be opened")
+    ):
+        assert await ks_update.async_self_update_entry(_hass(), entry) == ks_update.OUTCOME_UPDATED
+    assert events.index("getUpdateStatus") < events.index("upload")

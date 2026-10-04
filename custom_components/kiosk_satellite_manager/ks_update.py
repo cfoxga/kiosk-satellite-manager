@@ -23,8 +23,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from . import apk_cache, ks_api_client
-from .adb_client import AdbClient
+from . import apk_cache, ks_api_client, update_failure
+from .adb_client import AdbClient, async_probe_adb_port
 from .const import (
     CONF_DEVICE_PROFILE,
     CONF_HOST,
@@ -67,6 +67,8 @@ def notify_awaiting_confirmation(hass: HomeAssistant, entry: ConfigEntry, outcom
         )
     elif outcome == OUTCOME_UPDATED:
         persistent_notification.async_dismiss(hass, notice_id)
+        # KSM-BEHAVE-185: a device-side failure is over once an update lands.
+        update_failure.async_dismiss(hass, entry.entry_id)
 
 
 class ApiInstallUnavailable(HomeAssistantError):
@@ -75,10 +77,10 @@ class ApiInstallUnavailable(HomeAssistantError):
 
 _TRANSIENT_ERRORS = (KsApiError, aiohttp.ClientError, asyncio.TimeoutError)
 _UPLOAD_CHUNK = 1 << 20
-_VERIFIER_FAILURE = "INSTALL_FAILED_VERIFICATION_FAILURE"
+_VERIFIER_FAILURE = update_failure.VERIFIER_FAILURE
 
 
-def _verifier_retry_allowed(entry: ConfigEntry) -> bool:
+def verifier_retry_allowed(entry: ConfigEntry) -> bool:
     """Only an exact, approved recipe may opt into ADB remediation."""
     model = entry.data.get(CONF_DEVICE_PROFILE)
     if not model:
@@ -89,13 +91,19 @@ def _verifier_retry_allowed(entry: ConfigEntry) -> bool:
         return False
 
 
-async def _remediate_verifier(entry: ConfigEntry) -> None:
-    """Record the previous device-wide value and verify the one allowed write."""
+async def _remediate_verifier(entry: ConfigEntry, *, already_off_ok: bool = False) -> None:
+    """Record the previous device-wide value and verify the one allowed write.
+
+    ``already_off_ok``: a verifier that already reads 0 is not an error
+    (KSM-BEHAVE-186's pre-upload check, where the device's status may be stale).
+    """
     client = AdbClient(entry.data[CONF_HOST], entry.data[CONF_PORT], entry.data[CONF_KEY_PATH])
     try:
         await client.connect()
         prior = (await client.shell("settings get global package_verifier_enable")).strip()
         _LOGGER.warning("Package verifier on %s before update retry: %s", entry.title, prior)
+        if already_off_ok and prior == "0":
+            return
         if prior != "1":
             raise HomeAssistantError(
                 f"Package verifier on {entry.title} was {prior!r}; cannot remediate"
@@ -108,6 +116,38 @@ async def _remediate_verifier(entry: ConfigEntry) -> None:
             )
     finally:
         await client.close()
+
+
+async def _clear_verifier_rejection(
+    session: aiohttp.ClientSession, host: str, token: str, entry: ConfigEntry, *, pin: str | None
+) -> None:
+    """KSM-BEHAVE-186: before uploading, act on a verifier rejection the
+    device already reported, so no prompt is raised that the verifier will
+    reject after the tap. Any status read failure changes nothing."""
+    try:
+        status = _status_data(
+            await ks_api_client.run_command(session, host, token, "getUpdateStatus", pin=pin),
+            entry,
+        )
+    except Exception as err:  # noqa: BLE001 -- the install proceeds as before
+        _LOGGER.debug("Pre-install update status unavailable on %s: %s", entry.title, err)
+        return
+    error = status.get("lastError")
+    if not update_failure.is_verifier_rejection(error) or not verifier_retry_allowed(entry):
+        return
+    if not await async_probe_adb_port(*update_failure.adb_target(entry)):
+        raise HomeAssistantError(
+            f"Kiosk Satellite update failed on {entry.title}: the package verifier "
+            f"rejected its last update ({error}). "
+            + update_failure.verifier_action(entry, adb_open=False)
+        )
+    try:
+        await _remediate_verifier(entry, already_off_ok=True)
+    except Exception as adb_err:
+        raise HomeAssistantError(
+            f"Kiosk Satellite update failed on {entry.title}: {error}; "
+            f"ADB verifier remediation failed: {adb_err}"
+        ) from adb_err
 
 
 async def _file_chunks(hass: HomeAssistant, path: Path) -> AsyncIterator[bytes]:
@@ -164,7 +204,8 @@ async def async_self_update_entry(
     Returns OUTCOME_UPDATED or OUTCOME_AWAITING_CONFIRMATION. Raises
     HomeAssistantError for the "failed" outcome. Only the explicit install
     button sets ``reinstall``; it requests installation even for the same build.
-    The verifier recovery for an approved Portal recipe may use ADB.
+    The verifier recovery for an approved Portal recipe may use ADB, after a
+    rejection in this run or one the device reported before it (KSM-BEHAVE-186).
     """
     coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if coordinator is not None and coordinator.ksm_installing:
@@ -201,6 +242,7 @@ async def async_self_update_entry(
                 raise ApiInstallUnavailable(
                     f"Kiosk Satellite API is unreachable on {entry.title}"
                 ) from err
+            await _clear_verifier_rejection(session, host, token, entry, pin=pin)
             abis = await _async_device_abis(session, host, token, pin)
             try:
                 apk = await apk_cache.async_release_apk(hass, release_info, abis)
@@ -243,7 +285,7 @@ async def async_self_update_entry(
                         await coordinator.async_request_refresh()
                     return outcome
                 except HomeAssistantError as err:
-                    if attempt or _VERIFIER_FAILURE not in str(err) or not _verifier_retry_allowed(entry):
+                    if attempt or _VERIFIER_FAILURE not in str(err) or not verifier_retry_allowed(entry):
                         raise
                     try:
                         await _remediate_verifier(entry)

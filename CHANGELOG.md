@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A Kiosk Satellite update that fails on the device now shows up in Home Assistant (#183),
+  including on a fleet follower whose update prompt is hidden. KSM checks each device's last
+  update every few minutes and raises a notification for that device quoting its error. When Meta's
+  package verifier rejected the update, the notification says what to do: with ADB off, turn ADB
+  on, then press **Install Kiosk Satellite**; with ADB on, just press it. That Install now turns the
+  verifier off first, and with ADB off it stops with the same advice instead of putting up an
+  install prompt the verifier would reject after you tap it.
+
 - Meta Portal Kiosk Satellite updates no longer fail after the Portal reboots (#179). Installing
   KSM on a Portal now turns off Android's package verifier, which was rejecting KS's own
   self-updates once ADB was gone. **Uninstall Kiosk Satellite** turns it back on. Other devices
