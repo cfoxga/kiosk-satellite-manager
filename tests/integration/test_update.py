@@ -220,7 +220,8 @@ async def test_update_install_uploads_the_cached_apk(hass, release_check, apk_up
     assert upload["token"] == "device-token"
     assert upload["body"] == apk_upload.path.read_bytes()
     assert upload["size"] == apk_upload.path.stat().st_size
-    assert sent[:2] == ["getDeviceInfo", "installUploadedApk"]
+    # KSM-BEHAVE-186: the update status is read first, before anything uploads.
+    assert sent[:3] == ["getUpdateStatus", "getDeviceInfo", "installUploadedApk"]
     assert "checkUpdateNow" not in sent and "installUpdate" not in sent
     apk_upload.prune.assert_awaited()
     assert hass.data[DOMAIN][ctx.entry.entry_id].data["appVersion"] == "2026.9.77"
@@ -253,7 +254,10 @@ async def test_update_install_already_running_build_installs_nothing(hass, relea
         with _refuses_adb(), patch(_LOGIN, new=AsyncMock(return_value="t")), patch(_RUN_COMMAND, new=run):
             await async_self_update_entry(hass, ctx.entry)
 
-    assert sent == ["getDeviceInfo"]
+    # KSM-BEHAVE-186 pre-read, then the ABI read; the refresh after an updated
+    # outcome may add the KSM-BEHAVE-185 status read, never an install.
+    assert sent[:2] == ["getUpdateStatus", "getDeviceInfo"]
+    assert set(sent[2:]) <= {"getUpdateStatus"}
     assert len(apk_upload.received) == 1
 
 
@@ -566,3 +570,35 @@ def test_is_older_ignores_unknown_and_unparseable_versions():
     assert is_older(None, "2026.10.5") is False
     assert is_older("2026.10.4", "") is False
     assert is_older("not a version", "2026.10.5") is False
+
+
+async def test_KSM_TEST_372_health_refresh_reports_a_device_side_failure(hass, release_check):
+    """[KSM-TEST-372] in a real hass, a loaded device's health refresh reads
+    getUpdateStatus and raises the per-device failure notice; a clean read
+    after the next refresh dismisses it."""
+    prefix = "custom_components.kiosk_satellite_manager.update_failure."
+    statuses = [{"lastOutcome": "failed", "lastError": "disk full"}]
+
+    async def run_command(session, host, token, command, *, pin=None):
+        assert command == "getUpdateStatus"
+        return {"ok": True, "data": statuses[-1]}
+
+    with patch(_HEALTH, new=_health("2026.9.1")), patch(
+        prefix + "ks_api_client.login", new=AsyncMock(return_value="device-token")
+    ), patch(prefix + "ks_api_client.run_command", new=run_command), patch(
+        prefix + "persistent_notification"
+    ) as notify:
+        ctx = await init_integration(hass)
+        coordinator = hass.data[DOMAIN][ctx.entry.entry_id]
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        notice = f"{DOMAIN}_update_failed_{ctx.entry.entry_id}"
+        created = [c.kwargs for c in notify.async_create.call_args_list]
+        assert [c["notification_id"] for c in created] == [notice]
+        assert "disk full" in created[0]["message"]
+
+        statuses.append({"lastOutcome": "silent", "lastError": None})
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        notify.async_dismiss.assert_called_with(hass, notice)
+        assert notify.async_create.call_count == 1

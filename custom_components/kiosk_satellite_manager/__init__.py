@@ -76,7 +76,7 @@ from .const import (
     RENAME_API_KEY,
     SIGNAL_MANAGER_OPTIONS_UPDATED,
 )
-from . import auto_update, config_backup, fleet, follower_updates, le_certificate, le_certificate_sync, meta_setup, portal_reload, support_request
+from . import auto_update, config_backup, fleet, follower_updates, le_certificate, le_certificate_sync, meta_setup, portal_reload, support_request, update_failure
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .device_repairs import (
     apply_dashboard_dns, async_resolve_device_model, async_track_area_repairs, clear_device_repairs,
@@ -570,6 +570,10 @@ async def _async_setup_device(hass: HomeAssistant, entry: ConfigEntry | fleet.De
         entry.async_on_unload(coordinator.async_add_listener(
             lambda: hass.async_create_task(fleet.async_poll_device(hass, entry.entry_id))
         ))
+    # KSM-BEHAVE-185: a device-side update failure is reported, follower or not.
+    entry.async_on_unload(coordinator.async_add_listener(
+        lambda: hass.async_create_task(update_failure.async_poll(hass, entry))
+    ))
 
     async def _post_setup() -> None:
         if not _device_present(entry):
