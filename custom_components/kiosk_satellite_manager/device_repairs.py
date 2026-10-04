@@ -80,7 +80,32 @@ def sync_area_repair(hass: HomeAssistant, device: dr.DeviceEntry) -> None:
 def async_track_area_repairs(hass: HomeAssistant) -> Callable[[], None]:
     """KSM-BEHAVE-178: judge every existing device now, then each device the
     registry creates or whose Area changes, so an Area set by hand clears it."""
+    from . import area_sync, fleet
+
     registry = dr.async_get(hass)
+    pending: dict[str, str | None] = {}
+
+    async def _run(device_id: str) -> None:
+        old_area_id = pending.pop(device_id, None)
+        device = registry.async_get(device_id)
+        if device is None:
+            return
+        try:
+            await area_sync.async_reconcile_area(hass, device, old_area_id=old_area_id)
+        except Exception:  # noqa: BLE001 — registry listeners must not fail dispatch
+            _LOGGER.exception("KSM linked-device Area reconciliation failed for %s", device_id)
+
+    def _schedule(device: dr.DeviceEntry, old_area_id: str | None = None) -> None:
+        if not any(domain == DOMAIN and fleet.resolve_device(hass, ident) is not None
+                   for domain, ident in device.identifiers):
+            return
+        if device.id in pending:
+            if old_area_id is not None:
+                pending[device.id] = old_area_id
+            return
+        pending[device.id] = old_area_id
+        hass.async_create_task(_run(device.id), eager_start=False)
+
     devices = {
         device.id: device
         for entry in hass.config_entries.async_entries(DOMAIN)
@@ -88,6 +113,7 @@ def async_track_area_repairs(hass: HomeAssistant) -> Callable[[], None]:
     }
     for device in devices.values():
         sync_area_repair(hass, device)
+        _schedule(device)
 
     @callback
     def _updated(event: Event[dr.EventDeviceRegistryUpdatedData]) -> None:
@@ -98,6 +124,18 @@ def async_track_area_repairs(hass: HomeAssistant) -> Callable[[], None]:
             device := registry.async_get(data["device_id"])
         ) is not None:
             sync_area_repair(hass, device)
+            if data["action"] == "update":
+                _schedule(device, data["changes"].get("area_id"))
+            else:
+                _schedule(device)
+                domains = {
+                    entry.domain for entry_id in device.config_entries
+                    if (entry := hass.config_entries.async_get_entry(entry_id)) is not None
+                }
+                if domains & {"esphome", "music_assistant", "bluetooth"}:
+                    for entry in hass.config_entries.async_entries(DOMAIN):
+                        for physical in dr.async_entries_for_config_entry(registry, entry.entry_id):
+                            _schedule(physical)
 
     return hass.bus.async_listen(dr.EVENT_DEVICE_REGISTRY_UPDATED, _updated)
 

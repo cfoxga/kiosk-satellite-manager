@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- An optional KSM Area now reaches its matched ESPHome proxy, Bluetooth child, and Music Assistant player. Moving or clearing the KSM device's Area updates linked devices still in the former Area; devices assigned elsewhere keep their Area (#188).
+
 - Fixed test suite socket isolation and qualification expectations (#138). Stubs
   background update status polling in integration tests to prevent unmocked socket
   calls, aligns Portal Go catalog sensor and support request expectations with the

@@ -141,3 +141,111 @@ async def test_KSM_TEST_351_removing_the_device_clears_the_repair(hass):
         await hass.async_block_till_done()
 
     assert _issue(hass, "dev-a") is None
+
+
+async def test_KSM_TEST_380_area_follows_unique_esphome_and_music_links(hass):
+    """[KSM-TEST-380] A selected or moved Area reaches confirmed linked devices."""
+    areas = ar.async_get(hass)
+    kitchen = areas.async_create("Kitchen").id
+    office = areas.async_create("Office").id
+    bedroom = areas.async_create("Bedroom").id
+    registry = dr.async_get(hass)
+    esp_entry = MockConfigEntry(domain="esphome", title="dev-a", data={"host": "192.168.99.31"})
+    bluetooth_entry = MockConfigEntry(domain="bluetooth", title="Bluetooth")
+    music_entry = MockConfigEntry(domain="music_assistant", title="Music Assistant")
+    esp_entry.add_to_hass(hass)
+    bluetooth_entry.add_to_hass(hass)
+    music_entry.add_to_hass(hass)
+    esp = registry.async_get_or_create(config_entry_id=esp_entry.entry_id,
+                                       connections={("mac", "aa:bb:cc:dd:ee:01")}, name="dev-a",
+                                       manufacturer="kiosk_satellite")
+    bluetooth = registry.async_get_or_create(config_entry_id=bluetooth_entry.entry_id,
+                                             connections={("bluetooth", "AA:BB:CC:DD:EE:02")},
+                                             via_device_id=esp.id, name="dev-a (AA:BB:CC:DD:EE:02)",
+                                             manufacturer="esphome")
+    music = registry.async_get_or_create(config_entry_id=music_entry.entry_id,
+                                         identifiers={("music_assistant", "player-a")}, name="dev-a",
+                                         manufacturer="Kiosk Satellite")
+    unrelated = registry.async_get_or_create(config_entry_id=music_entry.entry_id,
+                                             identifiers={("music_assistant", "other")}, name="dev-b",
+                                             manufacturer="Kiosk Satellite")
+    assert esp.area_id is None and bluetooth.area_id is None and music.area_id is None
+
+    await _unmanaged_with(hass, _device("dev-a", 31, **{CONF_AREA_ID: kitchen}))
+    await hass.async_block_till_done()
+    assert registry.async_get(esp.id).area_id == kitchen
+    assert registry.async_get(bluetooth.id).area_id == kitchen
+    assert registry.async_get(music.id).area_id == kitchen
+    assert registry.async_get(unrelated.id).area_id is None
+
+    registry.async_update_device(music.id, area_id=bedroom)
+    registry.async_update_device(_ha_device(hass, "dev-a").id, area_id=office)
+    await hass.async_block_till_done()
+    assert registry.async_get(esp.id).area_id == office
+    assert registry.async_get(bluetooth.id).area_id == office
+    assert registry.async_get(music.id).area_id == bedroom
+    assert fleet.resolve_device(hass, "dev-a").data[CONF_AREA_ID] == office
+
+    registry.async_update_device(_ha_device(hass, "dev-a").id, area_id=None)
+    await hass.async_block_till_done()
+    assert registry.async_get(esp.id).area_id is None
+    assert registry.async_get(bluetooth.id).area_id is None
+    assert registry.async_get(music.id).area_id == bedroom
+    assert fleet.resolve_device(hass, "dev-a").data[CONF_AREA_ID] is None
+
+
+async def test_KSM_TEST_380_optional_area_and_ambiguous_music_link(hass):
+    """[KSM-TEST-380] No selected Area or duplicate Music Assistant names cause no guesses."""
+    kitchen = ar.async_get(hass).async_create("Kitchen").id
+    registry = dr.async_get(hass)
+    music_entry = MockConfigEntry(domain="music_assistant", title="Music Assistant")
+    music_entry.add_to_hass(hass)
+    players = [registry.async_get_or_create(
+        config_entry_id=music_entry.entry_id,
+        identifiers={("music_assistant", f"player-{i}")}, name="dev-a",
+        manufacturer="Kiosk Satellite") for i in range(2)]
+    esp_devices = []
+    for i in range(2):
+        esp_entry = MockConfigEntry(domain="esphome", title=f"dev-a-{i}",
+                                    data={"host": "192.168.99.31"})
+        esp_entry.add_to_hass(hass)
+        esp_devices.append(registry.async_get_or_create(
+            config_entry_id=esp_entry.entry_id,
+            connections={("mac", f"aa:bb:cc:dd:ee:0{i}")}, name=f"dev-a-{i}"))
+    await _unmanaged_with(hass, _device("dev-a", 31, **{CONF_AREA_ID: kitchen}),
+                          _device("dev-b", 32))
+    await hass.async_block_till_done()
+    assert _ha_device(hass, "dev-b").area_id is None
+    assert all(registry.async_get(player.id).area_id is None for player in players)
+    assert all(registry.async_get(device.id).area_id is None for device in esp_devices)
+
+
+async def test_KSM_TEST_380_late_music_device_gets_area(hass):
+    """[KSM-TEST-380] A player and Bluetooth child registered later are reconciled."""
+    kitchen = ar.async_get(hass).async_create("Kitchen").id
+    await _unmanaged_with(hass, _device("dev-a", 31, **{CONF_AREA_ID: kitchen}))
+    music_entry = MockConfigEntry(domain="music_assistant", title="Music Assistant")
+    music_entry.add_to_hass(hass)
+    registry = dr.async_get(hass)
+    music = registry.async_get_or_create(config_entry_id=music_entry.entry_id,
+                                         identifiers={("music_assistant", "late-player")},
+                                         name="dev-a", manufacturer="Kiosk Satellite")
+    assert music.area_id is None, "positive control: creation starts without an Area"
+    await hass.async_block_till_done()
+    assert registry.async_get(music.id).area_id == kitchen
+
+    esp_entry = MockConfigEntry(domain="esphome", title="dev-a",
+                                data={"host": "192.168.99.31"})
+    bluetooth_entry = MockConfigEntry(domain="bluetooth", title="Bluetooth")
+    esp_entry.add_to_hass(hass)
+    bluetooth_entry.add_to_hass(hass)
+    esp = registry.async_get_or_create(config_entry_id=esp_entry.entry_id,
+                                       connections={("mac", "aa:bb:cc:dd:ee:01")}, name="dev-a")
+    await hass.async_block_till_done()
+    assert registry.async_get(esp.id).area_id == kitchen
+    child = registry.async_get_or_create(config_entry_id=bluetooth_entry.entry_id,
+                                         connections={("bluetooth", "AA:BB:CC:DD:EE:02")},
+                                         via_device_id=esp.id, name="dev-a (AA:BB:CC:DD:EE:02)",
+                                         manufacturer="esphome")
+    await hass.async_block_till_done()
+    assert registry.async_get(child.id).area_id == kitchen
