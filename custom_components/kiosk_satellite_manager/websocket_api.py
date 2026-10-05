@@ -16,7 +16,6 @@ from .const import (
     ENTRY_TYPE_UNMANAGED, HEALTH_PORT,
 )
 from . import fleet
-from . import web_ui
 
 WS_TYPE = f"{DOMAIN}/subscribe_tree"
 
@@ -36,6 +35,9 @@ def _entities(hass, entry_id: str, subentry_id: str | None = None) -> dict:
 
 
 def _web_ui_url(device) -> str | None:
+    """KS's admin address by name, else the configured host (KSM-BEHAVE-202)."""
+    if named := device.fleet_status.get("host_url"):
+        return named
     host = device.data.get(CONF_HOST)
     if not host:
         return None
@@ -87,7 +89,7 @@ def build_tree(hass) -> dict:
         unmanaged = entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_UNMANAGED
         group = {
             "kind": "unmanaged" if unmanaged else "fleet",
-            "entry_id": entry.entry_id, "title": entry.title,
+            "entry_id": entry.entry_id, "title": entry.title if unmanaged else "Fleet",
             **_entities(hass, entry.entry_id), "repairs": [], "children": [],
         }
         if not unmanaged:
@@ -108,6 +110,8 @@ def build_tree(hass) -> dict:
             group["children"].append(node)
             node_for_device[device.entry_id] = node
         group["children"].sort(key=lambda n: (not n["leader"], n["title"].casefold()))
+        if not unmanaged:
+            group["web_ui_url"] = next((n["web_ui_url"] for n in group["children"] if n["leader"]), None)
         root["children"].append(group)
     # HA retains discovery flows until accepted or dismissed.
     for flow in hass.config_entries.flow.async_progress_by_handler(DOMAIN):
@@ -234,20 +238,3 @@ def handle_subscribe_tree(hass, connection, msg):
 
 def async_register_websocket_command(hass):
     websocket_api.async_register_command(hass, handle_subscribe_tree)
-    websocket_api.async_register_command(hass, handle_open_web_ui)
-
-
-@websocket_api.websocket_command({
-    vol.Required("type"): f"{DOMAIN}/open_web_ui",
-    vol.Required("entry_id"): str,
-    vol.Required("subentry_id"): str,
-})
-@websocket_api.require_admin
-@callback
-def handle_open_web_ui(hass, connection, msg):
-    """Grant one admin a short-lived view of one managed kiosk."""
-    url = web_ui.issue_grant(hass, connection.user, msg["entry_id"], msg["subentry_id"])
-    if url is None:
-        connection.send_error(msg["id"], "not_available", "Managed device is unavailable")
-        return
-    connection.send_result(msg["id"], {"url": url})

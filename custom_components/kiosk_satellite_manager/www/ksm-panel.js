@@ -1,4 +1,4 @@
-/** Kiosk Satellite Manager's Global → Fleet → Device split pane (KSM-BEHAVE-190–197). */
+/** Kiosk Satellite Manager's Global → Fleet → Device split pane (KSM-BEHAVE-190–197, 202). */
 import { LitElement, html, css } from './lit/lit-all.min.js';
 const _version = new URL(import.meta.url).searchParams.get('v');
 await import(`./ksm-flow.js${_version ? `?v=${encodeURIComponent(_version)}` : ''}`);
@@ -14,7 +14,7 @@ const nodeKey = node => node.kind==='offer' ? `${node.entry_id}:offer:${node.flo
 class KsmPanel extends LitElement {
   static properties={hass:{type:Object},narrow:{type:Boolean},panel:{type:Object},
     tree:{state:true},selection:{state:true},showDetail:{state:true},flowOpen:{state:true},
-    error:{state:true},expanded:{state:true},confirmDelete:{state:true},issuesText:{state:true},webUiUrl:{state:true}};
+    error:{state:true},expanded:{state:true},confirmDelete:{state:true},issuesText:{state:true}};
   static styles=css`
     :host { display:block; height:100%; color:var(--primary-text-color); font-family:var(--ha-font-family,sans-serif); }
     .shell { height:100%; display:grid; grid-template-columns:minmax(245px,310px) minmax(0,1fr); }
@@ -35,21 +35,22 @@ class KsmPanel extends LitElement {
     .row { display:flex; align-items:flex-start; gap:8px; font-size:13px; }
     .row .k { min-width:150px; font-weight:600; color:var(--secondary-text-color); } .row .v { overflow-wrap:anywhere; }
     .titlebar { display:flex; align-items:baseline; flex-wrap:wrap; gap:6px 16px; margin:0 0 8px; } .titlebar h2 { margin:0; }
-    .titlebar a { font-size:13px; }
+    a.link-badge { font-size:12px; font-weight:600; border-radius:99px; padding:3px 10px; text-decoration:none;
+      border:1px solid var(--primary-color); color:var(--primary-color); background:transparent; cursor:pointer; }
+    a.link-badge:hover { background:var(--primary-color); color:var(--text-primary-color,#fff); }
     button.action { padding:9px 13px; margin:4px 6px 4px 0; border:1px solid var(--divider-color); border-radius:7px;
       background:var(--card-background-color); color:var(--primary-text-color); cursor:pointer; }
     button.action:hover { border-color:var(--primary-color); } button.action:disabled { opacity:.5; cursor:not-allowed; }
     .error { color:var(--error-color,#b00020); } .muted { color:var(--secondary-text-color); } a { color:var(--primary-color); }
     .back { display:none; } .pending { font-style:italic; }
-    .web-ui { display:block; width:100%; height:min(78vh,900px); border:1px solid var(--divider-color); border-radius:7px; }
     @media (max-width:700px) { .shell { display:block; } .shell.detail aside { display:none; }
       .shell:not(.detail) main { display:none; } aside,main { height:100%; box-sizing:border-box; }
       .back { display:inline-block; margin-bottom:14px; } }
   `;
   constructor() { super(); this.tree=null; this.selection=null; this.showDetail=false; this.flowOpen=false; this.issuesText={};
-    this.error=''; this.confirmDelete=false; this.webUiUrl=''; try { this.expanded=JSON.parse(localStorage.getItem(STORE)||'{}'); } catch (_) { this.expanded={}; } }
+    this.error=''; this.confirmDelete=false; try { this.expanded=JSON.parse(localStorage.getItem(STORE)||'{}'); } catch (_) { this.expanded={}; } }
   connectedCallback() { super.connectedCallback(); window.addEventListener('popstate',this._pop=()=>this._syncUrl()); }
-  disconnectedCallback() { super.disconnectedCallback(); window.removeEventListener('popstate',this._pop); this.webUiUrl='';
+  disconnectedCallback() { super.disconnectedCallback(); window.removeEventListener('popstate',this._pop);
     if (this._unsub) this._unsub(); this._discardFlow(); }
   updated(changed) { if (changed.has('hass') && this.hass && !this._unsub && !this._subscribing) this._subscribe(); }
   async _subscribe() {
@@ -68,7 +69,6 @@ class KsmPanel extends LitElement {
     const wanted=new URLSearchParams(location.search).get('node');
     const found=allNodes(this.tree).find(n=>nodeKey(n)===wanted);
     this.selection=found || this.tree;
-    if (this.webUiUrl && this._webUiNode!==nodeKey(this.selection)) this.webUiUrl='';
     this.showDetail=Boolean(found && wanted);
     if (!found && wanted) history.replaceState({},'',location.pathname);
   }
@@ -77,7 +77,7 @@ class KsmPanel extends LitElement {
     if (runner) await runner.close();
     this.flowOpen=false;
   }
-  async _choose(node) { await this._discardFlow(); this.webUiUrl=''; this.selection=node; this.showDetail=true; this.confirmDelete=false;
+  async _choose(node) { await this._discardFlow(); this.selection=node; this.showDetail=true; this.confirmDelete=false;
     const url=new URL(location.href); url.searchParams.set('node',nodeKey(node)); history.pushState({},'',url); }
   _toggle(node) { const key=nodeKey(node); this.expanded={...this.expanded,[key]:this.expanded[key]===false};
     localStorage.setItem(STORE,JSON.stringify(this.expanded)); }
@@ -112,15 +112,6 @@ class KsmPanel extends LitElement {
   },4000); }
   async _flow(kind,args={}) { await this._discardFlow(); this.flowOpen=true; await this.updateComplete;
     await this.renderRoot.querySelector('ksm-flow').open(kind,args); }
-  async _openWebUi(node) {
-    this.error=''; this.webUiUrl='';
-    try {
-      const result=await this.hass.connection.sendMessagePromise({type:`${DOMAIN}/open_web_ui`,
-        entry_id:node.entry_id,subentry_id:node.subentry_id});
-      if (!this.selection || nodeKey(this.selection)!==nodeKey(node)) return;
-      this._webUiNode=nodeKey(node); this.webUiUrl=result.url;
-    } catch(e) { this.error=e.message||String(e); }
-  }
   _repairs(node) { if (!node.repairs?.length) return '';
     return html`<section class="section"><h3>Repairs</h3>${node.repairs.map(issue=>html`<div>
       ${this.issuesText[`component.${DOMAIN}.issues.${issue.translation_key}.title`] || issue.translation_key}
@@ -146,14 +137,6 @@ class KsmPanel extends LitElement {
       <button class="action" @click=${()=>this._flow('config',{fleet_entry_id:fleet?node.entry_id:'unmanaged'})}>Add device${fleet?' to this fleet':''}</button>
     </section>`; }
   _device(node) { return html`
-    <section class="section"><h3>Web UI</h3>
-      ${this.webUiUrl && this._webUiNode===nodeKey(node) ? html`
-        <button class="action" @click=${()=>{this.webUiUrl='';}}>Close Web UI</button>
-        <iframe class="web-ui" title=${`${node.title} Web UI`} src=${this.webUiUrl}
-          sandbox="allow-scripts allow-forms allow-downloads" referrerpolicy="no-referrer"></iframe>` : html`
-        <button class="action" ?disabled=${!node.online} @click=${()=>this._openWebUi(node)}>Open Web UI</button>
-        ${!node.online ? html`<p class="muted">Device is offline.</p>` : ''}`}
-    </section>
     ${this._status(html`
       ${this._kv('Connection',node.online?'Online':'Offline')}
       ${this._metric(node,'IP address','ip_address')}
@@ -177,9 +160,10 @@ class KsmPanel extends LitElement {
         <button class="action" @click=${()=>this._delete(node)}>Delete ${node.title}</button>
         <button class="action" @click=${()=>{this.confirmDelete=false;}}>Cancel</button>` : ''}
     </section>`; }
-  _links(node) { if (node?.kind!=='device') return '';
-    return html`${node.device_id ? html`<a class="ha-link" href="/config/devices/device/${node.device_id}">Open in Home Assistant</a>` : ''}
-      ${node.web_ui_url ? html`<a class="web-ui-link" href=${node.web_ui_url} target="_blank" rel="noopener noreferrer">Web UI</a>` : ''}`; }
+  /** HA Device and Web UI link badges (KSM-BEHAVE-202); a fleet links its leader's Web UI. */
+  _links(node) { if (!['device','fleet'].includes(node?.kind)) return '';
+    return html`${node.kind==='device' && node.device_id ? html`<a class="link-badge ha-link" href="/config/devices/device/${node.device_id}">HA Device</a>` : ''}
+      ${node.web_ui_url ? html`<a class="link-badge web-ui-link" href=${node.web_ui_url} target="_blank" rel="noopener noreferrer">Web UI</a>` : ''}`; }
   async _delete(node) { try { await this.hass.connection.sendMessagePromise({type:'config_entries/subentries/delete',entry_id:node.entry_id,subentry_id:node.subentry_id});
       this.confirmDelete=false; this._choose(this.tree); } catch(e) { this.error=e.message||String(e); } }
   async _diagnostics(node) {

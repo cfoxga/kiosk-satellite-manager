@@ -2,13 +2,11 @@
 
 import json
 import asyncio
-import time
-import aiohttp
 from types import MappingProxyType
 from pathlib import Path
 import pytest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.helpers import issue_registry as ir
@@ -20,9 +18,8 @@ from custom_components.kiosk_satellite_manager.const import DOMAIN
 from custom_components.kiosk_satellite_manager.panel import PANEL_NAME
 from custom_components.kiosk_satellite_manager.websocket_api import build_tree
 from custom_components.kiosk_satellite_manager import diagnostics
-from custom_components.kiosk_satellite_manager import web_ui
+from custom_components.kiosk_satellite_manager import fleet
 from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
-from aiohttp import web
 
 from .test_global_settings import _manager
 
@@ -67,9 +64,8 @@ async def test_tree_orders_nodes_and_excludes_secrets(hass):
     with patch.object(hass.config_entries.flow, "async_progress_by_handler", return_value=offers):
         tree = build_tree(hass)
     assert tree["kind"] == "global"
-    assert [child["title"] for child in tree["children"]] == [
-        "Fleet - Alpha", "Fleet - Zebra", "Unmanaged"
-    ]
+    assert [child["title"] for child in tree["children"]] == ["Fleet", "Fleet", "Unmanaged"]
+    assert tree["children"][1]["children"][0]["title"] == "Fleet - Zebra"
     assert [child["title"] for child in tree["children"][0]["children"]] == [
         "Fleet - Alpha", "A follower"
     ]
@@ -189,192 +185,57 @@ async def test_tree_keys_entities_by_unique_id_and_links_web_ui(hass):
     assert "SECRET-PIN" not in json.dumps(tree)
 
 
-async def test_web_ui_grant_requires_admin_and_managed_device(
-    hass, hass_ws_client, hass_read_only_access_token, release_check,
-):
-    """[KSM-TEST-397] A browser can open only an admin-selected managed device."""
-    await _manager(hass)
-    parent = MockConfigEntry(domain=DOMAIN, title="Unmanaged", data={"entry_type": "unmanaged"})
+async def test_web_ui_address_by_name_and_fleet_badge(hass):
+    """[KSM-TEST-400] The Web UI link uses KS's by-name admin address; fleets link their leader."""
+    parent = MockConfigEntry(domain=DOMAIN, title="Fleet - Lead",
+                             data={"entry_type": "fleet", "leader_id": "ks-lead"})
     parent.add_to_hass(hass)
     hass.config_entries.async_add_subentry(parent, ConfigSubentry(
-        data=MappingProxyType({"host": "192.0.2.10", "password": "device-secret"}),
-        subentry_id="device-a", subentry_type="device", title="Device A", unique_id="device-a",
+        data=MappingProxyType({"host": "10.0.0.5", "password": "synthetic-secret",
+                               "tls_spki_sha256": "a" * 64}),
+        subentry_id="lead", subentry_type="device", title="Lead", unique_id="lead",
     ))
-    denied = await hass_ws_client(hass, hass_read_only_access_token)
-    command = {"type": f"{DOMAIN}/open_web_ui", "entry_id": parent.entry_id,
-               "subentry_id": "device-a"}
-    await denied.send_json({"id": 71, **command})
-    assert (await denied.receive_json())["error"]["code"] == "unauthorized"
-    admin = await hass_ws_client(hass)
-    await admin.send_json({"id": 72, **command})
-    result = await admin.receive_json()
-    assert result["success"] is True
-    assert result["result"]["url"].startswith(f"/api/{DOMAIN}/web/")
-    assert "192.0.2.10" not in str(result)
-    assert "device-secret" not in str(result)
-    grant = result["result"]["url"].rstrip("/").split("/")[-1]
-    assert (await web_ui._resolve(hass, grant)).entry_id == "device-a"
-    web_ui._grants(hass)[grant].expires = time.monotonic() - 1
-    with pytest.raises(web.HTTPForbidden):
-        await web_ui._resolve(hass, grant)
-    web_ui._grants(hass)[grant].expires = time.monotonic() + 3600
-    with patch.object(hass.auth, "async_get_user", return_value=SimpleNamespace(
-        is_active=True, is_admin=False,
-    )):
-        with pytest.raises(web.HTTPForbidden):
-            await web_ui._resolve(hass, grant)
-    await admin.send_json({"id": 73, **{**command, "subentry_id": "missing"}})
-    assert (await admin.receive_json())["success"] is False
-    hass.config_entries.async_remove_subentry(parent, "device-a")
-    with pytest.raises(web.HTTPForbidden):
-        await web_ui._resolve(hass, grant)
-    web_ui.async_unload(hass)
-    assert grant not in web_ui._grants(hass)
+    unmanaged = MockConfigEntry(domain=DOMAIN, title="Unmanaged", data={"entry_type": "unmanaged"})
+    unmanaged.add_to_hass(hass)
+    status = {"ok": True, "data": {"self": {"id": "ks-lead"}, "leader": True, "followers": []}}
 
+    async def poll(fleet_reply):
+        async def command(_session, _host, _token, name, *, pin):
+            if name == "fleetStatus":
+                return status
+            if isinstance(fleet_reply, Exception):
+                raise fleet_reply
+            return fleet_reply
+        with patch("custom_components.kiosk_satellite_manager.ks_api_client.login",
+                   new=AsyncMock(return_value="synthetic-token")), patch(
+            "custom_components.kiosk_satellite_manager.ks_api_client.run_command", new=command,
+        ), patch("custom_components.kiosk_satellite_manager.fleet.async_reconcile", new=AsyncMock()):
+            await fleet.async_poll_device(hass, "lead")
+        assert fleet.status_available(hass, "lead")
+        tree = build_tree(hass)
+        fleet_node = next(n for n in tree["children"] if n["kind"] == "fleet")
+        return tree, fleet_node, fleet_node["children"][0]
 
-def test_web_ui_proxy_path_and_document_isolation():
-    """[KSM-TEST-397/398] The proxy keeps a relative path and isolates JS storage."""
-    assert web_ui._path("static/main.js", "v=1") == "/static/main.js?v=1"
-    assert web_ui._credential_url("192.0.2.10", "/api/settings", "aa" * 32) == "https://192.0.2.10:2324/api/settings"
-    for path in ("../api", "static/../api", "static\\api", "static/\x00"):
-        with pytest.raises(web.HTTPBadRequest):
-            web_ui._path(path, "")
-    document = web_ui._bootstrap(b"<!doctype html><head><title>Kiosk</title></head>", "device-token")
-    assert b"device-token" in document
-    assert b"Object.defineProperty(window,'localStorage'" in document
-    assert b"<title>Kiosk</title>" in document
-    assert "sandbox allow-scripts" in web_ui._DOCUMENT_HEADERS["Content-Security-Policy"]
-    assert "allow-same-origin" not in web_ui._DOCUMENT_HEADERS["Content-Security-Policy"]
-    source = Path(__file__).parents[2] / "custom_components" / DOMAIN / "www" / "ksm-panel.js"
-    assert 'sandbox="allow-scripts allow-forms allow-downloads"' in source.read_text()
+    named = "https://portal.example.com:2324"
+    tree, fleet_node, lead = await poll({"ok": True, "data": {"hostUrl": named}})
+    assert lead["web_ui_url"] == named
+    assert fleet_node["title"] == "Fleet"
+    assert fleet_node["web_ui_url"] == named
+    unmanaged_node = next(n for n in tree["children"] if n["kind"] == "unmanaged")
+    assert unmanaged_node["title"] == "Unmanaged" and "web_ui_url" not in unmanaged_node
+    assert "web_ui_url" not in tree
 
+    for bad in (KsApiError("unknown command"), {"ok": True, "data": {"hostUrl": None}},
+                {"ok": True, "data": {"hostUrl": "https://user@portal.example.com:2324"}},
+                {"ok": True, "data": {"hostUrl": "https://portal.example.com:2324/admin"}},
+                {"ok": True, "data": {"hostUrl": "javascript://portal.example.com"}},
+                {"ok": False, "error": "nope"}):
+        _tree, fleet_node, lead = await poll(bad)
+        assert lead["web_ui_url"] == "https://10.0.0.5:2324", bad
+        assert fleet_node["web_ui_url"] == "https://10.0.0.5:2324", bad
 
-async def test_web_ui_http_proxy_rejects_other_targets(
-    hass, hass_client, release_check, monkeypatch,
-):
-    """[KSM-TEST-398] The view sends no HA credentials and refuses redirects."""
-    await _manager(hass)
-    parent = MockConfigEntry(domain=DOMAIN, title="Unmanaged", data={"entry_type": "unmanaged"})
-    parent.add_to_hass(hass)
-    hass.config_entries.async_add_subentry(parent, ConfigSubentry(
-        data=MappingProxyType({"host": "192.0.2.10", "password": "device-secret"}),
-        subentry_id="device-a", subentry_type="device", title="Device A", unique_id="device-a",
-    ))
-    user = next(user for user in await hass.auth.async_get_users() if user.is_admin)
-    url = web_ui.issue_grant(hass, user, parent.entry_id, "device-a")
-    assert url
-    seen = []
-
-    class FakeResponse:
-        status = 200
-        headers = {"Content-Type": "text/html"}
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_):
-            return None
-
-        async def read(self):
-            return b"<!doctype html><head><title>Kiosk</title></head>"
-
-        @property
-        def content(self):
-            return self
-
-        async def iter_chunked(self, _size):
-            yield b'{"ok":true}'
-
-    class FakeSession:
-        def request(self, method, target, **kwargs):
-            seen.append((method, target, kwargs))
-            return FakeResponse()
-
-    async def fake_login(*_args, **_kwargs):
-        return "device-token"
-
-    monkeypatch.setattr(web_ui, "login", fake_login)
-    monkeypatch.setattr(web_ui, "async_get_clientsession", lambda _hass: FakeSession())
-    client = await hass_client()
-    response = await client.get(url, headers={"Authorization": ""})
-    assert response.status == 200
-    body = await response.text()
-    assert "device-token" in body and "device-secret" not in body
-    assert response.headers["Referrer-Policy"] == "no-referrer"
-    assert "allow-same-origin" not in response.headers["Content-Security-Policy"]
-    assert seen[0][1] == "http://192.0.2.10:2324/"
-    assert "Authorization" not in seen[0][2]["headers"]
-    assert "Cookie" not in seen[0][2]["headers"]
-    assert seen[0][2]["allow_redirects"] is False
-    authenticated = await client.post(
-        url + "api/settings", headers={"Authorization": "Bearer device-token"}, json={},
-    )
-    assert authenticated.status == 200
-    assert seen[-1][2]["headers"]["Authorization"] == "Bearer device-token"
-    assert (await client.post(
-        url + "api/settings", headers={"Authorization": "Bearer ha-token"}, json={},
-    )).status == 403
-    assert (await client.get(f"/api/{DOMAIN}/web/invalid/", headers={"Authorization": ""})).status == 403
-    assert (await client.options(url + "api/settings", headers={"Origin": "null"})).status == 204
-    assert (await client.options(url + "api/settings", headers={"Origin": "https://evil.example"})).status == 403
-    FakeResponse.status = 302
-    assert (await client.get(url, headers={"Authorization": ""})).status == 502
-    FakeResponse.status = 200
-
-    async def rejected_login(*_args, **_kwargs):
-        raise KsApiError("wrong password")
-
-    monkeypatch.setattr(web_ui, "login", rejected_login)
-    rejected = await client.get(url, headers={"Authorization": ""})
-    assert rejected.status == 502
-    assert "wrong password" not in await rejected.text()
-
-
-async def test_open_web_ui_socket_closes_when_grant_revoked(
-    hass, hass_client, release_check, monkeypatch,
-):
-    """[KSM-TEST-397/398] Revoking a grant closes an active device control socket."""
-    await _manager(hass)
-    parent = MockConfigEntry(domain=DOMAIN, title="Unmanaged", data={"entry_type": "unmanaged"})
-    parent.add_to_hass(hass)
-    hass.config_entries.async_add_subentry(parent, ConfigSubentry(
-        data=MappingProxyType({"host": "192.0.2.10", "password": "device-secret"}),
-        subentry_id="device-a", subentry_type="device", title="Device A", unique_id="device-a",
-    ))
-    user = next(user for user in await hass.auth.async_get_users() if user.is_admin)
-    url = web_ui.issue_grant(hass, user, parent.entry_id, "device-a")
-    assert url
-    grant = url.rstrip("/").split("/")[-1]
-    web_ui._grants(hass)[grant].device_token = "device-token"
-    targets = []
-
-    class FakeUpstream:
-        closed = False
-
-        async def __aiter__(self):
-            while not self.closed:
-                await asyncio.sleep(100)
-                yield None
-
-        async def close(self):
-            self.closed = True
-
-    upstream = FakeUpstream()
-
-    class FakeSession:
-        async def ws_connect(self, target, **kwargs):
-            targets.append((target, kwargs))
-            return upstream
-
-    monkeypatch.setattr(web_ui, "async_get_clientsession", lambda _hass: FakeSession())
-    client = await hass_client()
-    socket = await client.ws_connect(
-        url + "api/ws?token=device-token", headers={"Origin": "null", "Authorization": ""},
-    )
-    assert targets[0][0] == "ws://192.0.2.10:2324/api/ws?token=device-token"
-    web_ui.async_unload(hass)
-    result = await socket.receive(timeout=7)
-    assert result.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
-    assert upstream.closed
-    await client.close()
-    await hass.async_block_till_done()
+    current = parent.subentries["lead"]
+    hass.config_entries.async_update_subentry(parent, current, data={
+        **current.data, "_ksm_fleet_status": {**current.data["_ksm_fleet_status"], "leading": False}})
+    fleet_node = next(n for n in build_tree(hass)["children"] if n["kind"] == "fleet")
+    assert fleet_node["web_ui_url"] is None
