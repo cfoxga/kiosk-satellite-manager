@@ -150,3 +150,35 @@ async def test_tree_subscription_requires_admin(hass, hass_ws_client, hass_read_
     assert "sensor.panel_renamed" not in removed["event"]["entities"].get("sensor", [])
     await allowed.send_json({"id": 43, "type": "unsubscribe_events", "subscription": 42})
     assert (await allowed.receive_json())["success"] is True
+
+
+async def test_tree_keys_entities_by_unique_id_and_links_web_ui(hass):
+    """[KSM-TEST-399] Lookup never depends on entity ID text; devices carry their Web UI URL."""
+    parent = MockConfigEntry(domain=DOMAIN, title="Fleet - Lead",
+                             data={"entry_type": "fleet", "leader_id": "ks-lead"})
+    parent.add_to_hass(hass)
+    for sub_id, data in (
+        ("pinned", {"host": "10.0.0.5", "tls_spki_sha256": "SECRET-PIN",
+                    "_ksm_fleet_status": {"leading": True, "self_id": "ks-lead"}}),
+        ("plain", {"host": "kiosk.local"}),
+    ):
+        hass.config_entries.async_add_subentry(parent, ConfigSubentry(
+            data=MappingProxyType(data), subentry_id=sub_id, subentry_type="device",
+            title=sub_id.title(), unique_id=sub_id,
+        ))
+    registry = er.async_get(hass)
+    online = registry.async_get_or_create(
+        "sensor", DOMAIN, f"{parent.entry_id}_fleet_online_count", config_entry=parent,
+        suggested_object_id="online_count_2")
+    backup = registry.async_get_or_create(
+        "button", DOMAIN, "pinned_backup_config", config_entry=parent,
+        config_subentry_id="pinned", suggested_object_id="renamed_by_operator")
+    tree = build_tree(hass)
+    fleet_node = tree["children"][0]
+    assert online.entity_id == "sensor.online_count_2"
+    assert fleet_node["keys"] == {"fleet_online_count": "sensor.online_count_2"}
+    pinned, plain = fleet_node["children"]
+    assert pinned["keys"] == {"backup_config": backup.entity_id}
+    assert pinned["web_ui_url"] == "https://10.0.0.5:2324"
+    assert plain["web_ui_url"] == "http://kiosk.local:2324"
+    assert "SECRET-PIN" not in json.dumps(tree)

@@ -5,6 +5,8 @@ await import(`./ksm-flow.js${_version ? `?v=${encodeURIComponent(_version)}` : '
 
 const DOMAIN='kiosk_satellite_manager';
 const STORE='ksm-tree-expanded';
+const FLEET_STATUS=[['leader','Leader'],['managed_count','Managed members'],['online_count','Online'],['offline_count','Offline'],
+  ['version_mismatch','Version mismatch'],['blocked_sync','Blocked sync'],['pending_invitations','Pending invitations'],['last_poll','Last poll']];
 const allNodes = root => root ? [root,...(root.children || []).flatMap(group=>[group,...(group.children || [])])] : [];
 const nodeKey = node => node.kind==='offer' ? `${node.entry_id}:offer:${node.flow_id}` :
   node.subentry_id ? `${node.entry_id}:${node.subentry_id}` : node.entry_id;
@@ -29,8 +31,11 @@ class KsmPanel extends LitElement {
     .offline { color:var(--error-color,#b00020); } .online { color:var(--success-color,#2e7d32); }
     .section { border:1px solid var(--divider-color); background:var(--card-background-color); border-radius:10px; padding:18px; margin:16px 0; }
     .section h3 { margin:0 0 14px; font-size:16px; }
-    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
-    .metric { display:grid; gap:4px; font-size:13px; } .metric span { color:var(--secondary-text-color); } .metric strong { font-size:17px; }
+    .rows { display:flex; flex-direction:column; gap:.25rem; }
+    .row { display:flex; align-items:flex-start; gap:8px; font-size:13px; }
+    .row .k { min-width:150px; font-weight:600; color:var(--secondary-text-color); } .row .v { overflow-wrap:anywhere; }
+    .titlebar { display:flex; align-items:baseline; flex-wrap:wrap; gap:6px 16px; margin:0 0 8px; } .titlebar h2 { margin:0; }
+    .titlebar a { font-size:13px; }
     button.action { padding:9px 13px; margin:4px 6px 4px 0; border:1px solid var(--divider-color); border-radius:7px;
       background:var(--card-background-color); color:var(--primary-text-color); cursor:pointer; }
     button.action:hover { border-color:var(--primary-color); } button.action:disabled { opacity:.5; cursor:not-allowed; }
@@ -81,21 +86,24 @@ class KsmPanel extends LitElement {
       <span class="label" @click=${()=>this._choose(node)}>${node.title}</span>
       ${node.leader ? html`<span class="badge">Leader</span>` : ''}
       ${node.kind==='device' ? html`<span class="chip ${node.online?'online':'offline'}">${node.online?'Online':'Offline'}</span>` : ''}
-      ${node.kind==='fleet' ? html`<span class="chip">${this._state(this._id(node,'sensor','fleet_online_count'))}/${this._state(this._id(node,'sensor','fleet_managed_count'))} online</span>` : ''}
-      ${node.kind==='unmanaged' ? html`<span class="chip">${this._state(this._id(node,'sensor','fleet_managed_count'))} devices</span>` : ''}
+      ${node.kind==='offer' ? html`<span class="chip offer">Fleet Offer</span>` : ''}
+      ${node.kind==='fleet' ? html`<span class="chip">${this._state(this._id(node,'fleet_online_count'))}/${this._state(this._id(node,'fleet_managed_count'))} online</span>` : ''}
+      ${node.kind==='unmanaged' ? html`<span class="chip">${this._state(this._id(node,'fleet_managed_count'))} devices</span>` : ''}
       ${node.repairs?.length ? html`<span class="badge" title="Open repairs">${node.repairs.length}</span>` : ''}
     </div>${branch && open ? (node.children || []).map(child=>this._row(child,level+1)) : ''}`;
   }
-  _ids(node,domain) { return node?.entities?.[domain] || []; }
-  _id(node,domain,suffix) { return this._ids(node,domain).find(id=>id.endsWith(`_${suffix}`)); }
-  _state(id) { const value=this.hass?.states?.[id]?.state; return !value || ['unavailable','unknown'].includes(value) ? 'Unknown' : value; }
-  _metric(node,label,domain,suffix) { const id=this._id(node,domain,suffix);
-    return html`<div class="metric"><span>${label}</span><strong>${id?this._state(id):'Unknown'}</strong></div>`; }
-  _button(node,label,suffix) { const id=this._id(node,'button',suffix); if (!id) return '';
+  /** Entity by unique-ID key (#198): entity IDs are renamable and fleet sensors' are generic. */
+  _id(node,key) { return node?.keys?.[key]; }
+  _state(id) { const value=this.hass?.states?.[id]?.state; if (!value || ['unavailable','unknown'].includes(value)) return 'Unknown';
+    return /^\d{4}-\d\d-\d\dT/.test(value) && !isNaN(Date.parse(value)) ? new Date(value).toLocaleString() : value; }
+  _kv(label,value) { return html`<div class="row"><span class="k">${label}</span><span class="v">${value}</span></div>`; }
+  _metric(node,label,key) { const id=this._id(node,key); return this._kv(label,id?this._state(id):'Unknown'); }
+  _status(rows) { return html`<section class="section"><h3>Status</h3><div class="rows">${rows}</div></section>`; }
+  _button(node,label,key) { const id=this._id(node,key); if (!id) return '';
     return html`<button class="action" ?disabled=${this.hass?.states?.[id]?.state==='unavailable'} @click=${()=>this._service('button','press',id)}>${label}</button>`; }
   async _service(domain,service,entity_id,option=null) { try { await this.hass.callService(domain,service,{entity_id,...(option === null ? {} : {option})}); }
     catch (e) { this.error=e.message||String(e); } }
-  _switch(node,label,suffix) { const id=this._id(node,'switch',suffix); if (!id) return '';
+  _switch(node,label,key) { const id=this._id(node,key); if (!id) return '';
     const on=this._state(id)==='on'; return html`<button class="action" @click=${()=>this._service('switch',on?'turn_off':'turn_on',id)}>${label}: ${on?'On':'Off'}</button>`; }
   _onFlowFinished() { clearTimeout(this._finishTimer); this._finishTimer=setTimeout(()=>{
     this.renderRoot?.querySelector('ksm-flow')?.close();
@@ -108,11 +116,10 @@ class KsmPanel extends LitElement {
       <button class="action" @click=${()=>this._flow('repair',{issue_id:issue.issue_id,translation_key:issue.translation_key})}>Fix</button>
     </div>`)}</section>`; }
   _global(node) { return html`
-    <section class="section"><h3>Status</h3><div class="grid">
-      ${this._metric(node,'Latest release','sensor','latest_kiosk_satellite_release')}
-      ${this._metric(node,'Device catalog','sensor','device_catalog')}
-      ${this._metric(node,'Install recipes','sensor','install_recipes')}
-    </div></section>
+    ${this._status(html`
+      ${this._metric(node,'Latest release','latest_release')}
+      ${this._metric(node,'Device catalog','catalog_models')}
+      ${this._metric(node,'Install recipes','catalog_recipes')}`)}
     <section class="section"><h3>Actions</h3>
       ${this._button(node,'Check for updates','check_for_updates')}
       ${this._button(node,'Update all','update_all')}
@@ -122,41 +129,38 @@ class KsmPanel extends LitElement {
       <button class="action" @click=${()=>this._flow('config',{fleet_entry_id:'unmanaged'})}>Add device</button>
     </section>`; }
   _fleet(node) { const fleet=node.kind==='fleet'; return html`
-    <section class="section"><h3>Status</h3><div class="grid">
-      ${fleet ? html`${['leader','managed_members','online_count','offline_count','version_mismatch','blocked_sync','pending_invitations','last_poll'].map(k=>this._metric(node,k.replaceAll('_',' '),'sensor',`fleet_${k}`))}` :
-        this._metric(node,'Managed devices','sensor','fleet_managed_count')}
-    </div></section>
-    <section class="section"><h3>Devices and offers</h3>
-      ${(node.children||[]).map(child=>html`<div>${child.title}
-        ${child.kind==='offer' ? html`<button class="action" @click=${()=>this._flow('config',{flow_id:child.flow_id})}>Add</button>` : ''}</div>`)}
+    ${this._status(fleet ? FLEET_STATUS.map(([key,label])=>this._metric(node,label,`fleet_${key}`)) :
+      this._metric(node,'Managed devices','fleet_managed_count'))}
+    <section class="section"><h3>Actions</h3>
       <button class="action" @click=${()=>this._flow('config',{fleet_entry_id:fleet?node.entry_id:'unmanaged'})}>Add device${fleet?' to this fleet':''}</button>
     </section>`; }
   _device(node) { return html`
-    <section class="section"><h3>Status</h3><div class="grid">
-      <div class="metric"><span>Connection</span><strong>${node.online?'Online':'Offline'}</strong></div>
-      ${this._metric(node,'IP address','sensor','ip_address')}
-      ${this._metric(node,'Device type','sensor','device_type')}
-      ${this._metric(node,'Install recipe','sensor','recipe')}
-      ${this._metric(node,'Fleet membership','sensor','fleet_membership')}
-      ${this._metric(node,'ADB enabled','binary_sensor','adb_enabled')}
-      ${this._metric(node,'Permissions','binary_sensor','permissions')}
-    </div></section>
+    ${this._status(html`
+      ${this._kv('Connection',node.online?'Online':'Offline')}
+      ${this._metric(node,'IP address','ip_address')}
+      ${this._metric(node,'Device type','device_type')}
+      ${this._metric(node,'Install recipe','recipe')}
+      ${this._metric(node,'Fleet membership','fleet_membership')}
+      ${this._metric(node,'ADB enabled','adb_enabled')}
+      ${this._metric(node,'Permissions','permissions')}`)}
     <section class="section"><h3>Actions</h3>
-      ${this._button(node,'Install/Reinstall','install_kiosk_satellite')}${this._button(node,'Uninstall','uninstall_kiosk_satellite')}
+      ${this._button(node,'Install/Reinstall','install')}${this._button(node,'Uninstall','uninstall')}
       ${this._button(node,'Fix permissions','fix_permissions')}
       ${this._button(node,'Back up configuration','backup_config')}
       ${this._button(node,'Restore configuration','restore_config')}
-      ${this._id(node,'select','config_backup') ? html`<select aria-label="Configuration backup" @change=${e=>this._service('select','select_option',this._id(node,'select','config_backup'),e.target.value)}>
-        ${(this.hass?.states?.[this._id(node,'select','config_backup')]?.attributes?.options||[]).map(opt=>html`<option value=${opt}>${opt}</option>`)}</select>` : ''}
-      ${this._switch(node,'Auto-update','auto_update_kiosk_satellite')}
+      ${this._id(node,'config_backup') ? html`<select aria-label="Configuration backup" @change=${e=>this._service('select','select_option',this._id(node,'config_backup'),e.target.value)}>
+        ${(this.hass?.states?.[this._id(node,'config_backup')]?.attributes?.options||[]).map(opt=>html`<option value=${opt} ?selected=${opt===this.hass?.states?.[this._id(node,'config_backup')]?.state}>${opt}</option>`)}</select>` : ''}
+      ${this._switch(node,'Auto-update','auto_update')}
       <button class="action" @click=${()=>this._flow('subentry',{entry_id:node.entry_id,subentry_id:node.subentry_id})}>Configure</button>
       <button class="action" @click=${()=>this._diagnostics(node)}>Download diagnostics</button>
       <button class="action" @click=${()=>{this.confirmDelete=true;}}>Delete device</button>
       ${this.confirmDelete ? html`<p>Delete ${node.title}?</p>
         <button class="action" @click=${()=>this._delete(node)}>Delete ${node.title}</button>
         <button class="action" @click=${()=>{this.confirmDelete=false;}}>Cancel</button>` : ''}
-      ${node.device_id ? html`<a href="/config/devices/device/${node.device_id}">Open in Home Assistant</a>` : ''}
     </section>`; }
+  _links(node) { if (node?.kind!=='device') return '';
+    return html`${node.device_id ? html`<a class="ha-link" href="/config/devices/device/${node.device_id}">Open in Home Assistant</a>` : ''}
+      ${node.web_ui_url ? html`<a class="web-ui-link" href=${node.web_ui_url} target="_blank" rel="noopener noreferrer">Web UI</a>` : ''}`; }
   async _delete(node) { try { await this.hass.connection.sendMessagePromise({type:'config_entries/subentries/delete',entry_id:node.entry_id,subentry_id:node.subentry_id});
       this.confirmDelete=false; this._choose(this.tree); } catch(e) { this.error=e.message||String(e); } }
   async _diagnostics(node) {
@@ -175,7 +179,7 @@ class KsmPanel extends LitElement {
       ${this.tree ? this._row(this.tree,0) : html`<p>Loading…</p>`}
     </aside><main aria-label="KSM detail">
       <button class="action back" @click=${()=>{this.showDetail=false;}}>Back to tree</button>
-      <h2>${selected?.title || 'Kiosk Satellite Manager'}</h2>
+      <div class="titlebar"><h2>${selected?.title || 'Kiosk Satellite Manager'}</h2>${this._links(selected)}</div>
       ${this.error ? html`<p class="error">${this.error}</p>` : ''}
       ${this.flowOpen ? html`<ksm-flow .hass=${this.hass} @flow-close=${()=>{this.flowOpen=false;}} @flow-finished=${()=>this._onFlowFinished()}></ksm-flow>` :
         selected?.kind==='global' ? this._global(selected) :

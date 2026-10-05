@@ -11,19 +11,35 @@ from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er, issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .const import CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_MANAGER, ENTRY_TYPE_UNMANAGED
+from .const import (
+    CONF_ENTRY_TYPE, CONF_HOST, CONF_TLS_SPKI, DOMAIN, ENTRY_TYPE_MANAGER,
+    ENTRY_TYPE_UNMANAGED, HEALTH_PORT,
+)
 from . import fleet
 
 WS_TYPE = f"{DOMAIN}/subscribe_tree"
 
 
-def _entities(hass, entry_id: str, subentry_id: str | None = None) -> dict[str, list[str]]:
+def _entities(hass, entry_id: str, subentry_id: str | None = None) -> dict:
+    """Owned entity IDs by platform, plus unique-ID suffix -> entity ID (#198)."""
     groups: dict[str, list[str]] = defaultdict(list)
+    keys: dict[str, str] = {}
+    prefix = f"{subentry_id or entry_id}_"
     for row in er.async_entries_for_config_entry(er.async_get(hass), entry_id):
         if getattr(row, "config_subentry_id", None) != subentry_id:
             continue
         groups[row.domain].append(row.entity_id)
-    return {platform: sorted(ids) for platform, ids in groups.items()}
+        if row.unique_id.startswith(prefix):
+            keys[row.unique_id.removeprefix(prefix)] = row.entity_id
+    return {"entities": {platform: sorted(ids) for platform, ids in groups.items()}, "keys": keys}
+
+
+def _web_ui_url(device) -> str | None:
+    host = device.data.get(CONF_HOST)
+    if not host:
+        return None
+    scheme = "https" if device.data.get(CONF_TLS_SPKI) else "http"
+    return f"{scheme}://{host}:{HEALTH_PORT}"
 
 
 def _device_id(hass, entry_id: str, subentry_id: str | None = None) -> str | None:
@@ -60,7 +76,7 @@ def build_tree(hass) -> dict:
     root = {
         "kind": "global", "entry_id": manager.entry_id if manager else None,
         "title": manager.title if manager else "KSM Settings",
-        "entities": _entities(hass, manager.entry_id) if manager else {},
+        **(_entities(hass, manager.entry_id) if manager else {"entities": {}, "keys": {}}),
         "repairs": [], "children": [],
     }
     groups = [e for e in entries if e.data.get(CONF_ENTRY_TYPE) in ("fleet", ENTRY_TYPE_UNMANAGED)]
@@ -71,7 +87,7 @@ def build_tree(hass) -> dict:
         group = {
             "kind": "unmanaged" if unmanaged else "fleet",
             "entry_id": entry.entry_id, "title": entry.title,
-            "entities": _entities(hass, entry.entry_id), "repairs": [], "children": [],
+            **_entities(hass, entry.entry_id), "repairs": [], "children": [],
         }
         if not unmanaged:
             group["leader_ks_id"] = entry.data.get("leader_id")
@@ -83,7 +99,8 @@ def build_tree(hass) -> dict:
                 "subentry_id": device.entry_id, "title": device.title,
                 "leader": status.get("leading") is True,
                 "device_id": _device_id(hass, entry.entry_id, device.entry_id),
-                "entities": _entities(hass, entry.entry_id, device.entry_id),
+                **_entities(hass, entry.entry_id, device.entry_id),
+                "web_ui_url": _web_ui_url(device),
                 "online": bool(coordinator and coordinator.last_update_success),
                 "repairs": [],
             }
@@ -110,7 +127,7 @@ def build_tree(hass) -> dict:
         target["children"].append({
             "kind": "offer", "entry_id": target.get("entry_id"),
             "title": info.get("name") or "Discovered follower",
-            "flow_id": flow.flow_id, "entities": {}, "repairs": [],
+            "flow_id": flow.flow_id, "entities": {}, "keys": {}, "repairs": [],
         })
     _repairs(hass, node_for_device, root["children"], root)
     for group in root["children"]:
