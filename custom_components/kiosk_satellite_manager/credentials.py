@@ -1,9 +1,38 @@
 """KSM credential ownership helpers."""
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass
 
-from .const import CONF_HA_REFRESH_TOKEN_ID, CONF_HA_TOKEN, CONF_HA_TOKEN_OWNED
+from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_READ_ONLY, GROUP_ID_USER
+
+from .const import CONF_HA_REFRESH_TOKEN_ID, CONF_HA_TOKEN, CONF_HA_TOKEN_OWNED, DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
+
+KIOSK_USER_PREFIX = "Kiosk Satellite - "
+_KIOSK_USER_LOCK = f"{DOMAIN}_kiosk_user_lock"
+
+
+def kiosk_user_lock(hass) -> asyncio.Lock:
+    """Serialize minting with cleanup, so cleanup never removes a user whose
+    token is still being created (KSM-BEHAVE-200)."""
+    return hass.data.setdefault(_KIOSK_USER_LOCK, asyncio.Lock())
+
+
+def is_dedicated_kiosk_user(user) -> bool:
+    """A user `_mint_ha_token` created for one kiosk (KSM-BEHAVE-199): no
+    login, local-only, and never the owner, an admin, or system-generated."""
+    return (
+        (user.name or "").startswith(KIOSK_USER_PREFIX)
+        and user.local_only
+        and not user.credentials
+        and not user.is_owner
+        # Group membership, not `is_admin`, which reads False for an inactive admin.
+        and not any(group.id == GROUP_ID_ADMIN for group in user.groups)
+        and not user.system_generated
+    )
 
 
 @dataclass(frozen=True)
@@ -44,8 +73,30 @@ async def async_revoke_owned_credential(hass, credential: TokenCredential | None
     if credential is None or not credential.owned or not credential.refresh_token_id:
         return
     refresh_token = hass.auth.async_get_refresh_token(credential.refresh_token_id)
-    if refresh_token is not None:
-        hass.auth.async_remove_refresh_token(refresh_token)
+    if refresh_token is None:
+        return
+    user = refresh_token.user
+    hass.auth.async_remove_refresh_token(refresh_token)
+    # KSM-BEHAVE-200: the dedicated user exists only for this token.
+    if is_dedicated_kiosk_user(user) and not user.refresh_tokens:
+        await hass.auth.async_remove_user(user)
+
+
+async def async_reconcile_kiosk_users(hass) -> None:
+    """Move Read Only kiosk users to Users (KSM-BEHAVE-199) and remove the
+    tokenless ones earlier revocations left behind (KSM-BEHAVE-200)."""
+    async with kiosk_user_lock(hass):
+        for user in await hass.auth.async_get_users():
+            if not is_dedicated_kiosk_user(user):
+                continue
+            # One user's failure must never block manager setup or the rest.
+            try:
+                if not user.refresh_tokens:
+                    await hass.auth.async_remove_user(user)
+                elif any(group.id == GROUP_ID_READ_ONLY for group in user.groups):
+                    await hass.auth.async_update_user(user, group_ids=[GROUP_ID_USER])
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning("Could not reconcile kiosk user %s", user.id, exc_info=True)
 
 
 async def async_replace_entry_credential(hass, entry, credential: TokenCredential) -> None:

@@ -79,7 +79,11 @@ from .const import (
     SIGNAL_MANAGER_OPTIONS_UPDATED,
 )
 from . import auto_update, config_backup, fleet, follower_updates, le_certificate, le_certificate_sync, meta_setup, portal_reload, support_request, update_failure
-from .credentials import TokenCredential, async_revoke_owned_credential
+from .credentials import (
+    TokenCredential,
+    async_reconcile_kiosk_users,
+    async_revoke_owned_credential,
+)
 from .device_repairs import (
     apply_dashboard_dns, async_resolve_device_model, async_track_area_repairs, clear_device_repairs,
     le_certificate_sync_issue_id, needs_model_resolution,
@@ -610,6 +614,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 data={CONF_ENTRY_TYPE: ENTRY_TYPE_UNMANAGED},
             ))
         hass.data[MANAGER_ENTRY_KEY] = entry.entry_id
+        # KSM-BEHAVE-199/200: migrate and clean up dedicated kiosk users.
+        await async_reconcile_kiosk_users(hass)
         await _async_ensure_release_coordinator(hass)
         entry.async_on_unload(entry.add_update_listener(_async_manager_options_updated))
         entry.async_on_unload(follower_updates.async_setup(hass))

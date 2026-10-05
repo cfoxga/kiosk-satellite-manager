@@ -46,7 +46,7 @@ from custom_components.kiosk_satellite_manager.install import (
 from custom_components.kiosk_satellite_manager.credentials import TokenCredential
 from custom_components.kiosk_satellite_manager.const import SYNC_STATUS_POLL_ATTEMPTS
 from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
-from homeassistant.auth.const import GROUP_ID_READ_ONLY
+from homeassistant.auth.const import GROUP_ID_USER
 
 _TARGET_VERSION = "2026.9.99"
 
@@ -73,8 +73,16 @@ class _FakeHass:
             return_value=SimpleNamespace(id="the-refresh-token")
         )
         self.auth.async_create_access_token = MagicMock(return_value="minted-ha-token")
-        self.auth.async_get_refresh_token = MagicMock(return_value=SimpleNamespace(id="the-refresh-token"))
+        # The minted token's user: a dedicated kiosk user with no other token.
+        kiosk_user = SimpleNamespace(
+            name="Kiosk Satellite - Kitchen", local_only=True, credentials=[], is_owner=False,
+            is_admin=False, groups=[], system_generated=False, refresh_tokens={},
+        )
+        self.auth.async_get_refresh_token = MagicMock(
+            return_value=SimpleNamespace(id="the-refresh-token", user=kiosk_user)
+        )
         self.auth.async_remove_refresh_token = MagicMock()
+        self.auth.async_remove_user = AsyncMock()
         self.data: dict = {}
 
     async def async_add_executor_job(self, func, *args):
@@ -508,7 +516,7 @@ async def test_install_and_launch_syncs_password_and_name_on_first_run(caplog):
     mock_api.login.assert_not_called()
     hass.auth.async_get_owner.assert_not_called()
     hass.auth.async_create_user.assert_awaited_once_with(
-        "Kiosk Satellite - Kitchen", group_ids=[GROUP_ID_READ_ONLY], local_only=True
+        "Kiosk Satellite - Kitchen", group_ids=[GROUP_ID_USER], local_only=True
     )
     mock_api.patch_settings.assert_awaited_once_with(
         session,
@@ -623,6 +631,9 @@ async def test_install_failure_after_mint_revokes_the_owned_refresh_token():
     assert result is None
     hass.auth.async_remove_refresh_token.assert_called_once_with(
         hass.auth.async_get_refresh_token.return_value
+    )
+    hass.auth.async_remove_user.assert_awaited_once_with(
+        hass.auth.async_get_refresh_token.return_value.user
     )
 
 

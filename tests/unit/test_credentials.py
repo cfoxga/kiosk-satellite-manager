@@ -12,11 +12,17 @@ from custom_components.kiosk_satellite_manager.credentials import (
     async_revoke_owned_credential,
 )
 
+# An owner whose legacy token was marked owned: never removed (KSM-BEHAVE-200).
+_OWNER = SimpleNamespace(
+    name="Owner", local_only=False, credentials=[], is_owner=True, is_admin=True,
+    groups=[], system_generated=False, refresh_tokens={},
+)
+
 
 @pytest.mark.asyncio
 async def test_owned_credential_is_revoked_once_and_missing_token_is_idempotent():
     """[KSM-TEST-100] Removal revokes only an extant KSM-owned credential."""
-    refresh_token = SimpleNamespace(id="owned-refresh")
+    refresh_token = SimpleNamespace(id="owned-refresh", user=_OWNER)
     hass = SimpleNamespace(auth=MagicMock())
     hass.auth.async_get_refresh_token.return_value = refresh_token
     hass.auth.async_remove_refresh_token = MagicMock()
@@ -32,7 +38,7 @@ async def test_owned_credential_is_revoked_once_and_missing_token_is_idempotent(
 @pytest.mark.asyncio
 async def test_ksm_test_112_owned_credential_uses_home_assistants_sync_remover():
     """[KSM-TEST-112] HA removes refresh tokens synchronously."""
-    refresh_token = SimpleNamespace(id="owned-refresh")
+    refresh_token = SimpleNamespace(id="owned-refresh", user=_OWNER)
     hass = SimpleNamespace(auth=MagicMock())
     hass.auth.async_get_refresh_token.return_value = refresh_token
     hass.auth.async_remove_refresh_token = MagicMock()
@@ -58,7 +64,7 @@ async def test_shared_or_legacy_credential_is_never_revoked():
 @pytest.mark.asyncio
 async def test_replacement_revokes_distinct_old_owned_credential_before_persisting_new():
     """[KSM-TEST-101] Replacement cannot leave KSM's prior token live."""
-    refresh_token = SimpleNamespace(id="old-refresh")
+    refresh_token = SimpleNamespace(id="old-refresh", user=_OWNER)
     entry = SimpleNamespace(data={"ha_token": "old", "ha_refresh_token_id": "old-refresh", "ha_token_owned": True})
     hass = SimpleNamespace(auth=MagicMock(), config_entries=MagicMock())
     hass.auth.async_get_refresh_token.return_value = refresh_token

@@ -4,6 +4,16 @@
 
 - Added the Kiosk Satellite Manager sidebar panel with a Global → Fleet → Device tree, split detail pane, entity actions, and the existing Home Assistant setup and repair flows (#193).
 
+- Kiosk Satellite can now change its own settings in Home Assistant, such as the wake word and
+  voice pipeline (#195). Each kiosk's Home Assistant user is now a regular user instead of Read
+  Only. Read Only refused every one of those changes, and after each Home Assistant restart the
+  app retried for a minute, logging `Unauthorized` every 3 seconds. The user stays local-only and
+  non-admin. Existing kiosk users are moved over when KSM starts.
+
+- Removing or replacing a kiosk's Home Assistant token now also removes the user KSM created for
+  it (#192). Before, every install and token rotation left a user behind. KSM removes those
+  leftovers when it starts.
+
 - An optional KSM Area now reaches its matched ESPHome proxy, Bluetooth child, and Music Assistant player. Moving or clearing the KSM device's Area updates linked devices still in the former Area; devices assigned elsewhere keep their Area (#188).
 
 - Fixed test suite socket isolation and qualification expectations (#138). Stubs

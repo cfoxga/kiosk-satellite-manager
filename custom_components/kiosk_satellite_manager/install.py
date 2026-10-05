@@ -42,7 +42,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 import aiohttp
-from homeassistant.auth.const import GROUP_ID_READ_ONLY
+from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant
@@ -67,7 +67,12 @@ from .const import (
     SYNC_STATUS_POLL_DELAY_S,
 )
 from .device_catalog import require_recipe
-from .credentials import TokenCredential, async_revoke_owned_credential
+from .credentials import (
+    KIOSK_USER_PREFIX,
+    TokenCredential,
+    async_revoke_owned_credential,
+    kiosk_user_lock,
+)
 from .install_recipes import InstallRecipe
 from .helpers import target_release
 from .ks_api import ApkAssetNotFound, latest_release
@@ -765,25 +770,33 @@ async def _wait_for_setup_status(
 
 
 async def _mint_ha_token(hass: HomeAssistant, client_name: str) -> TokenCredential:
-    """Create a dedicated, local-only read-only credential for one kiosk.
+    """Create a dedicated, local-only credential for one kiosk.
 
-    Kiosk Satellite only needs to render Home Assistant; it must never inherit
-    an operator's owner authority. The built-in read-only group denies entity
-    control and all administrator-only APIs. A local-only user also prevents a
-    compromised kiosk token from being used through HA's public endpoint.
+    A kiosk must never inherit an operator's owner authority. The built-in
+    Users group denies administrator-only APIs but allows entity control,
+    which Kiosk Satellite needs to set its own ESPHome selects
+    (KSM-BEHAVE-199; Read Only refused every one). A local-only user also
+    prevents a compromised kiosk token from being used through HA's public
+    endpoint.
     """
     device_name = client_name.removeprefix("Kiosk Satellite Manager - ").split(" [", 1)[0]
-    user = await hass.auth.async_create_user(
-        f"Kiosk Satellite - {device_name}",
-        group_ids=[GROUP_ID_READ_ONLY],
-        local_only=True,
-    )
-    refresh_token = await hass.auth.async_create_refresh_token(
-        user,
-        client_name=client_name,
-        token_type=TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN,
-        access_token_expiration=timedelta(days=HA_TOKEN_LIFESPAN_DAYS),
-    )
+    async with kiosk_user_lock(hass):
+        user = await hass.auth.async_create_user(
+            f"{KIOSK_USER_PREFIX}{device_name}",
+            group_ids=[GROUP_ID_USER],
+            local_only=True,
+        )
+        try:
+            refresh_token = await hass.auth.async_create_refresh_token(
+                user,
+                client_name=client_name,
+                token_type=TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN,
+                access_token_expiration=timedelta(days=HA_TOKEN_LIFESPAN_DAYS),
+            )
+        except Exception:
+            # KSM-BEHAVE-200: never leave a tokenless kiosk user behind.
+            await hass.auth.async_remove_user(user)
+            raise
     return TokenCredential(
         access_token=hass.auth.async_create_access_token(refresh_token),
         refresh_token_id=refresh_token.id,
