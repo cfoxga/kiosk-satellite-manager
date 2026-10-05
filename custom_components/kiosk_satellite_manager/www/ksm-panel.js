@@ -14,7 +14,7 @@ const nodeKey = node => node.kind==='offer' ? `${node.entry_id}:offer:${node.flo
 class KsmPanel extends LitElement {
   static properties={hass:{type:Object},narrow:{type:Boolean},panel:{type:Object},
     tree:{state:true},selection:{state:true},showDetail:{state:true},flowOpen:{state:true},
-    error:{state:true},expanded:{state:true},confirmDelete:{state:true},issuesText:{state:true}};
+    error:{state:true},expanded:{state:true},confirmDelete:{state:true},issuesText:{state:true},webUiUrl:{state:true}};
   static styles=css`
     :host { display:block; height:100%; color:var(--primary-text-color); font-family:var(--ha-font-family,sans-serif); }
     .shell { height:100%; display:grid; grid-template-columns:minmax(245px,310px) minmax(0,1fr); }
@@ -41,14 +41,15 @@ class KsmPanel extends LitElement {
     button.action:hover { border-color:var(--primary-color); } button.action:disabled { opacity:.5; cursor:not-allowed; }
     .error { color:var(--error-color,#b00020); } .muted { color:var(--secondary-text-color); } a { color:var(--primary-color); }
     .back { display:none; } .pending { font-style:italic; }
+    .web-ui { display:block; width:100%; height:min(78vh,900px); border:1px solid var(--divider-color); border-radius:7px; }
     @media (max-width:700px) { .shell { display:block; } .shell.detail aside { display:none; }
       .shell:not(.detail) main { display:none; } aside,main { height:100%; box-sizing:border-box; }
       .back { display:inline-block; margin-bottom:14px; } }
   `;
   constructor() { super(); this.tree=null; this.selection=null; this.showDetail=false; this.flowOpen=false; this.issuesText={};
-    this.error=''; this.confirmDelete=false; try { this.expanded=JSON.parse(localStorage.getItem(STORE)||'{}'); } catch (_) { this.expanded={}; } }
+    this.error=''; this.confirmDelete=false; this.webUiUrl=''; try { this.expanded=JSON.parse(localStorage.getItem(STORE)||'{}'); } catch (_) { this.expanded={}; } }
   connectedCallback() { super.connectedCallback(); window.addEventListener('popstate',this._pop=()=>this._syncUrl()); }
-  disconnectedCallback() { super.disconnectedCallback(); window.removeEventListener('popstate',this._pop);
+  disconnectedCallback() { super.disconnectedCallback(); window.removeEventListener('popstate',this._pop); this.webUiUrl='';
     if (this._unsub) this._unsub(); this._discardFlow(); }
   updated(changed) { if (changed.has('hass') && this.hass && !this._unsub && !this._subscribing) this._subscribe(); }
   async _subscribe() {
@@ -67,6 +68,7 @@ class KsmPanel extends LitElement {
     const wanted=new URLSearchParams(location.search).get('node');
     const found=allNodes(this.tree).find(n=>nodeKey(n)===wanted);
     this.selection=found || this.tree;
+    if (this.webUiUrl && this._webUiNode!==nodeKey(this.selection)) this.webUiUrl='';
     this.showDetail=Boolean(found && wanted);
     if (!found && wanted) history.replaceState({},'',location.pathname);
   }
@@ -75,7 +77,7 @@ class KsmPanel extends LitElement {
     if (runner) await runner.close();
     this.flowOpen=false;
   }
-  async _choose(node) { await this._discardFlow(); this.selection=node; this.showDetail=true; this.confirmDelete=false;
+  async _choose(node) { await this._discardFlow(); this.webUiUrl=''; this.selection=node; this.showDetail=true; this.confirmDelete=false;
     const url=new URL(location.href); url.searchParams.set('node',nodeKey(node)); history.pushState({},'',url); }
   _toggle(node) { const key=nodeKey(node); this.expanded={...this.expanded,[key]:this.expanded[key]===false};
     localStorage.setItem(STORE,JSON.stringify(this.expanded)); }
@@ -110,6 +112,15 @@ class KsmPanel extends LitElement {
   },4000); }
   async _flow(kind,args={}) { await this._discardFlow(); this.flowOpen=true; await this.updateComplete;
     await this.renderRoot.querySelector('ksm-flow').open(kind,args); }
+  async _openWebUi(node) {
+    this.error=''; this.webUiUrl='';
+    try {
+      const result=await this.hass.connection.sendMessagePromise({type:`${DOMAIN}/open_web_ui`,
+        entry_id:node.entry_id,subentry_id:node.subentry_id});
+      if (!this.selection || nodeKey(this.selection)!==nodeKey(node)) return;
+      this._webUiNode=nodeKey(node); this.webUiUrl=result.url;
+    } catch(e) { this.error=e.message||String(e); }
+  }
   _repairs(node) { if (!node.repairs?.length) return '';
     return html`<section class="section"><h3>Repairs</h3>${node.repairs.map(issue=>html`<div>
       ${this.issuesText[`component.${DOMAIN}.issues.${issue.translation_key}.title`] || issue.translation_key}
@@ -135,6 +146,14 @@ class KsmPanel extends LitElement {
       <button class="action" @click=${()=>this._flow('config',{fleet_entry_id:fleet?node.entry_id:'unmanaged'})}>Add device${fleet?' to this fleet':''}</button>
     </section>`; }
   _device(node) { return html`
+    <section class="section"><h3>Web UI</h3>
+      ${this.webUiUrl && this._webUiNode===nodeKey(node) ? html`
+        <button class="action" @click=${()=>{this.webUiUrl='';}}>Close Web UI</button>
+        <iframe class="web-ui" title=${`${node.title} Web UI`} src=${this.webUiUrl}
+          sandbox="allow-scripts allow-forms allow-downloads" referrerpolicy="no-referrer"></iframe>` : html`
+        <button class="action" ?disabled=${!node.online} @click=${()=>this._openWebUi(node)}>Open Web UI</button>
+        ${!node.online ? html`<p class="muted">Device is offline.</p>` : ''}`}
+    </section>
     ${this._status(html`
       ${this._kv('Connection',node.online?'Online':'Offline')}
       ${this._metric(node,'IP address','ip_address')}

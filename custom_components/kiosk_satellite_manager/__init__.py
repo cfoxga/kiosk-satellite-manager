@@ -54,6 +54,7 @@ from .device_catalog import NoApprovedRecipe, require_recipe, validate_catalog
 from .install_recipes import NAME_SOURCE_SECURE_BLUETOOTH
 from .onboarding_plan import build_onboarding_plan
 from .panel import async_register_panel, async_remove_panel
+from . import web_ui
 from .websocket_api import async_register_websocket_command
 from .const import (
     BACKUP_CHECK_INTERVAL_MIN,
@@ -623,6 +624,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.async_on_unload(async_track_area_repairs(hass))
         await hass.config_entries.async_forward_entry_setups(entry, MANAGER_PLATFORMS)
         await async_register_panel(hass)
+        web_ui.async_register(hass)
         device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, entry.entry_id), entry.entry_id)
         if device is not None and device.name != "KSM Settings":
             dr.async_get(hass).async_update_device(device.id, name="KSM Settings")
@@ -791,6 +793,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if manager:
             hass.data.pop(MANAGER_ENTRY_KEY, None)
             async_remove_panel(hass)
+            web_ui.async_unload(hass)
         elif grouping:
             # By owning entry too: a removed subentry's coordinator outlives it.
             coordinators = hass.data.get(DOMAIN, {})

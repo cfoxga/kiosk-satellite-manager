@@ -16,6 +16,7 @@ from .const import (
     ENTRY_TYPE_UNMANAGED, HEALTH_PORT,
 )
 from . import fleet
+from . import web_ui
 
 WS_TYPE = f"{DOMAIN}/subscribe_tree"
 
@@ -233,3 +234,20 @@ def handle_subscribe_tree(hass, connection, msg):
 
 def async_register_websocket_command(hass):
     websocket_api.async_register_command(hass, handle_subscribe_tree)
+    websocket_api.async_register_command(hass, handle_open_web_ui)
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/open_web_ui",
+    vol.Required("entry_id"): str,
+    vol.Required("subentry_id"): str,
+})
+@websocket_api.require_admin
+@callback
+def handle_open_web_ui(hass, connection, msg):
+    """Grant one admin a short-lived view of one managed kiosk."""
+    url = web_ui.issue_grant(hass, connection.user, msg["entry_id"], msg["subentry_id"])
+    if url is None:
+        connection.send_error(msg["id"], "not_available", "Managed device is unavailable")
+        return
+    connection.send_result(msg["id"], {"url": url})

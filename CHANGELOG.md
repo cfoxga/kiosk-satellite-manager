@@ -4,6 +4,8 @@
 
 - The sidebar panel's fleet counts and status now show real values instead of Unknown, and a device's Install/Reinstall, Uninstall, Back up and Restore configuration, backup choice and Auto-update controls appear again; the panel now finds entities by their stable IDs rather than their renamable entity IDs. Status items read label and value on one line, the fleet pane no longer repeats the tree's members and offers, an offered device reads Fleet Offer in the tree, and a device's title carries Open in Home Assistant and Web UI links (#198).
 
+- The KSM device pane can now open that kiosk's Web UI inside Home Assistant and sign in with the password KSM already stores (#194). The view uses a device-scoped proxy and a sandboxed frame, so a browser away from the LAN can reach the kiosk without giving its JavaScript access to Home Assistant's browser storage.
+
 - Fixed the KSM config-flow CI test to check revocation of its own kiosk token and user, without counting a Home Assistant frontend token created during setup (#196).
 
 - Added the Kiosk Satellite Manager sidebar panel with a Global → Fleet → Device tree, split detail pane, entity actions, and the existing Home Assistant setup and repair flows (#193).
