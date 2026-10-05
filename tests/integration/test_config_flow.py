@@ -1313,8 +1313,9 @@ async def test_ks_only_add_settings_failure_revokes_token_and_creates_nothing(
 
     MockUser(name="Owner", is_owner=True).add_to_hass(hass)
     ks_health_probe.return_value = (_PIN, _PORTAL_MINI_HEALTH)
-    # Frontend setup may mint HA's unrelated "Home Assistant Content" token
-    # while this flow runs, so inspect the credential actually revoked.
+    # The panel's http dependency creates HA's content-user token on setup.
+    assert await async_setup_component(hass, "http", {})
+    before = {token.id for token in hass.auth._store.async_get_refresh_tokens()}  # noqa: SLF001
     remove_token = hass.auth.async_remove_refresh_token
     with patch.object(hass.auth, "async_remove_refresh_token", wraps=remove_token) as remove:
         result, mock_patch = await _ks_only_add(
@@ -1331,3 +1332,13 @@ async def test_ks_only_add_settings_failure_revokes_token_and_creates_nothing(
     assert revoked.client_name.startswith("Kiosk Satellite Manager - ")
     assert hass.auth.async_get_refresh_token(revoked.id) is None
     assert await hass.auth.async_get_user(revoked.user.id) is None
+    after = {token.id for token in hass.auth._store.async_get_refresh_tokens()}  # noqa: SLF001
+    assert after == before
+    assert not any(
+        (token.client_name or "").startswith("Kiosk Satellite Manager - ")
+        for token in hass.auth._store.async_get_refresh_tokens()  # noqa: SLF001
+    )
+    assert not any(
+        (user.name or "").startswith("Kiosk Satellite - ")
+        for user in await hass.auth.async_get_users()
+    )
