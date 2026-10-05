@@ -4,6 +4,8 @@
 
 - The KSM device pane can now open that kiosk's Web UI inside Home Assistant and sign in with the password KSM already stores (#194). The view uses a device-scoped proxy and a sandboxed frame, so a browser away from the LAN can reach the kiosk without giving its JavaScript access to Home Assistant's browser storage.
 
+- Fixed the KSM config-flow CI test to check revocation of its own kiosk token and user, without counting a Home Assistant frontend token created during setup (#196).
+
 - Added the Kiosk Satellite Manager sidebar panel with a Global → Fleet → Device tree, split detail pane, entity actions, and the existing Home Assistant setup and repair flows (#193).
 
 - Kiosk Satellite can now change its own settings in Home Assistant, such as the wake word and
