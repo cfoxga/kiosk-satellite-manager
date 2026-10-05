@@ -16,6 +16,7 @@ from homeassistant import config_entries, data_entry_flow
 from homeassistant.components import persistent_notification
 from homeassistant.helpers import area_registry as ar
 from homeassistant.setup import async_setup_component
+from pytest_homeassistant_custom_component.common import MockUser
 
 from custom_components.kiosk_satellite_manager.adb_client import (
     AdbAuthPending,
@@ -1310,16 +1311,23 @@ async def test_ks_only_add_settings_failure_revokes_token_and_creates_nothing(
     retryable cannot_connect_ks, no entry, and the minted token is gone."""
     from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
 
+    MockUser(name="Owner", is_owner=True).add_to_hass(hass)
     ks_health_probe.return_value = (_PIN, _PORTAL_MINI_HEALTH)
-    before = {t.id for t in hass.auth._store.async_get_refresh_tokens()}  # noqa: SLF001
-    result, mock_patch = await _ks_only_add(
-        hass, _PORTAL_MINI_HEALTH, patch_effect=KsApiError("ha.token rejected")
-    )
+    # Frontend setup may mint HA's unrelated "Home Assistant Content" token
+    # while this flow runs, so inspect the credential actually revoked.
+    remove_token = hass.auth.async_remove_refresh_token
+    with patch.object(hass.auth, "async_remove_refresh_token", wraps=remove_token) as remove:
+        result, mock_patch = await _ks_only_add(
+            hass, _PORTAL_MINI_HEALTH, patch_effect=KsApiError("ha.token rejected")
+        )
+    remove.assert_called_once()
 
     assert result["type"] == data_entry_flow.FlowResultType.FORM
     assert result["step_id"] == "ks_device_info"
     assert result["errors"] == {"base": "cannot_connect_ks"}
     mock_patch.assert_awaited_once()
     assert not hass.config_entries.async_entries(DOMAIN)
-    after = {t.id for t in hass.auth._store.async_get_refresh_tokens()}  # noqa: SLF001
-    assert after == before
+    revoked = remove.call_args.args[0]
+    assert revoked.client_name.startswith("Kiosk Satellite Manager - ")
+    assert hass.auth.async_get_refresh_token(revoked.id) is None
+    assert await hass.auth.async_get_user(revoked.user.id) is None

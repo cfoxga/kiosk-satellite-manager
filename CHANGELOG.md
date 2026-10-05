@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed the KSM config-flow CI test to check revocation of its own kiosk token and user, without counting a Home Assistant frontend token created during setup (#196).
+
 - Added the Kiosk Satellite Manager sidebar panel with a Global → Fleet → Device tree, split detail pane, entity actions, and the existing Home Assistant setup and repair flows (#193).
 
 - Kiosk Satellite can now change its own settings in Home Assistant, such as the wake word and
