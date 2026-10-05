@@ -2,6 +2,7 @@
 async_setup_entry against a live (test) hass via phacc, not a mock."""
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.helpers import entity_registry as er
@@ -72,7 +73,8 @@ async def test_remove_entry_revokes_only_its_owned_credential(hass):
             },
         )
 
-    refresh_token = object()
+    # A token whose user is not a dedicated kiosk user (KSM-BEHAVE-200).
+    refresh_token = SimpleNamespace(user=SimpleNamespace(name="Owner"))
     with patch.object(hass.auth, "async_get_refresh_token", return_value=refresh_token) as get_token, patch.object(
         hass.auth, "async_remove_refresh_token", new=MagicMock()
     ) as remove_token:

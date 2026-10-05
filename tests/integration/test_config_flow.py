@@ -161,7 +161,8 @@ async def test_abandoned_flow_revokes_only_auto_created_token(hass):
     flow = KioskSatelliteManagerConfigFlow()
     flow.hass = hass
     flow._credential = TokenCredential("owned-access", "owned-refresh", owned=True)
-    refresh_token = object()
+    # A token whose user is not a dedicated kiosk user (KSM-BEHAVE-200).
+    refresh_token = SimpleNamespace(user=SimpleNamespace(name="Owner"))
     with patch.object(hass.auth, "async_get_refresh_token", return_value=refresh_token), patch.object(
         hass.auth, "async_remove_refresh_token", new=MagicMock()
     ) as remove_token:
