@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
+import socket
 from collections import Counter
 from datetime import datetime, timezone
 from types import MappingProxyType
-from urllib.parse import urlsplit
 from typing import Any, Callable
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
@@ -259,29 +260,21 @@ def _status_from_response(response: dict) -> dict:
     }
 
 
-def _host_url(response: dict) -> str | None:
-    """KS's admin address by name (KSM-BEHAVE-202), kept only as a bare http(s) origin."""
-    value = (response.get("data") or {}).get("hostUrl") if response.get("ok") is True else None
-    if not isinstance(value, str):
-        return None
+async def _dns_name(hass: HomeAssistant, host: str) -> str | None:
+    """The reverse-DNS name of an IP host (KSM-BEHAVE-202); None for a name or no PTR."""
     try:
-        parts = urlsplit(value)
-        parts.port  # noqa: B018 -- raises on a malformed port
+        ipaddress.ip_address(host)
     except ValueError:
         return None
-    if (parts.scheme not in ("http", "https") or not parts.hostname or "@" in parts.netloc
-            or parts.path not in ("", "/") or parts.query or parts.fragment):
-        return None
-    return f"{parts.scheme}://{parts.netloc}"
-
-
-async def _read_host_url(session, host: str, token: str, pin: str | None) -> str | None:
-    """A failed `fleet` read never fails the status read; it only drops the address."""
     try:
-        return _host_url(await ks_api_client.run_command(session, host, token, "fleet", pin=pin))
-    except Exception as err:  # older KS, offline mid-poll, or malformed reply
-        _LOGGER.debug("KS fleet address unavailable on %s: %s", host, type(err).__name__)
+        name = (await hass.async_add_executor_job(socket.gethostbyaddr, host))[0].rstrip(".")
+    except Exception:  # no PTR, resolver down, or sockets unavailable: keep the IP
         return None
+    try:
+        ipaddress.ip_address(name)
+    except ValueError:
+        return name or None
+    return None
 
 
 async def async_poll_device(hass: HomeAssistant, entry_id: str) -> None:
@@ -303,7 +296,7 @@ async def async_poll_device(hass: HomeAssistant, entry_id: str) -> None:
             token = await ks_api_client.login(session, host, password, pin=pin)
             response = await ks_api_client.run_command(session, host, token, "fleetStatus", pin=pin)
             status = _status_from_response(response)
-            status["host_url"] = await _read_host_url(session, host, token, pin)
+            status["dns_name"] = {"host": host, "name": await _dns_name(hass, host)}
         except Exception as err:  # unavailable or malformed status cannot change ownership
             hass.data.setdefault(_READ_OK_KEY, set()).discard(entry_id)
             _LOGGER.warning("Fleet status unavailable on %s: %s", device.title, type(err).__name__)

@@ -741,11 +741,8 @@ async def test_authenticated_fleet_read_keeps_external_and_failed_status_unmanag
         await fleet.async_poll_device(hass, "external-ha")
     login.assert_awaited_once_with(login.call_args.args[0], "192.168.99.41",
                                   "synthetic-secret", pin="a" * 64)
-    assert [call.args[1:4] for call in command.await_args_list] == [
-        ("192.168.99.41", "synthetic-token", "fleetStatus"),
-        ("192.168.99.41", "synthetic-token", "fleet"),  # read-only address (KSM-BEHAVE-202)
-    ]
-    assert all(call.kwargs == {"pin": "a" * 64} for call in command.await_args_list)
+    command.assert_awaited_once_with(command.call_args.args[0], "192.168.99.41",
+                                     "synthetic-token", "fleetStatus", pin="a" * 64)
     assert fleet.resolve_device(hass, "external-ha").parent.entry_id == unmanaged.entry_id
     assert fleet.status_available(hass, "external-ha")
     assert FleetMembershipSensor(hass, fleet.resolve_device(hass, "external-ha")).native_value == "external leader"

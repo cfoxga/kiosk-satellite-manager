@@ -141,7 +141,7 @@ async def test_new_fleet_offers_each_unmanaged_follower_once(hass):
     await _poll(hass, roster, commands)
     assert _offers(hass) == {}
     assert _follower_issues(hass) == {}
-    assert set(commands) == {"fleetStatus", "fleet"}  # both read-only (KSM-BEHAVE-202)
+    assert set(commands) == {"fleetStatus"}
 
 
 async def test_legacy_fleet_records_roster_without_offering(hass):
@@ -210,7 +210,7 @@ async def test_follower_joining_later_raises_one_repair(hass):
     _device(hass, fleet._fleet_entry(hass, LEADER), "late-ha", "192.168.99.43", "Loft Kiosk")
     await _poll(hass, _roster(late, gone), commands)
     assert _follower_issues(hass) == {}
-    assert set(commands) == {"fleetStatus", "fleet"}  # both read-only (KSM-BEHAVE-202)
+    assert set(commands) == {"fleetStatus"}
 
 
 async def test_offer_aborts_once_its_host_is_managed(hass):

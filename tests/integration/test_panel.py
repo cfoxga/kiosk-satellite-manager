@@ -186,53 +186,64 @@ async def test_tree_keys_entities_by_unique_id_and_links_web_ui(hass):
 
 
 async def test_web_ui_address_by_name_and_fleet_badge(hass):
-    """[KSM-TEST-400] The Web UI link uses KS's by-name admin address; fleets link their leader."""
+    """[KSM-TEST-400] The Web UI link uses the device's DNS name; fleets link their leader."""
     parent = MockConfigEntry(domain=DOMAIN, title="Fleet - Lead",
                              data={"entry_type": "fleet", "leader_id": "ks-lead"})
     parent.add_to_hass(hass)
-    hass.config_entries.async_add_subentry(parent, ConfigSubentry(
-        data=MappingProxyType({"host": "10.0.0.5", "password": "synthetic-secret",
-                               "tls_spki_sha256": "a" * 64}),
-        subentry_id="lead", subentry_type="device", title="Lead", unique_id="lead",
-    ))
+    for sub_id, host in (("lead", "192.0.2.43"), ("named", "portal-b.example.com")):
+        hass.config_entries.async_add_subentry(parent, ConfigSubentry(
+            data=MappingProxyType({"host": host, "password": "synthetic-secret",
+                                   "tls_spki_sha256": "a" * 64}),
+            subentry_id=sub_id, subentry_type="device", title=sub_id.title(), unique_id=sub_id,
+        ))
     unmanaged = MockConfigEntry(domain=DOMAIN, title="Unmanaged", data={"entry_type": "unmanaged"})
     unmanaged.add_to_hass(hass)
-    status = {"ok": True, "data": {"self": {"id": "ks-lead"}, "leader": True, "followers": []}}
+    lookups = []
 
-    async def poll(fleet_reply):
-        async def command(_session, _host, _token, name, *, pin):
-            if name == "fleetStatus":
-                return status
-            if isinstance(fleet_reply, Exception):
-                raise fleet_reply
-            return fleet_reply
+    async def poll(entry_id, ptr, leading=True):
+        status = {"ok": True, "data": {"self": {"id": f"ks-{entry_id}"}, "leader": leading,
+                                       "followers": []}}
+
+        def reverse(ip):
+            lookups.append(ip)
+            if isinstance(ptr, Exception):
+                raise ptr
+            return (ptr, [], [ip])
         with patch("custom_components.kiosk_satellite_manager.ks_api_client.login",
                    new=AsyncMock(return_value="synthetic-token")), patch(
-            "custom_components.kiosk_satellite_manager.ks_api_client.run_command", new=command,
-        ), patch("custom_components.kiosk_satellite_manager.fleet.async_reconcile", new=AsyncMock()):
-            await fleet.async_poll_device(hass, "lead")
-        assert fleet.status_available(hass, "lead")
+            "custom_components.kiosk_satellite_manager.ks_api_client.run_command",
+            new=AsyncMock(return_value=status),
+        ), patch("custom_components.kiosk_satellite_manager.fleet.async_reconcile", new=AsyncMock()), \
+                patch("custom_components.kiosk_satellite_manager.fleet.socket.gethostbyaddr", new=reverse):
+            await fleet.async_poll_device(hass, entry_id)
+        assert fleet.status_available(hass, entry_id)
         tree = build_tree(hass)
         fleet_node = next(n for n in tree["children"] if n["kind"] == "fleet")
-        return tree, fleet_node, fleet_node["children"][0]
+        return tree, fleet_node, {n["subentry_id"]: n for n in fleet_node["children"]}
 
-    named = "https://portal.example.com:2324"
-    tree, fleet_node, lead = await poll({"ok": True, "data": {"hostUrl": named}})
-    assert lead["web_ui_url"] == named
+    await poll("named", "unused.example.com", leading=False)
+    assert lookups == []  # a configured name is used as-is, never reverse-resolved
+    tree, fleet_node, nodes = await poll("lead", "portal-a.example.com.")
+    assert lookups == ["192.0.2.43"]
+    assert nodes["lead"]["web_ui_url"] == "https://portal-a.example.com:2324"
+    assert nodes["named"]["web_ui_url"] == "https://portal-b.example.com:2324"
     assert fleet_node["title"] == "Fleet"
-    assert fleet_node["web_ui_url"] == named
+    assert fleet_node["web_ui_url"] == "https://portal-a.example.com:2324"
     unmanaged_node = next(n for n in tree["children"] if n["kind"] == "unmanaged")
     assert unmanaged_node["title"] == "Unmanaged" and "web_ui_url" not in unmanaged_node
     assert "web_ui_url" not in tree
 
-    for bad in (KsApiError("unknown command"), {"ok": True, "data": {"hostUrl": None}},
-                {"ok": True, "data": {"hostUrl": "https://user@portal.example.com:2324"}},
-                {"ok": True, "data": {"hostUrl": "https://portal.example.com:2324/admin"}},
-                {"ok": True, "data": {"hostUrl": "javascript://portal.example.com"}},
-                {"ok": False, "error": "nope"}):
-        _tree, fleet_node, lead = await poll(bad)
-        assert lead["web_ui_url"] == "https://10.0.0.5:2324", bad
-        assert fleet_node["web_ui_url"] == "https://10.0.0.5:2324", bad
+    for no_name in (OSError("no PTR"), RuntimeError("sockets blocked"), "192.0.2.43"):
+        _tree, fleet_node, nodes = await poll("lead", no_name)
+        assert nodes["lead"]["web_ui_url"] == "https://192.0.2.43:2324", no_name
+        assert fleet_node["web_ui_url"] == "https://192.0.2.43:2324", no_name
+
+    await poll("lead", "portal-a.example.com")
+    current = parent.subentries["lead"]
+    hass.config_entries.async_update_subentry(parent, current, data={**current.data, "host": "192.0.2.99"})
+    nodes = {n["subentry_id"]: n for n in next(
+        n for n in build_tree(hass)["children"] if n["kind"] == "fleet")["children"]}
+    assert nodes["lead"]["web_ui_url"] == "https://192.0.2.99:2324"  # a name for the old IP is stale
 
     current = parent.subentries["lead"]
     hass.config_entries.async_update_subentry(parent, current, data={

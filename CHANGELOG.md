@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- The panel's device title now shows **HA Device** and **Web UI** as clickable badges, and a fleet's title shows a **Web UI** badge for its leader (#199). Web UI links now use the kiosk's DNS name (its certificate name, else `<hostname>.local`) when Kiosk Satellite reports one, falling back to the configured address. Fleets read just **Fleet** in the tree. The in-panel embedded Web UI and its proxy are removed.
+- The panel's device title now shows **HA Device** and **Web UI** as clickable badges, and a fleet's title shows a **Web UI** badge for its leader (#199). Web UI links now use the kiosk's DNS name: the configured host when it is a name, else that IP's reverse-DNS name, falling back to the IP. Fleets read just **Fleet** in the tree. The in-panel embedded Web UI and its proxy are removed.
 
 - The sidebar panel's fleet counts and status now show real values instead of Unknown, and a device's Install/Reinstall, Uninstall, Back up and Restore configuration, backup choice and Auto-update controls appear again; the panel now finds entities by their stable IDs rather than their renamable entity IDs. Status items read label and value on one line, the fleet pane no longer repeats the tree's members and offers, an offered device reads Fleet Offer in the tree, and a device's title carries Open in Home Assistant and Web UI links (#198).
 
