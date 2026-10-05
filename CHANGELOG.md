@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added the Kiosk Satellite Manager sidebar panel with a Global → Fleet → Device tree, split detail pane, entity actions, and the existing Home Assistant setup and repair flows (#193).
+
 - An optional KSM Area now reaches its matched ESPHome proxy, Bluetooth child, and Music Assistant player. Moving or clearing the KSM device's Area updates linked devices still in the former Area; devices assigned elsewhere keep their Area (#188).
 
 - Fixed test suite socket isolation and qualification expectations (#138). Stubs

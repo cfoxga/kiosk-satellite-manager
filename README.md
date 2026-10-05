@@ -40,6 +40,15 @@ Or go to **Settings → Devices & services → Add integration → Kiosk Satelli
    devices and the release controls.
 2. Add each kiosk through the same **Add integration** path, entering its IP address.
 
+### Sidebar panel
+
+Kiosk Satellite Manager adds an admin-only **Kiosk Satellite Manager** sidebar panel.
+Its tree groups the global settings, fleets, unmanaged devices, and individual kiosks.
+Select a fleet or device to see its status and available controls. The panel starts
+Home Assistant's existing Add device, Configure, and repair flows, and offers device
+actions and diagnostics from the selected device. The integration's pages under
+**Settings → Devices & services** remain available.
+
 ### Before you add a device
 
 Everything else is automated, but these happen on the physical device and cannot be driven

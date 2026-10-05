@@ -61,3 +61,31 @@ async def async_get_config_entry_diagnostics(
         },
         TO_REDACT,
     )
+
+
+async def async_get_device_diagnostics(
+    hass: HomeAssistant, entry: ConfigEntry, device
+) -> dict[str, Any]:
+    """Download the selected KSM device's allowlisted support data (#193)."""
+    selected = None
+    for domain, identifier in device.identifiers:
+        if domain != DOMAIN:
+            continue
+        candidate = fleet.resolve_device(hass, identifier)
+        if candidate is None:
+            continue
+        owner = getattr(candidate, "parent", candidate)
+        if owner.entry_id == entry.entry_id:
+            selected = candidate
+            break
+    if selected is None:
+        raise ValueError("HA device does not belong to this KSM entry")
+    integration = await async_get_integration(hass, DOMAIN)
+    return async_redact_data(
+        {"version": str(integration.version), "devices": [{
+            "model": support_log.model_label(selected.data.get(CONF_DEVICE_PROFILE)),
+            "meta_watch_pending": isinstance(selected.data.get(PENDING_KEY), dict),
+            "support_request": support_request.remembered(hass, selected.entry_id),
+        }]},
+        TO_REDACT,
+    )

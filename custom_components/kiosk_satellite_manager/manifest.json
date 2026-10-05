@@ -3,7 +3,7 @@
   "name": "Kiosk Satellite Manager",
   "codeowners": ["@cfoxga"],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["frontend", "http", "panel_custom", "websocket_api"],
   "documentation": "https://github.com/cfoxga/kiosk-satellite-manager/blob/main/docs/supported-devices.md",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/cfoxga/kiosk-satellite-manager/issues",

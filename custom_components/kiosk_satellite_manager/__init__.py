@@ -53,6 +53,8 @@ from .capability_report import CapabilityReportCollector
 from .device_catalog import NoApprovedRecipe, require_recipe, validate_catalog
 from .install_recipes import NAME_SOURCE_SECURE_BLUETOOTH
 from .onboarding_plan import build_onboarding_plan
+from .panel import async_register_panel, async_remove_panel
+from .websocket_api import async_register_websocket_command
 from .const import (
     BACKUP_CHECK_INTERVAL_MIN,
     CONF_HOST,
@@ -414,6 +416,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     (async_setup_component) is still holding open.
     """
     fleet.mark_domain_loading(hass)
+    async_register_websocket_command(hass)
     # KSM-BEHAVE-183: reload each Portal's page once this HA start.
     portal_reload.async_setup(hass)
 
@@ -613,6 +616,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # KSM-BEHAVE-178: one registry listener for every device's Area repair.
         entry.async_on_unload(async_track_area_repairs(hass))
         await hass.config_entries.async_forward_entry_setups(entry, MANAGER_PLATFORMS)
+        await async_register_panel(hass)
         device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, entry.entry_id), entry.entry_id)
         if device is not None and device.name != "KSM Settings":
             dr.async_get(hass).async_update_device(device.id, name="KSM Settings")
@@ -780,6 +784,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             stops.pop(key)()
         if manager:
             hass.data.pop(MANAGER_ENTRY_KEY, None)
+            async_remove_panel(hass)
         elif grouping:
             # By owning entry too: a removed subentry's coordinator outlives it.
             coordinators = hass.data.get(DOMAIN, {})
