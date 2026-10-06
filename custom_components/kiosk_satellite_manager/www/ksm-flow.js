@@ -58,10 +58,9 @@ class KsmFlow extends LitElement {
       const result = args.flow_id ? await this.hass.callApi('GET', `${this._path}/${args.flow_id}`) :
         await this.hass.callApi('POST', this._path, body);
       this._prefill = args.fleet_entry_id;
-      this._onResult(result);
-      if (args.menu_item && result.type === 'menu' && result.menu_options?.includes(args.menu_item)) {
-        await this.submit({next_step_id:args.menu_item});
-      }
+      // Pick the requested menu item directly: submit() refuses while open() is busy.
+      this._onResult(args.menu_item && result.type === 'menu' && result.menu_options?.includes(args.menu_item) ?
+        await this.hass.callApi('POST', `${this._path}/${result.flow_id}`, {next_step_id:args.menu_item}) : result);
       this._unsub = await this.hass.connection.subscribeEvents((event) => {
         if (event.data?.flow_id === this.flow?.flow_id && this.flow?.type === 'progress') this.refresh();
       }, 'data_entry_flow_progressed');
