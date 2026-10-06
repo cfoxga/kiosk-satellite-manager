@@ -263,7 +263,8 @@ async def test_manager_options_mask_password_preserve_blank_and_reject_bad_url(h
     """[KSM-TEST-142] Secret edits preserve blank and URL must be absolute HTTP(S)."""
     manager = await _manager(hass, options={CONF_PASSWORD: "saved-secret", "home_launcher": True})
     result = await hass.config_entries.options.async_init(manager.entry_id)
-    assert result["step_id"] == "init"
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "settings"})
+    assert result["step_id"] == "settings"
     password_field = next(k for k in result["data_schema"].schema if k == CONF_PASSWORD)
     assert result["data_schema"].schema[password_field].config["type"] == "password"
     assert password_field.default is vol.UNDEFINED
@@ -287,6 +288,7 @@ async def test_options_reject_revoked_token_and_device_entry(hass):
     """[KSM-TEST-138/142/165] Device entry sees only its own credential form."""
     manager = await _manager(hass)
     result = await hass.config_entries.options.async_init(manager.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "settings"})
     data = result["data_schema"]({})
     data.update({CONF_HA_URL: "https://ha.example.test", CONF_TOKEN_MODE: "revoked"})
     result = await hass.config_entries.options.async_configure(result["flow_id"], data)
@@ -313,6 +315,7 @@ async def test_options_accept_selected_token_id_and_new_password(hass):
     token = SimpleNamespace(id="token-id", token_type="long_lived_access_token")
     with patch.object(hass.auth, "async_get_refresh_token", return_value=token):
         result = await hass.config_entries.options.async_init(manager.entry_id)
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "settings"})
         data = result["data_schema"]({})
         data.update({
             CONF_HA_URL: "https://ha.example.test", CONF_TOKEN_MODE: "token-id",
@@ -625,6 +628,7 @@ async def test_auto_update_all_switch_defaults_off_and_touches_only_manager(hass
     assert hass.states.get(_entity(hass, device.entry, "auto_update")).state == "off"
 
     result = await hass.config_entries.options.async_init(manager.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "settings"})
     data = result["data_schema"]({})
     data.update({CONF_HA_URL: "https://ha.example.test", CONF_TOKEN_MODE: TOKEN_MODE_AUTO})
     result = await hass.config_entries.options.async_configure(result["flow_id"], data)
@@ -702,6 +706,7 @@ async def test_manager_options_offer_hide_follower_updates_off_by_default(hass):
     """[KSM-TEST-259] KSM-BEHAVE-133: the option exists, defaults off, and saves."""
     manager = await _manager(hass)
     result = await hass.config_entries.options.async_init(manager.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "settings"})
     key = next(k for k in result["data_schema"].schema if k == "hide_follower_updates")
     assert key.default() is False
     data = result["data_schema"]({})
@@ -739,6 +744,7 @@ async def test_install_version_offers_latest_then_cached_versions(hass, release_
     manager = await _manager(hass, options={"target_version": "2026.9.10"})
     with _cache_versions(tmp_path, "2026.9.86", "2026.9.100", "2026.9.88"):
         result = await hass.config_entries.options.async_init(manager.entry_id)
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "settings"})
     default, options = _target_options(result)
     assert options == [
         ("latest", "Latest"), ("2026.9.100", "2026.9.100 (downloaded)"),
@@ -770,6 +776,7 @@ async def test_pinned_version_is_every_device_install_target(hass, release_check
 
     with _cache_versions(tmp_path, "2026.9.86", "2026.9.88"):
         result = await hass.config_entries.options.async_init(manager.entry_id)
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "settings"})
         data = result["data_schema"]({})
         data.update({
             CONF_HA_URL: "https://ha.example.test", CONF_TOKEN_MODE: TOKEN_MODE_AUTO,
@@ -831,6 +838,7 @@ async def test_install_version_list_fills_to_five_from_the_release_check(hass, r
     manager = await _manager(hass, options={"target_version": "2026.9.91"})
     with _cache_versions(tmp_path, "2026.9.88"):
         result = await hass.config_entries.options.async_init(manager.entry_id)
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "settings"})
     default, options = _target_options(result)
     assert options == [
         ("latest", "Latest"), ("2026.9.92", "2026.9.92"), ("2026.9.91", "2026.9.91"),
@@ -840,6 +848,7 @@ async def test_install_version_list_fills_to_five_from_the_release_check(hass, r
     assert default == "2026.9.91"
     with _cache_versions(tmp_path, *(f"2026.9.{n}" for n in (80, 81, 82, 83))):
         result = await hass.config_entries.options.async_init(manager.entry_id)
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "settings"})
     assert [v for v, _ in _target_options(result)[1]] == [
         "latest", "2026.9.88", "2026.9.83", "2026.9.82", "2026.9.81", "2026.9.80", "2026.9.70",
     ]

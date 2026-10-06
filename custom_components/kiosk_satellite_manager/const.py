@@ -54,6 +54,27 @@ CONF_HA_URL: Final = "ha_url"
 CONF_TLS_SPKI: Final = "tls_spki_sha256"
 CONF_LE_CERTIFICATE_HOSTNAME: Final = "le_certificate_hostname"
 CONF_LE_CERTIFICATE_FINGERPRINT: Final = "le_certificate_fingerprint"
+# KSM-BEHAVE-203 (#200): Certificates settings, in the manager entry's data.
+CONF_ACME_EMAIL: Final = "acme_email"
+CONF_ACME_DNS_PROVIDER: Final = "acme_dns_provider"
+CONF_ACME_DNS_TOKEN: Final = "acme_dns_token"
+CONF_ACME_ACCOUNT_KEY: Final = "acme_account_key"
+CONF_ACME_ACCOUNT_URL: Final = "acme_account_url"
+DNS_PROVIDER_CLOUDFLARE: Final = "cloudflare"
+ACME_DIRECTORY_URL: Final = "https://acme-v02.api.letsencrypt.org/directory"
+# KSM-BEHAVE-205/206: one device's KSM-issued certificate, in its own data.
+CONF_ACME_HOSTNAME: Final = "acme_hostname"
+CONF_ACME_CERTIFICATE: Final = "acme_certificate"
+CONF_ACME_PRIVATE_KEY: Final = "acme_private_key"
+CONF_ACME_FINGERPRINT: Final = "acme_fingerprint"
+CONF_ACME_EXPIRES: Final = "acme_expires"
+# KSM-BEHAVE-205/207: an issued certificate and key saved before their import,
+# so a device left serving them is adopted and nothing is issued again.
+CONF_ACME_PENDING: Final = "acme_pending"
+ACME_DEVICE_FIELDS: Final = (
+    CONF_ACME_HOSTNAME, CONF_ACME_CERTIFICATE, CONF_ACME_PRIVATE_KEY,
+    CONF_ACME_FINGERPRINT, CONF_ACME_EXPIRES, CONF_ACME_PENDING,
+)
 # KSM-BEHAVE-152: the Private DNS mode an install recipe turned off ("" when
 # unset), restored on uninstall. Absent when KSM changed nothing.
 CONF_PRIVATE_DNS_PRIOR: Final = "private_dns_prior"

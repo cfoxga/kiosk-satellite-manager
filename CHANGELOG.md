@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- KSM now issues and renews each kiosk's own Let's Encrypt certificate (#200), so Remote
+  Administration opens at the kiosk's own name with no warning, and Kiosk Satellite's "By name" and
+  "Switch kiosk" links use that name. Set it up once under **Certificates** in Global Settings
+  (account email and a Cloudflare API token with DNS edit rights), then choose **Let's Encrypt
+  certificate (issued by KSM)** under a device's **Use HTTPS**. Each kiosk gets a certificate for
+  its name alone with its own private key, which renewals keep, so its trust pin never changes.
+  Renewal runs every six hours from 30 days before expiry; a repair appears when one has failed
+  with under 21 days left. KSM no longer uses Home Assistant's Let's Encrypt add-on, and kiosks on
+  the old shared certificate move to their own once Certificates is set up; until then a repair
+  asks for it.
+
 - The panel's device title now shows **HA Device** and **Web UI** as clickable badges, and a fleet's title shows a **Web UI** badge for its leader (#199). Web UI links now use the kiosk's DNS name: the configured host when it is a name, else that IP's reverse-DNS name, falling back to the IP. Fleets read just **Fleet** in the tree. The in-panel embedded Web UI and its proxy are removed.
 
 - Strengthened the failed add-device flow test to check that no kiosk token or user remains after a rejected settings write. It now starts Home Assistant's HTTP dependency before counting tokens, so the HTTP content token cannot look like a leaked kiosk credential (#197).

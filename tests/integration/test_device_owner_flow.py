@@ -386,13 +386,17 @@ async def test_owner_failure_aborts_with_reason_and_restores(hass, device):
     assert SECRET not in str(result)
 
 
-async def test_manager_options_are_not_a_menu(hass):
-    """[KSM-TEST-170] Negative: the manager entry keeps its settings form."""
+async def test_manager_options_are_not_the_device_menu(hass):
+    """[KSM-TEST-170] Negative: the manager entry's menu is Settings and
+    Certificates (KSM-BEHAVE-203), never the device menu."""
     manager = MockConfigEntry(domain=DOMAIN, title="KSM", data={"entry_type": "manager"})
     manager.add_to_hass(hass)
     result = await hass.config_entries.options.async_init(manager.entry_id)
+    assert result["type"] == data_entry_flow.FlowResultType.MENU
+    assert result["menu_options"] == ["settings", "certificates"]
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "settings"})
     assert result["type"] == data_entry_flow.FlowResultType.FORM
-    assert result["step_id"] == "init"
+    assert result["step_id"] == "settings"
 
 
 async def test_enrollment_holds_the_entry_install_lock(hass, device):

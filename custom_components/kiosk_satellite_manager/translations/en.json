@@ -150,22 +150,9 @@
       },
       "init": {
         "title": "Configure Kiosk Satellite Manager",
-        "description": "Install version and backup settings apply to every device now; the other settings apply to future devices only. Leave the password empty to retain it. A backup period of 0 turns automatic backups off.",
-        "data": {
-          "existing_install_action": "Existing installation",
-          "auto_update": "Auto-update new devices",
-          "esphome_new_devices": "Enable ESPHome",
-          "hide_follower_updates": "Hide follower updates",
-          "password": "Kiosk Satellite password",
-          "ha_url": "Home Assistant URL",
-          "token_mode": "Home Assistant credential",
-          "onboarding_mode": "Onboarding mode",
-          "target_version": "Install version",
-          "backup_interval_hours": "Automatic backup period (hours)",
-          "backup_keep": "Backups to keep per device"
-        },
-        "data_description": {
-          "target_version": "Latest follows the newest release. A downloaded version becomes what every device installs, so an upgrade can be tested. Devices only move forward; Kiosk Satellite refuses downgrades."
+        "menu_options": {
+          "settings": "Settings",
+          "certificates": "Certificates"
         }
       },
       "device_menu": {
@@ -202,29 +189,59 @@
       },
       "device_https_enable": {
         "title": "Use HTTPS for this device",
-        "description": "Choose the device's self-signed certificate or the certificate from Home Assistant's Let's Encrypt add-on. The Let's Encrypt choice needs a Portal DNS name. If HA's certificate doesn't cover it yet, KSM adds it to the add-on and runs the add-on to reissue the certificate first (a few minutes); if that fails, the add-on's domains are put back. HA's certificate and private key will be shared with this device; the add-on continues to renew them. KSM checks the certificate before changing the device and syncs later renewals.\n\nKSM switches the device to HTTPS on port 2324 and pins its key. HTTP stops working. A browser warns about the self-signed choice, while a valid Let's Encrypt certificate avoids that warning.\n\nNeeds Kiosk Satellite 2026.9.78 or later.",
+        "description": "Choose the device's self-signed certificate or a Let's Encrypt certificate that KSM issues for this device. The Let's Encrypt choice needs the device's public DNS name and the Certificates settings in Global Settings. KSM gives the device its own certificate, carrying only that name and its own private key, and renews it automatically.\n\nKSM switches the device to HTTPS on port 2324 and pins its key. HTTP stops working. A browser warns about the self-signed choice, while the Let's Encrypt certificate avoids that warning.\n\nNeeds Kiosk Satellite 2026.9.78 or later.",
         "data": {
           "confirm": "Switch this device to HTTPS",
           "certificate_source": "Certificate source",
-          "certificate_hostname": "Portal DNS name for Let's Encrypt"
+          "certificate_hostname": "Device DNS name for Let's Encrypt"
         }
       },
       "device_https_disable": {
         "title": "Switch this device back to HTTP",
-        "description": "This device is managed over pinned HTTPS. Choose whether to switch back to HTTP or install HA's Let's Encrypt certificate without turning HTTPS off. For Let's Encrypt, enter the Portal's DNS name; if HA's certificate doesn't cover it yet, KSM adds it to the add-on and reissues the certificate first. HA's certificate and private key will be shared with this device and KSM will sync later renewals.\n\nSwitching to HTTP sends future device credentials in plaintext on your network.",
+        "description": "This device is managed over pinned HTTPS. Choose whether to switch back to HTTP or install a Let's Encrypt certificate that KSM issues for this device, without turning HTTPS off. For Let's Encrypt, enter the device's public DNS name; it needs the Certificates settings in Global Settings.\n\nSwitching to HTTP sends future device credentials in plaintext on your network, and removes the device's certificate from KSM.",
         "data": {
           "confirm": "Apply this HTTPS choice",
           "https_action": "Action",
-          "certificate_hostname": "Portal DNS name for Let's Encrypt"
+          "certificate_hostname": "Device DNS name for Let's Encrypt"
         }
       },
-      "le_reissue": {
-        "title": "Reissuing HA's certificate",
-        "description": "Adding {hostname} to the Let's Encrypt add-on and reissuing HA's certificate."
+      "acme_issue": {
+        "title": "Getting a certificate",
+        "description": "Getting a Let's Encrypt certificate for {hostname}. This usually takes under a minute and can take up to five."
+      },
+      "settings": {
+        "title": "Configure Kiosk Satellite Manager",
+        "description": "Install version and backup settings apply to every device now; the other settings apply to future devices only. Leave the password empty to retain it. A backup period of 0 turns automatic backups off.",
+        "data": {
+          "existing_install_action": "Existing installation",
+          "auto_update": "Auto-update new devices",
+          "esphome_new_devices": "Enable ESPHome",
+          "hide_follower_updates": "Hide follower updates",
+          "password": "Kiosk Satellite password",
+          "ha_url": "Home Assistant URL",
+          "token_mode": "Home Assistant credential",
+          "onboarding_mode": "Onboarding mode",
+          "target_version": "Install version",
+          "backup_interval_hours": "Automatic backup period (hours)",
+          "backup_keep": "Backups to keep per device"
+        },
+        "data_description": {
+          "target_version": "Latest follows the newest release. A downloaded version becomes what every device installs, so an upgrade can be tested. Devices only move forward; Kiosk Satellite refuses downgrades."
+        }
+      },
+      "certificates": {
+        "title": "Certificates",
+        "description": "KSM gets a Let's Encrypt certificate for each device that chooses it under Use HTTPS, and renews it automatically. It proves the device names with a DNS record, so it needs an API token for the DNS provider of your zone.\n\nCreate a Cloudflare API token with **Zone → DNS → Edit** on the zones that hold your devices' names. Leave the token empty to keep the saved one. Remove deletes the saved token and stops issuing and renewing certificates; installed certificates keep working until they expire.",
+        "data": {
+          "acme_email": "Let's Encrypt account email",
+          "acme_dns_provider": "DNS provider",
+          "acme_dns_token": "Cloudflare API token",
+          "acme_remove": "Remove the saved token"
+        }
       }
     },
     "progress": {
-      "le_reissue": "Adding {hostname} to the Let's Encrypt add-on and reissuing HA's certificate. This can take a few minutes."
+      "acme_issue": "Getting a Let's Encrypt certificate for {hostname}. This usually takes under a minute and can take up to five."
     },
     "error": {
       "invalid_device_name": "Enter a name containing at least one letter or number",
@@ -236,7 +253,11 @@
       "cannot_connect": "Kiosk Satellite did not answer over HTTPS on port 2324 at that host",
       "token_not_found": "Selected token is unavailable",
       "invalid_ha_url": "Enter an absolute HTTP or HTTPS URL",
-      "confirm_required": "Tick the box to confirm, or close this dialog to cancel"
+      "confirm_required": "Tick the box to confirm, or close this dialog to cancel",
+      "invalid_email": "Enter a valid email address.",
+      "invalid_token": "Cloudflare rejected this API token, or it is not active.",
+      "no_zones": "This API token can see no Cloudflare zone. Give it Zone → DNS → Edit on the zones that hold your devices' names.",
+      "acme_registration_failed": "Let's Encrypt did not create the account. Try again later."
     },
     "abort": {
       "device_rename_done": "Rename completed: {result}",
@@ -260,15 +281,13 @@
       "https_disabled": "This device is back on plaintext HTTP. Its pinned HTTPS key was removed.",
       "https_unsupported": "This device's Kiosk Satellite is too old for HTTPS (needs 2026.9.78 or later). Nothing was changed.",
       "https_failed": "The HTTPS operation did not complete: {reason}. Check the device's current certificate before retrying.",
-      "https_certificate_unavailable": "Cannot use HA's Let's Encrypt certificate: {reason}. No change was made to the device.",
-      "https_password_required": "Set this device's Kiosk Satellite password first (Update Kiosk Satellite password)."
+      "https_certificate_unavailable": "Cannot get a Let's Encrypt certificate: {reason}. No certificate was installed on the device.",
+      "https_password_required": "Set this device's Kiosk Satellite password first (Update Kiosk Satellite password).",
+      "acme_not_configured": "Set up Certificates in Global Settings first (KSM Settings → Configure → Certificates). No change was made to the device.",
+      "hostname_in_use": "Another managed device already uses {hostname}. Each device needs its own DNS name. No change was made to the device."
     }
   },
   "issues": {
-    "le_certificate_sync_failed": {
-      "title": "{name}: Portal HTTPS certificate could not be renewed",
-      "description": "KSM could not copy Home Assistant's current Let's Encrypt certificate to {name} ({host}). The device keeps its last trusted HTTPS certificate. Check the Let's Encrypt add-on, the Portal hostname in Use HTTPS, and device connectivity; KSM retries every six hours."
-    },
     "area_required": {
       "title": "{name} has no Area",
       "fix_flow": {
@@ -358,6 +377,55 @@
     "factory_reset": {
       "title": "{name}: Kiosk Satellite is the Device Owner",
       "description": "Kiosk Satellite is the Device Owner on {name}, so Android will not uninstall it. A factory reset is required to remove it.\n\nTo reset by hand, power the device up with Volume Up and Volume Down held for 10 seconds. A factory reset erases everything on the device: Kiosk Satellite, every setting, and every account and sign-in."
+    },
+    "le_certificate_sync_failed": {
+      "title": "{name}: Portal HTTPS certificate could not be renewed",
+      "description": "KSM could not copy Home Assistant's current Let's Encrypt certificate to {name} ({host}). The device keeps its last trusted HTTPS certificate. Set up Certificates in Global Settings so KSM can give the device its own certificate, or check the device's connectivity; KSM retries every six hours."
+    },
+    "acme_setup_required": {
+      "title": "Set up device certificates",
+      "fix_flow": {
+        "step": {
+          "certificates": {
+            "title": "Certificates",
+            "description": "KSM gets a Let's Encrypt certificate for each device that chooses it under Use HTTPS, and renews it automatically. It proves the device names with a DNS record, so it needs an API token for the DNS provider of your zone.\n\nCreate a Cloudflare API token with **Zone → DNS → Edit** on the zones that hold your devices' names. Leave the token empty to keep the saved one. Remove deletes the saved token and stops issuing and renewing certificates; installed certificates keep working until they expire.",
+            "data": {
+              "acme_email": "Let's Encrypt account email",
+              "acme_dns_provider": "DNS provider",
+              "acme_dns_token": "Cloudflare API token",
+              "acme_remove": "Remove the saved token"
+            }
+          }
+        },
+        "error": {
+          "invalid_email": "Enter a valid email address.",
+          "invalid_token": "Cloudflare rejected this API token, or it is not active.",
+          "no_zones": "This API token can see no Cloudflare zone. Give it Zone → DNS → Edit on the zones that hold your devices' names.",
+          "acme_registration_failed": "Let's Encrypt did not create the account. Try again later.",
+          "cannot_connect": "Cloudflare could not be reached. Try again."
+        },
+        "abort": {
+          "entry_not_found": "KSM Settings is not configured."
+        }
+      }
+    },
+    "acme_renewal_failed": {
+      "title": "{name}: certificate renewal failed",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Renew the certificate for {name}?",
+            "description": "KSM could not renew the Let's Encrypt certificate for {name}. The device keeps its current certificate until it expires, and KSM retries every six hours. Check the Certificates settings in Global Settings and the device's connectivity, then submit to try again now."
+          }
+        },
+        "abort": {
+          "entry_not_found": "This device is no longer configured in Kiosk Satellite Manager.",
+          "renewal_failed": "The renewal failed again. Check the Certificates settings and the device's connectivity."
+        },
+        "progress": {
+          "acme_renew": "Renewing the certificate. This can take a few minutes; you can close this dialog and the attempt keeps going."
+        }
+      }
     }
   },
   "config_subentries": {
@@ -429,29 +497,29 @@
         },
         "device_https_enable": {
           "title": "Use HTTPS for this device",
-          "description": "Choose the device's self-signed certificate or the certificate from Home Assistant's Let's Encrypt add-on. The Let's Encrypt choice needs a Portal DNS name. If HA's certificate doesn't cover it yet, KSM adds it to the add-on and runs the add-on to reissue the certificate first (a few minutes); if that fails, the add-on's domains are put back. HA's certificate and private key will be shared with this device; the add-on continues to renew them. KSM checks the certificate before changing the device and syncs later renewals.\n\nKSM switches the device to HTTPS on port 2324 and pins its key. HTTP stops working. A browser warns about the self-signed choice, while a valid Let's Encrypt certificate avoids that warning.\n\nNeeds Kiosk Satellite 2026.9.78 or later.",
+          "description": "Choose the device's self-signed certificate or a Let's Encrypt certificate that KSM issues for this device. The Let's Encrypt choice needs the device's public DNS name and the Certificates settings in Global Settings. KSM gives the device its own certificate, carrying only that name and its own private key, and renews it automatically.\n\nKSM switches the device to HTTPS on port 2324 and pins its key. HTTP stops working. A browser warns about the self-signed choice, while the Let's Encrypt certificate avoids that warning.\n\nNeeds Kiosk Satellite 2026.9.78 or later.",
           "data": {
             "confirm": "Switch this device to HTTPS",
             "certificate_source": "Certificate source",
-            "certificate_hostname": "Portal DNS name for Let's Encrypt"
+            "certificate_hostname": "Device DNS name for Let's Encrypt"
           }
         },
         "device_https_disable": {
           "title": "Switch this device back to HTTP",
-          "description": "This device is managed over pinned HTTPS. Choose whether to switch back to HTTP or install HA's Let's Encrypt certificate without turning HTTPS off. For Let's Encrypt, enter the Portal's DNS name; if HA's certificate doesn't cover it yet, KSM adds it to the add-on and reissues the certificate first. HA's certificate and private key will be shared with this device and KSM will sync later renewals.\n\nSwitching to HTTP sends future device credentials in plaintext on your network.",
+          "description": "This device is managed over pinned HTTPS. Choose whether to switch back to HTTP or install a Let's Encrypt certificate that KSM issues for this device, without turning HTTPS off. For Let's Encrypt, enter the device's public DNS name; it needs the Certificates settings in Global Settings.\n\nSwitching to HTTP sends future device credentials in plaintext on your network, and removes the device's certificate from KSM.",
           "data": {
             "confirm": "Apply this HTTPS choice",
             "https_action": "Action",
-            "certificate_hostname": "Portal DNS name for Let's Encrypt"
+            "certificate_hostname": "Device DNS name for Let's Encrypt"
           }
         },
-        "le_reissue": {
-          "title": "Reissuing HA's certificate",
-          "description": "Adding {hostname} to the Let's Encrypt add-on and reissuing HA's certificate."
+        "acme_issue": {
+          "title": "Getting a certificate",
+          "description": "Getting a Let's Encrypt certificate for {hostname}. This usually takes under a minute and can take up to five."
         }
       },
       "progress": {
-        "le_reissue": "Adding {hostname} to the Let's Encrypt add-on and reissuing HA's certificate. This can take a few minutes."
+        "acme_issue": "Getting a Let's Encrypt certificate for {hostname}. This usually takes under a minute and can take up to five."
       },
       "error": {
         "invalid_device_name": "Enter a name containing at least one letter or number",
@@ -488,8 +556,10 @@
         "https_disabled": "This device is back on plaintext HTTP. Its pinned HTTPS key was removed.",
         "https_unsupported": "This device's Kiosk Satellite is too old for HTTPS (needs 2026.9.78 or later). Nothing was changed.",
         "https_failed": "The HTTPS operation did not complete: {reason}. Check the device's current certificate before retrying.",
-        "https_certificate_unavailable": "Cannot use HA's Let's Encrypt certificate: {reason}. No change was made to the device.",
-        "https_password_required": "Set this device's Kiosk Satellite password first (Update Kiosk Satellite password)."
+        "https_certificate_unavailable": "Cannot get a Let's Encrypt certificate: {reason}. No certificate was installed on the device.",
+        "https_password_required": "Set this device's Kiosk Satellite password first (Update Kiosk Satellite password).",
+        "acme_not_configured": "Set up Certificates in Global Settings first (KSM Settings → Configure → Certificates). No change was made to the device.",
+        "hostname_in_use": "Another managed device already uses {hostname}. Each device needs its own DNS name. No change was made to the device."
       }
     }
   }

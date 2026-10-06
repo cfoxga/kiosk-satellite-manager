@@ -250,3 +250,20 @@ async def test_web_ui_address_by_name_and_fleet_badge(hass):
         **current.data, "_ksm_fleet_status": {**current.data["_ksm_fleet_status"], "leading": False}})
     fleet_node = next(n for n in build_tree(hass)["children"] if n["kind"] == "fleet")
     assert fleet_node["web_ui_url"] is None
+
+
+def test_web_ui_url_prefers_the_ksm_certificate_hostname():
+    """[KSM-TEST-406] A pinned device with a KSM certificate links its
+    certificate name ahead of the host and its PTR name; without a pin, or
+    without that name, the link is unchanged."""
+    from custom_components.kiosk_satellite_manager.websocket_api import _web_ui_url
+
+    ptr = {"dns_name": {"host": "192.0.2.43", "name": "ptr.example.com"}}
+
+    def device(**data):
+        return SimpleNamespace(data={"host": "192.0.2.43", **data}, fleet_status=ptr)
+
+    assert _web_ui_url(device(tls_spki_sha256="a" * 64, acme_hostname="mini.cfoxga.com")) \
+        == "https://mini.cfoxga.com:2324"
+    assert _web_ui_url(device(tls_spki_sha256="a" * 64)) == "https://ptr.example.com:2324"
+    assert _web_ui_url(device(acme_hostname="mini.cfoxga.com")) == "http://ptr.example.com:2324"

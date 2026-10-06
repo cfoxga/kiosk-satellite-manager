@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
+from functools import partial
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -67,6 +68,7 @@ from .const import (
     CONF_PASSWORD,
     CONF_PORT,
     CONF_TLS_SPKI,
+    CONF_ACME_HOSTNAME,
     CONF_LE_CERTIFICATE_HOSTNAME,
     DOMAIN,
     HEALTH_SCAN_INTERVAL_MIN,
@@ -78,7 +80,7 @@ from .const import (
     RENAME_API_KEY,
     SIGNAL_MANAGER_OPTIONS_UPDATED,
 )
-from . import auto_update, config_backup, fleet, follower_updates, le_certificate, le_certificate_sync, meta_setup, portal_reload, support_request, update_failure
+from . import acme_renewal, auto_update, config_backup, fleet, follower_updates, meta_setup, portal_reload, support_request, update_failure
 from .credentials import (
     TokenCredential,
     async_reconcile_kiosk_users,
@@ -86,7 +88,7 @@ from .credentials import (
 )
 from .device_repairs import (
     apply_dashboard_dns, async_resolve_device_model, async_track_area_repairs, clear_device_repairs,
-    le_certificate_sync_issue_id, needs_model_resolution,
+    needs_model_resolution,
     sync_device_support, take_dashboard_dns, tls_disabled_issue_id, tls_issue_id,
 )
 from .ks_api import ReleaseInfo, latest_release_info
@@ -548,30 +550,14 @@ async def _async_setup_device(hass: HomeAssistant, entry: ConfigEntry | fleet.De
     hass.data.setdefault(_AUTO_UPDATE_STOPS_KEY, {})[_auto_update_key(entry)] = (
         auto_update.async_setup(hass, entry, coordinator)
     )
-    async def _sync_ha_certificate(_now=None) -> None:
-        if not _device_present(entry) or not entry.data.get(CONF_LE_CERTIFICATE_HOSTNAME):
-            return
-        try:
-            await le_certificate_sync.async_sync_device(hass, entry)
-        except (le_certificate.CertificateUnavailable, KsApiError,
-                aiohttp.ClientError, TimeoutError, ValueError, KeyError) as err:
-            _LOGGER.warning("HA certificate sync failed for %s: %s", entry.title, err)
-            ir.async_create_issue(
-                hass, DOMAIN, le_certificate_sync_issue_id(entry.entry_id),
-                is_fixable=False, severity=ir.IssueSeverity.ERROR,
-                translation_key="le_certificate_sync_failed",
-                translation_placeholders={"name": entry.title, "host": host},
-            )
-        else:
-            ir.async_delete_issue(hass, DOMAIN, le_certificate_sync_issue_id(entry.entry_id))
-
-    entry.async_on_unload(async_track_time_interval(
-        hass, _sync_ha_certificate, timedelta(hours=6),
-        name=f"{DOMAIN}_certificate_sync_{host}",
-    ))
-    if entry.data.get(CONF_LE_CERTIFICATE_HOSTNAME):
+    # KSM-BEHAVE-206/207: renew or migrate this device's certificate on setup;
+    # the manager's six-hour tick covers it afterwards.
+    if _device_present(entry) and (
+        entry.data.get(CONF_ACME_HOSTNAME) or entry.data.get(CONF_LE_CERTIFICATE_HOSTNAME)
+    ):
         entry.async_create_background_task(
-            hass, _sync_ha_certificate(), f"{DOMAIN}_initial_certificate_sync_{host}"
+            hass, acme_renewal.async_device_tick(hass, entry),
+            f"{DOMAIN}_initial_certificate_check_{host}",
         )
     if isinstance(entry, fleet.DeviceEntry):
         entry.async_on_unload(coordinator.async_add_listener(
@@ -618,6 +604,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await async_reconcile_kiosk_users(hass)
         await _async_ensure_release_coordinator(hass)
         entry.async_on_unload(entry.add_update_listener(_async_manager_options_updated))
+        entry.async_on_unload(async_track_time_interval(
+            hass, partial(acme_renewal.async_tick, hass), acme_renewal.CHECK_INTERVAL,
+            name=f"{DOMAIN}_certificate_renewal",
+        ))
+        acme_renewal.sync_setup_repair(hass)
         entry.async_on_unload(follower_updates.async_setup(hass))
         # KSM-BEHAVE-178: one registry listener for every device's Area repair.
         entry.async_on_unload(async_track_area_repairs(hass))

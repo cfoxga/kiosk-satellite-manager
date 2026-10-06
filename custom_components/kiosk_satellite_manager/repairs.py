@@ -15,6 +15,7 @@ capability report over ADB and shows a pre-filled support-request link.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import aiohttp
@@ -25,10 +26,10 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import area_registry as ar, device_registry as dr, issue_registry as ir, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from . import follower_offers, ks_api_client, fleet, support_request
+from . import acme_renewal, follower_offers, ks_api_client, fleet, support_request
 from .adb_client import AdbAuthPending, AdbConnectFailed, AdbKeySecurityError
 from .const import CONF_AREA_ID, CONF_HOST, CONF_TLS_SPKI, DOMAIN
-from .device_repairs import SUPPORT_REQUESTED, area_required_issue_id, device_support_issue_id, tls_disabled_issue_id
+from .device_repairs import SUPPORT_REQUESTED, acme_renewal_issue_id, area_required_issue_id, device_support_issue_id, tls_disabled_issue_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -126,14 +127,88 @@ class TlsDisabledFlow(RepairsFlow):
             await ks_api_client.get_health(async_get_clientsession(self.hass), host, pin=None)
         except (aiohttp.ClientError, TimeoutError, ValueError):
             return self.async_abort(reason="cannot_connect")
-        fleet.update_device(
-            self.hass, entry, data={k: v for k, v in entry.data.items() if k != CONF_TLS_SPKI}
-        )
+        # KSM-BEHAVE-208: no HTTPS, so no certificate to renew either.
+        fleet.update_device(self.hass, entry, data=acme_renewal.strip_certificate(
+            {k: v for k, v in entry.data.items() if k != CONF_TLS_SPKI}
+        ))
         ir.async_delete_issue(self.hass, DOMAIN, tls_disabled_issue_id(self._entry_id))
+        ir.async_delete_issue(self.hass, DOMAIN, acme_renewal_issue_id(self._entry_id))
         coordinator = self.hass.data.get(entry.domain, {}).get(entry.entry_id)
         if coordinator is not None:
             await coordinator.async_request_refresh()
         return self.async_create_entry(data={})
+
+
+class AcmeSetupFlow(RepairsFlow):
+    """KSM-BEHAVE-207: legacy devices wait for the Certificates settings."""
+
+    async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
+        return await self.async_step_certificates()
+
+    async def async_step_certificates(self, user_input: dict | None = None) -> FlowResult:
+        entry = acme_renewal.manager_entry(self.hass)
+        if entry is None:
+            return self.async_abort(reason="entry_not_found")
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            errors = await acme_renewal.async_save_settings(self.hass, entry, user_input)
+            if not errors:
+                return self.async_create_entry(data={})
+        return self.async_show_form(
+            step_id="certificates", data_schema=acme_renewal.settings_schema(entry.data),
+            errors=errors,
+        )
+
+
+class AcmeRenewalFailedFlow(RepairsFlow):
+    """KSM-BEHAVE-206: retry one device's certificate renewal now."""
+
+    def __init__(self, entry_id: str) -> None:
+        self._entry_id = entry_id
+        self._task: asyncio.Task | None = None
+
+    async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
+        return await self.async_step_confirm()
+
+    async def async_step_confirm(self, user_input: dict | None = None) -> FlowResult:
+        entry = fleet.resolve_device(self.hass, self._entry_id)
+        if entry is None:
+            return self.async_abort(reason="entry_not_found")
+        if user_input is None:
+            return self.async_show_form(
+                step_id="confirm", data_schema=vol.Schema({}),
+                description_placeholders={"name": entry.title},
+            )
+        # Issuance can take minutes: run it behind a progress step, and let
+        # closing the dialog leave the attempt running.
+        run = self.hass.async_create_background_task(
+            acme_renewal.async_check_device(self.hass, entry, force=True),
+            f"ksm acme renew {self._entry_id}",
+        )
+        self._task = self.hass.async_create_task(_finished(run))
+        return await self.async_step_renew()
+
+    async def async_step_renew(self, user_input: dict | None = None) -> FlowResult:
+        if not self._task.done():
+            return self.async_show_progress(
+                step_id="renew", progress_action="acme_renew", progress_task=self._task)
+        return self.async_show_progress_done(
+            next_step_id="renewed" if self._task.result() else "renew_failed")
+
+    async def async_step_renewed(self, user_input: dict | None = None) -> FlowResult:
+        return self.async_create_entry(data={})
+
+    async def async_step_renew_failed(self, user_input: dict | None = None) -> FlowResult:
+        return self.async_abort(reason="renewal_failed")
+
+
+async def _finished(task: asyncio.Task) -> bool:
+    """True when `task` installed a certificate; cancelling the waiter never
+    cancels `task`, and an unexpected error is a failed attempt."""
+    await asyncio.wait({task})
+    if task.cancelled() or task.exception() is not None:
+        return False
+    return bool(task.result())
 
 
 class NewFollowerFlow(RepairsFlow):
@@ -221,6 +296,10 @@ async def async_create_fix_flow(
         return NewFollowerFlow(dict(data or {}))
     if issue_id == device_support_issue_id((data or {}).get("entry_id", "")):
         return DeviceSupportFlow((data or {})["entry_id"])
+    if issue_id == acme_renewal.SETUP_ISSUE_ID:
+        return AcmeSetupFlow()
+    if issue_id == acme_renewal_issue_id((data or {}).get("entry_id", "")):
+        return AcmeRenewalFailedFlow((data or {})["entry_id"])
     if issue_id == tls_disabled_issue_id((data or {}).get("entry_id", "")):
         return TlsDisabledFlow((data or {})["entry_id"])
     return TlsCertificateChangedFlow((data or {})["entry_id"])

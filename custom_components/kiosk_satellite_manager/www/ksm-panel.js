@@ -127,7 +127,8 @@ class KsmPanel extends LitElement {
       ${this._button(node,'Update all','update_all')}
       ${this._button(node,'Back up all','backup_all')}
       ${this._switch(node,'Auto-update all','auto_update_all')}
-      <button class="action" @click=${()=>this._flow('options',{entry_id:node.entry_id})}>Settings</button>
+      <button class="action" @click=${()=>this._flow('options',{entry_id:node.entry_id,menu_item:'settings'})}>Settings</button>
+      <button class="action" @click=${()=>this._flow('options',{entry_id:node.entry_id,menu_item:'certificates'})}>Certificates</button>
       <button class="action" @click=${()=>this._flow('config',{fleet_entry_id:'unmanaged'})}>Add device</button>
     </section>`; }
   _fleet(node) { const fleet=node.kind==='fleet'; return html`

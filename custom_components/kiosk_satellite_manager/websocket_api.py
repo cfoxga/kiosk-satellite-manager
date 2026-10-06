@@ -12,7 +12,7 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er, 
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .const import (
-    CONF_ENTRY_TYPE, CONF_HOST, CONF_TLS_SPKI, DOMAIN, ENTRY_TYPE_MANAGER,
+    CONF_ACME_HOSTNAME, CONF_ENTRY_TYPE, CONF_HOST, CONF_TLS_SPKI, DOMAIN, ENTRY_TYPE_MANAGER,
     ENTRY_TYPE_UNMANAGED, HEALTH_PORT,
 )
 from . import fleet
@@ -35,13 +35,17 @@ def _entities(hass, entry_id: str, subentry_id: str | None = None) -> dict:
 
 
 def _web_ui_url(device) -> str | None:
-    """The device's DNS name: its configured host, or that IP's PTR name (KSM-BEHAVE-202)."""
+    """The device's DNS name: its certificate hostname (KSM-BEHAVE-205), its
+    configured host, or that IP's PTR name (KSM-BEHAVE-202)."""
     host = device.data.get(CONF_HOST)
     if not host:
         return None
     looked_up = device.fleet_status.get("dns_name") or {}
     if looked_up.get("host") == host and looked_up.get("name"):
         host = looked_up["name"]
+    # KSM-BEHAVE-205: the name the KSM certificate covers comes first.
+    if device.data.get(CONF_TLS_SPKI) and device.data.get(CONF_ACME_HOSTNAME):
+        host = device.data[CONF_ACME_HOSTNAME]
     scheme = "https" if device.data.get(CONF_TLS_SPKI) else "http"
     return f"{scheme}://{host}:{HEALTH_PORT}"
 

@@ -107,3 +107,23 @@ def test_key_type_ks_cannot_import_is_rejected(tmp_path):
     _write(tmp_path, certificate, key)
     with pytest.raises(module.CertificateUnavailable, match="key type KS cannot import"):
         module.load_for_hostname("test-portal-mini.cfoxga.com", tmp_path)
+
+
+def test_exact_validation_requires_the_name_alone():
+    """[KSM-TEST-404] A KSM-issued certificate must name exactly its hostname:
+    an extra SAN or a wildcard fails `exact`, a single matching SAN passes."""
+    host = "test-portal-mini.cfoxga.com"
+    single = module.validate(*material(names=(host,)), host, exact=True)
+    assert single.not_after > datetime.now(timezone.utc)
+    for names in ((host, "ha.cfoxga.com"), ("*.cfoxga.com",)):
+        with pytest.raises(module.CertificateUnavailable, match="exactly"):
+            module.validate(*material(names=names), host, exact=True)
+    assert module.validate(*material(names=(host, "ha.cfoxga.com")), host).spki_sha256
+
+
+@pytest.mark.parametrize("bad", ["192.0.2.10", "portal.local", "no_dots", ""])
+def test_check_hostname_rejects_what_acme_cannot_issue(bad):
+    """[KSM-TEST-404] Negative: an IP, a `.local` name and a non-DNS name fail."""
+    with pytest.raises(module.CertificateUnavailable):
+        module.check_hostname(bad)
+    assert module.check_hostname(" Portal.CFoxGA.com. ") == "portal.cfoxga.com"

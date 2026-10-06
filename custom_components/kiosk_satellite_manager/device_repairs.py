@@ -43,6 +43,11 @@ def le_certificate_sync_issue_id(device_id: str) -> str:
     return f"le_certificate_sync_failed_{device_id}"
 
 
+def acme_renewal_issue_id(device_id: str) -> str:
+    """KSM-BEHAVE-206: renewing the KSM-issued certificate keeps failing."""
+    return f"acme_renewal_failed_{device_id}"
+
+
 def dashboard_dns_issue_id(device_id: str) -> str:
     return f"dashboard_dns_{device_id}"
 
@@ -264,7 +269,7 @@ def clear_device_repairs(hass: HomeAssistant, device_id: str) -> None:
     """KSM-BEHAVE-154: the device left KSM; its repairs go with it."""
     for issue_id in (
         tls_issue_id(device_id), tls_disabled_issue_id(device_id),
-        le_certificate_sync_issue_id(device_id),
+        le_certificate_sync_issue_id(device_id), acme_renewal_issue_id(device_id),
         dashboard_dns_issue_id(device_id), device_support_issue_id(device_id),
         factory_reset_issue_id(device_id), area_required_issue_id(device_id),
     ):

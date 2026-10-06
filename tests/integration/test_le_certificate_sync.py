@@ -5,15 +5,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.kiosk_satellite_manager import le_certificate, le_certificate_sync
+from custom_components.kiosk_satellite_manager import acme_renewal, le_certificate, le_certificate_sync
 from custom_components.kiosk_satellite_manager.const import (
     CONF_HOST, CONF_PASSWORD, CONF_TLS_SPKI, DOMAIN,
     CONF_LE_CERTIFICATE_HOSTNAME, CONF_LE_CERTIFICATE_FINGERPRINT,
 )
 from custom_components.kiosk_satellite_manager.ks_api_client import KsApiError
 from unittest.mock import MagicMock
-
-import custom_components.kiosk_satellite_manager as integration
 from homeassistant.helpers import issue_registry as ir
 
 from .conftest import init_integration
@@ -83,22 +81,12 @@ async def test_device_without_certificate_selection_is_not_synced(hass, device):
     load.assert_not_called()
 
 
-async def test_setup_and_timer_sync_only_until_unload(hass):
-    """[KSM-TEST-353] The scheduler actually calls renewal sync and is removed on unload."""
+async def test_legacy_device_syncs_on_setup_and_manager_tick(hass):
+    """[KSM-TEST-353/408] Without Certificates settings a legacy device keeps
+    the `/ssl` sync: on its setup and on each manager tick, and a failing
+    sync raises its repair until one succeeds."""
     sync = AsyncMock(return_value=False)
-    callbacks = []
-    cancel = MagicMock()
-    original = integration.async_track_time_interval
-
-    def track(hass_arg, callback, interval, *, name):
-        if "certificate_sync" in name:
-            callbacks.append(callback)
-            return cancel
-        return original(hass_arg, callback, interval, name=name)
-
-    with patch.object(integration, "async_track_time_interval", new=track), patch.object(
-        le_certificate_sync, "async_sync_device", new=sync
-    ), patch(
+    with patch.object(le_certificate_sync, "async_sync_device", new=sync), patch(
         "custom_components.kiosk_satellite_manager.fetch_health",
         new=AsyncMock(return_value={"appVersion": "2026.9.90"}),
     ):
@@ -107,19 +95,19 @@ async def test_setup_and_timer_sync_only_until_unload(hass):
             CONF_LE_CERTIFICATE_HOSTNAME: "test-portal-mini.cfoxga.com",
             CONF_LE_CERTIFICATE_FINGERPRINT: "old",
         })
+        await hass.async_block_till_done(wait_background_tasks=True)
         assert sync.await_count == 1
-        assert len(callbacks) == 1
         sync.side_effect = le_certificate.CertificateUnavailable("certificate expired")
-        await callbacks[0]()
+        await acme_renewal.async_tick(hass)
         assert sync.await_count == 2
         issue_id = f"le_certificate_sync_failed_{ctx.entry.entry_id}"
         assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
         sync.side_effect = None
-        await callbacks[0]()
+        await acme_renewal.async_tick(hass)
         assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
         await hass.config_entries.async_unload(ctx.entry.entry_id)
-        cancel.assert_called_once()
-        assert sync.await_count == 3
+        await acme_renewal.async_tick(hass)
+        assert sync.await_count == 3, "an unloaded device is not synced"
 
 
 def _raise_pin_repair(hass, device):

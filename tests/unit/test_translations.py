@@ -43,7 +43,8 @@ def test_every_inherited_device_step_has_subentry_text():
     renders with no explanation."""
     strings = json.loads((PKG / "strings.json").read_text())
     subentry_steps = set(strings["config_subentries"]["device"]["step"])
-    inherited = _options_flow_step_ids() - {"init"}  # init is the manager-entry form
+    # init (the manager menu), settings and certificates are manager-entry forms
+    inherited = _options_flow_step_ids() - {"init", "settings", "certificates"}
     assert "android9_cleanup" in inherited
     assert inherited <= subentry_steps, sorted(inherited - subentry_steps)
     step = strings["config_subentries"]["device"]["step"]["android9_cleanup"]

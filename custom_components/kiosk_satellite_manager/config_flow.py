@@ -29,6 +29,7 @@ effect -- a wait while the on-device dialog gets tapped.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import re
 from typing import Any
@@ -46,7 +47,8 @@ from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.helpers.network import get_url
 
 from . import (
-    apk_cache, device_owner, esphome_adopt, fleet, ks_api_client, ks_tls, le_addon, le_certificate, meta_setup, support_log,
+    acme_renewal, apk_cache, device_owner, esphome_adopt, fleet, ks_api_client, ks_tls,
+    le_certificate, meta_setup, support_log,
     support_request,
 )
 from .helpers import recent_releases
@@ -63,8 +65,9 @@ from .const import (
     CONF_PACKAGE_VERIFIER_PRIOR,
     CONF_PRIVATE_DNS_PRIOR,
     CONF_TLS_SPKI,
+    CONF_ACME_HOSTNAME,
+    CONF_ACME_PRIVATE_KEY,
     CONF_LE_CERTIFICATE_HOSTNAME,
-    CONF_LE_CERTIFICATE_FINGERPRINT,
     CONF_DEVICE_PROFILE,
     CONF_REPLACE_LAUNCHER,
     CONF_BACKUP_INTERVAL_HOURS,
@@ -106,7 +109,7 @@ from .device_catalog import NoApprovedRecipe, require_recipe, resolve_catalog_en
 from .credentials import TokenCredential, async_revoke_owned_credential
 from .device_models import DeviceFacts, collect_identity_facts
 from .device_repairs import (
-    le_certificate_sync_issue_id, stash_dashboard_dns, tls_disabled_issue_id, tls_issue_id,
+    acme_renewal_issue_id, le_certificate_sync_issue_id, stash_dashboard_dns, tls_disabled_issue_id, tls_issue_id,
 )
 from .install import (
     DashboardDnsCheck,
@@ -265,6 +268,15 @@ def _token_options(hass) -> list[selector.SelectOptionDict]:
     return options
 
 
+def _dns_name_or_empty(host: str) -> str:
+    """KSM-BEHAVE-205: prefill the certificate name only from a DNS host."""
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return host
+    return ""
+
+
 async def _shielded(task: asyncio.Task):
     """Await `task`; cancelling the waiter never cancels `task` (asyncio.wait
     doesn't, and unlike asyncio.shield it logs nothing when `task` then fails)."""
@@ -275,10 +287,11 @@ async def _shielded(task: asyncio.Task):
 class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
     """Manager defaults or one device's stored Kiosk Satellite password."""
 
-    # KSM-BEHAVE-182 add-on reissue state; class defaults also serve the subentry flow.
-    _le_pending: tuple[str, dict, str] | None = None
-    _le_task: asyncio.Task | None = None
-    _le_error: str = ""
+    # KSM-BEHAVE-205 issuance state; class defaults also serve the subentry flow.
+    _acme_pending: tuple[str, str] | None = None
+    _acme_task: asyncio.Task | None = None
+    _acme_material: le_certificate.CertificateMaterial | None = None
+    _acme_error: str = ""
 
     def __init__(self, entry: config_entries.ConfigEntry) -> None:
         self._entry = entry
@@ -288,6 +301,23 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             return self.async_abort(reason="not_supported")
         if self._entry.data.get(CONF_ENTRY_TYPE) != ENTRY_TYPE_MANAGER:
             return await self.async_step_device_menu()
+        # KSM-BEHAVE-203: Settings and Certificates.
+        return self.async_show_menu(step_id="init", menu_options=["settings", "certificates"])
+
+    async def async_step_certificates(self, user_input: dict | None = None) -> FlowResult:
+        """KSM-BEHAVE-203: the ACME account and DNS provider for device certificates."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            errors = await acme_renewal.async_save_settings(self.hass, self._entry, user_input)
+            if not errors:
+                return self.async_create_entry(title="", data=dict(self._entry.options))
+        return self.async_show_form(
+            step_id="certificates",
+            data_schema=acme_renewal.settings_schema(self._entry.data),
+            errors=errors,
+        )
+
+    async def async_step_settings(self, user_input: dict | None = None) -> FlowResult:
         saved = self._entry.options
         errors = {}
         if user_input is not None:
@@ -364,7 +394,7 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
                 CONF_BACKUP_KEEP, DEFAULT_BACKUP_KEEP
             )): vol.All(vol.Coerce(int), vol.Range(min=1, max=1000)),
         }
-        return self.async_show_form(step_id="init", data_schema=vol.Schema(fields), errors=errors)
+        return self.async_show_form(step_id="settings", data_schema=vol.Schema(fields), errors=errors)
 
     async def async_step_device_menu(self, user_input: dict | None = None) -> FlowResult:
         """KSM-BEHAVE-088: a device entry's Configure is a menu."""
@@ -387,18 +417,11 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
         if user_input is None or not user_input.get("confirm"):
             return self._https_form("device_https_enable", user_input)
         data = self._entry.data
-        certificate_source = user_input.get("certificate_source", "self_signed")
-        material = None
-        hostname = user_input.get("certificate_hostname", "").strip().lower()
-        if certificate_source == "letsencrypt":
-            try:
-                material = await self.hass.async_add_executor_job(
-                    le_certificate.load_for_hostname, hostname
-                )
-            except le_certificate.HostnameNotCovered:
-                return await self._le_reissue_start("device_https_enable", user_input, hostname)
-            except le_certificate.CertificateUnavailable as err:
-                return self._certificate_unavailable(err)
+        hostname = None
+        if user_input.get("certificate_source", "self_signed") == "acme":
+            hostname = self._acme_choice(user_input)
+            if not isinstance(hostname, str):
+                return hostname
         try:
             pin = await ks_tls.async_establish_tls(
                 async_get_clientsession(self.hass), data[CONF_HOST], data[CONF_PASSWORD]
@@ -408,52 +431,23 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             return self._https_failed(err)
         if pin is None:
             return self.async_abort(reason="https_unsupported")
-        if material is not None:
-            # HTTPS is already on. Preserve its original trusted key even if
-            # certificate import fails after this point.
-            fleet.update_device(self.hass, self._entry, data={**data, CONF_TLS_SPKI: pin})
-            try:
-                new_pin = await ks_tls.async_import_certificate(
-                    async_get_clientsession(self.hass), data[CONF_HOST], data[CONF_PASSWORD],
-                    pin, material,
-                )
-            except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError) as err:
-                _LOGGER.warning("Could not install HA certificate on %s: %s", data[CONF_HOST], err)
-                return self._https_failed(err)
-            return await self._https_saved({
-                **data, CONF_TLS_SPKI: new_pin,
-                CONF_LE_CERTIFICATE_HOSTNAME: hostname,
-                CONF_LE_CERTIFICATE_FINGERPRINT: material.fingerprint,
-            }, "https_enabled")
-        return await self._https_saved({**data, CONF_TLS_SPKI: pin}, "https_enabled")
+        if hostname is None:
+            return await self._https_saved({**data, CONF_TLS_SPKI: pin}, "https_enabled")
+        # HTTPS is on now. Keep its key trusted even if the certificate fails.
+        fleet.update_device(self.hass, self._entry, data={**data, CONF_TLS_SPKI: pin})
+        self._acme_pending = (hostname, pin)
+        return await self.async_step_acme_issue()
 
     async def async_step_device_https_disable(self, user_input: dict | None = None) -> FlowResult:
         if user_input is None or not user_input.get("confirm"):
             return self._https_form("device_https_disable", user_input)
         data = self._entry.data
-        if user_input.get("https_action", "disable") == "letsencrypt":
-            hostname = user_input.get("certificate_hostname", "").strip().lower()
-            try:
-                material = await self.hass.async_add_executor_job(
-                    le_certificate.load_for_hostname, hostname
-                )
-            except le_certificate.HostnameNotCovered:
-                return await self._le_reissue_start("device_https_disable", user_input, hostname)
-            except le_certificate.CertificateUnavailable as err:
-                return self._certificate_unavailable(err)
-            try:
-                new_pin = await ks_tls.async_import_certificate(
-                    async_get_clientsession(self.hass), data[CONF_HOST], data[CONF_PASSWORD],
-                    data[CONF_TLS_SPKI], material,
-                )
-            except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError) as err:
-                _LOGGER.warning("Could not install HA certificate on %s: %s", data[CONF_HOST], err)
-                return self._https_failed(err)
-            return await self._https_saved({
-                **data, CONF_TLS_SPKI: new_pin,
-                CONF_LE_CERTIFICATE_HOSTNAME: hostname,
-                CONF_LE_CERTIFICATE_FINGERPRINT: material.fingerprint,
-            }, "https_enabled")
+        if user_input.get("https_action", "disable") == "acme":
+            hostname = self._acme_choice(user_input)
+            if not isinstance(hostname, str):
+                return hostname
+            self._acme_pending = (hostname, data[CONF_TLS_SPKI])
+            return await self.async_step_acme_issue()
         try:
             await ks_tls.async_disable_tls(
                 async_get_clientsession(self.hass), data[CONF_HOST], data[CONF_PASSWORD],
@@ -462,11 +456,23 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
         except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError) as err:
             _LOGGER.warning("Could not switch %s back to HTTP: %s", data[CONF_HOST], err)
             return self._https_failed(err)
-        return await self._https_saved(
-            {k: v for k, v in data.items() if k not in (
-                CONF_TLS_SPKI, CONF_LE_CERTIFICATE_HOSTNAME, CONF_LE_CERTIFICATE_FINGERPRINT,
-            )}, "https_disabled"
-        )
+        # KSM-BEHAVE-208: the certificate and its key go with HTTPS.
+        return await self._https_saved(acme_renewal.strip_certificate(
+            {k: v for k, v in data.items() if k != CONF_TLS_SPKI}
+        ), "https_disabled")
+
+    def _acme_choice(self, user_input: dict) -> FlowResult | str:
+        """The validated hostname for a KSM certificate, or the abort."""
+        if acme_renewal.acme_settings(self.hass) is None:
+            return self.async_abort(reason="acme_not_configured")
+        try:
+            hostname = le_certificate.check_hostname(user_input.get("certificate_hostname", ""))
+        except le_certificate.CertificateUnavailable as err:
+            return self._certificate_unavailable(err)
+        if acme_renewal.hostname_in_use(self.hass, hostname, self._entry.entry_id):
+            return self.async_abort(
+                reason="hostname_in_use", description_placeholders={"hostname": hostname})
+        return hostname
 
     def _certificate_unavailable(self, err: Exception) -> FlowResult:
         return self.async_abort(
@@ -474,64 +480,64 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
             description_placeholders={"reason": str(err)},
         )
 
-    async def _le_reissue_start(
-        self, step_id: str, user_input: dict, hostname: str
-    ) -> FlowResult:
-        """KSM-BEHAVE-182: the HA certificate lacks this name -- have the
-        add-on add it, then resume the confirmed step. Only once per flow."""
-        if self._le_pending is not None:
-            return self._certificate_unavailable(le_certificate.HostnameNotCovered(
-                "HA certificate does not cover this Portal hostname"
-            ))
-        self._le_pending = (step_id, user_input, hostname)
-        return await self.async_step_le_reissue()
-
-    async def async_step_le_reissue(self, user_input: dict | None = None) -> FlowResult:
-        _step, _input, hostname = self._le_pending
-        if self._le_task is None:
-            # Closing the dialog cancels the progress task; the add-on run under
-            # it must still finish or roll back `domains`, so it is shielded.
+    async def async_step_acme_issue(self, user_input: dict | None = None) -> FlowResult:
+        """KSM-BEHAVE-205: issue behind a progress step. Closing the dialog
+        does not cancel the issuance, and its certificate is then discarded."""
+        hostname, _pin = self._acme_pending
+        if self._acme_task is None:
+            settings = acme_renewal.acme_settings(self.hass)
+            if settings is None:
+                return self.async_abort(reason="acme_not_configured")
+            data = self._entry.data
+            # The same name keeps the device's own key, so its pin stays stable.
+            key = data.get(CONF_ACME_PRIVATE_KEY) if data.get(CONF_ACME_HOSTNAME) == hostname else None
             run = self.hass.async_create_background_task(
-                le_addon.async_add_hostname(self.hass, hostname), f"ksm le_addon {hostname}"
+                acme_renewal.async_obtain(self.hass, settings, self._entry, hostname, key),
+                f"ksm acme {hostname}",
             )
-            # le_addon already logged a failure; don't leave it "never retrieved".
             run.add_done_callback(lambda t: t.cancelled() or t.exception())
-            self._le_task = self.hass.async_create_task(_shielded(run))
-        if not self._le_task.done():
+            self._acme_task = self.hass.async_create_task(_shielded(run))
+        if not self._acme_task.done():
             return self.async_show_progress(
-                step_id="le_reissue", progress_action="le_reissue",
-                progress_task=self._le_task,
+                step_id="acme_issue", progress_action="acme_issue",
+                progress_task=self._acme_task,
                 description_placeholders={"hostname": hostname},
             )
         try:
-            self._le_task.result()
+            self._acme_material = self._acme_task.result()
         except le_certificate.CertificateUnavailable as err:
-            self._le_error = str(err)
-            return self.async_show_progress_done(next_step_id="le_reissue_failed")
-        return self.async_show_progress_done(next_step_id="le_resume")
+            self._acme_error = str(err)
+            return self.async_show_progress_done(next_step_id="acme_issue_failed")
+        return self.async_show_progress_done(next_step_id="acme_install")
 
-    async def async_step_le_reissue_failed(self, user_input: dict | None = None) -> FlowResult:
-        return self._certificate_unavailable(Exception(self._le_error))
+    async def async_step_acme_issue_failed(self, user_input: dict | None = None) -> FlowResult:
+        return self._certificate_unavailable(Exception(self._acme_error))
 
-    async def async_step_le_resume(self, user_input: dict | None = None) -> FlowResult:
-        step_id, confirmed, _hostname = self._le_pending
-        return await getattr(self, f"async_step_{step_id}")(confirmed)
+    async def async_step_acme_install(self, user_input: dict | None = None) -> FlowResult:
+        hostname, _pin = self._acme_pending
+        try:
+            async with acme_renewal.lock(self.hass):
+                # The live pin: a renewal tick may have moved it since the flow began.
+                await acme_renewal.async_install(
+                    self.hass, self._entry, hostname, self._acme_material,
+                    self._entry.data[CONF_TLS_SPKI])
+        except (KsApiError, aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.warning("Could not install the certificate on %s: %s",
+                            self._entry.data[CONF_HOST], err)
+            return self._https_failed(err)
+        return await self._https_saved(dict(self._entry.data), "https_enabled")
 
     def _https_form(self, step_id: str, user_input: dict | None) -> FlowResult:
+        data = self._entry.data
         fields = {vol.Required("confirm", default=False): bool}
         if step_id == "device_https_enable":
             fields[vol.Optional("certificate_source", default="self_signed")] = (
                 selector.SelectSelector(selector.SelectSelectorConfig(
                     options=[
                         {"value": "self_signed", "label": "Device self-signed"},
-                        {"value": "letsencrypt", "label": "HA Let's Encrypt add-on"},
+                        {"value": "acme", "label": "Let's Encrypt certificate (issued by KSM)"},
                     ],
                     mode=selector.SelectSelectorMode.DROPDOWN,
-                ))
-            )
-            fields[vol.Optional("certificate_hostname", default=self._entry.data[CONF_HOST])] = (
-                selector.TextSelector(selector.TextSelectorConfig(
-                    type=selector.TextSelectorType.TEXT
                 ))
             )
         else:
@@ -539,20 +545,21 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
                 selector.SelectSelector(selector.SelectSelectorConfig(
                     options=[
                         {"value": "disable", "label": "Switch back to HTTP"},
-                        {"value": "letsencrypt", "label": "Use HA Let's Encrypt certificate"},
+                        {"value": "acme", "label": "Use a Let's Encrypt certificate (issued by KSM)"},
                     ],
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 ))
             )
-            fields[vol.Optional("certificate_hostname", default=self._entry.data.get(
-                CONF_LE_CERTIFICATE_HOSTNAME, self._entry.data[CONF_HOST]
-            ))] = selector.TextSelector(selector.TextSelectorConfig(
-                type=selector.TextSelectorType.TEXT
-            ))
+        fields[vol.Optional("certificate_hostname", default=(
+            data.get(CONF_ACME_HOSTNAME) or data.get(CONF_LE_CERTIFICATE_HOSTNAME)
+            or _dns_name_or_empty(data[CONF_HOST])
+        ))] = selector.TextSelector(selector.TextSelectorConfig(
+            type=selector.TextSelectorType.TEXT
+        ))
         return self.async_show_form(
             step_id=step_id,
             data_schema=vol.Schema(fields),
-            description_placeholders={"host": self._entry.data[CONF_HOST]},
+            description_placeholders={"host": data[CONF_HOST]},
             errors={"confirm": "confirm_required"} if user_input is not None else {},
         )
 
@@ -568,7 +575,8 @@ class KioskSatelliteManagerOptionsFlow(config_entries.OptionsFlow):
         fleet.update_device(self.hass, self._entry, data=data)
         for issue_id in (tls_issue_id(self._entry.entry_id),
                          tls_disabled_issue_id(self._entry.entry_id),
-                         le_certificate_sync_issue_id(self._entry.entry_id)):
+                         le_certificate_sync_issue_id(self._entry.entry_id),
+                         acme_renewal_issue_id(self._entry.entry_id)):
             ir.async_delete_issue(self.hass, DOMAIN, issue_id)
         coordinator = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
         if coordinator is not None:

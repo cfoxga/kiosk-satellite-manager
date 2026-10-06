@@ -193,6 +193,7 @@ async def test_manager_options_backup_defaults_and_validation(hass):
     """[KSM-TEST-202] Defaults 24 h / 10; keep 0 and negative period rejected."""
     manager = await _manager(hass)
     result = await hass.config_entries.options.async_init(manager.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "settings"})
     data = result["data_schema"]({})
     assert data[CONF_BACKUP_INTERVAL_HOURS] == 24
     assert data[CONF_BACKUP_KEEP] == 10
