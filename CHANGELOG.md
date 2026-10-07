@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
 - KSM now issues and renews each kiosk's own Let's Encrypt certificate (#200), so Remote
   Administration opens at the kiosk's own name with no warning, and Kiosk Satellite's "By name" and
